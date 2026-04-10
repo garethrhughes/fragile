@@ -9,17 +9,17 @@ export class CreateJiraIssueLinksTable1775820877077
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS jira_issue_links (
         id SERIAL PRIMARY KEY,
-        source_issue_key VARCHAR NOT NULL,
-        target_issue_key VARCHAR NOT NULL,
-        link_type_name VARCHAR NOT NULL,
-        is_inward BOOLEAN NOT NULL
+        "sourceIssueKey" VARCHAR NOT NULL,
+        "targetIssueKey" VARCHAR NOT NULL,
+        "linkTypeName" VARCHAR NOT NULL,
+        "isInward" BOOLEAN NOT NULL
       )
     `);
     await queryRunner.query(
-      `CREATE INDEX IF NOT EXISTS idx_jira_issue_links_source ON jira_issue_links(source_issue_key)`,
+      `CREATE INDEX IF NOT EXISTS "idx_jira_issue_links_sourceIssueKey" ON jira_issue_links("sourceIssueKey")`,
     );
     await queryRunner.query(
-      `CREATE INDEX IF NOT EXISTS idx_jira_issue_links_target ON jira_issue_links(target_issue_key)`,
+      `CREATE INDEX IF NOT EXISTS "idx_jira_issue_links_targetIssueKey" ON jira_issue_links("targetIssueKey")`,
     );
   }
 
