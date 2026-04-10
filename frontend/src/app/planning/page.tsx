@@ -16,8 +16,10 @@ import type { ValueType, NameType } from 'recharts/types/component/DefaultToolti
 import {
   getPlanningAccuracy,
   getKanbanQuarters,
+  getKanbanWeeks,
   type SprintAccuracy,
   type KanbanQuarterSummary,
+  type KanbanWeekSummary,
 } from '@/lib/api';
 import { ALL_BOARDS } from '@/store/filter-store';
 import { BoardChip } from '@/components/ui/board-chip';
@@ -133,14 +135,24 @@ function kanbanRowColor(row: KanbanQuarterSummary): string {
   return '';
 }
 
+function kanbanWeekRowColor(row: KanbanWeekSummary): string {
+  if (row.deliveryRate < 50) return 'bg-red-50';
+  if (row.deliveryRate < 80) return 'bg-amber-50';
+  return '';
+}
+
 // ---------------------------------------------------------------------------
-// Abbreviated sprint/quarter label for chart x-axis
+// Abbreviated sprint/quarter/week label for chart x-axis
 // ---------------------------------------------------------------------------
 
 function abbreviateLabel(name: string): string {
   const qMatch = name.match(/^(\d{4})-Q([1-4])$/);
   if (qMatch) {
     return `Q${qMatch[2]} '${qMatch[1].slice(2)}`;
+  }
+  const wMatch = name.match(/^(\d{4})-W(\d+)$/);
+  if (wMatch) {
+    return `W${wMatch[2]} '${wMatch[1].slice(2)}`;
   }
   const numMatch = name.match(/(\d+)/);
   if (numMatch) {
@@ -209,16 +221,45 @@ function TrendChart({ title, data, color, unit = '' }: TrendChartProps) {
 }
 
 // ---------------------------------------------------------------------------
+// State chip renderer (shared)
+// ---------------------------------------------------------------------------
+
+function renderStateChip(value: unknown) {
+  const state = String(value);
+  const color =
+    state === 'active'
+      ? 'text-green-600 bg-green-50'
+      : 'text-gray-600 bg-gray-100';
+  return (
+    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium capitalize ${color}`}>
+      {state}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Delivery rate renderer (shared)
+// ---------------------------------------------------------------------------
+
+function renderDeliveryRate(value: unknown) {
+  const pct = Number(value);
+  const color = pct < 50 ? 'text-red-600 font-semibold' : pct < 80 ? 'text-amber-600 font-semibold' : 'text-green-700 font-semibold';
+  return <span className={color}>{pct.toFixed(1)}%</span>;
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
 export default function PlanningPage() {
   const [selectedBoard, setSelectedBoard] = useState<string>('ACC');
   const [periodType, setPeriodType] = useState<'sprint' | 'quarter'>('sprint');
+  const [kanbanPeriod, setKanbanPeriod] = useState<'quarter' | 'week'>('quarter');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rawData, setRawData] = useState<SprintAccuracy[]>([]);
   const [kanbanData, setKanbanData] = useState<KanbanQuarterSummary[]>([]);
+  const [kanbanWeekData, setKanbanWeekData] = useState<KanbanWeekSummary[]>([]);
 
   const isKanban = KANBAN_BOARDS.has(selectedBoard);
 
@@ -226,6 +267,7 @@ export default function PlanningPage() {
     setSelectedBoard(boardId);
     setRawData([]);
     setKanbanData([]);
+    setKanbanWeekData([]);
     setError(null);
   }, []);
 
@@ -258,7 +300,7 @@ export default function PlanningPage() {
 
   // Fetch quarterly flow data for Kanban boards
   useEffect(() => {
-    if (!isKanban) return;
+    if (!isKanban || kanbanPeriod !== 'quarter') return;
 
     let cancelled = false;
     setLoading(true);
@@ -281,7 +323,34 @@ export default function PlanningPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedBoard, isKanban]);
+  }, [selectedBoard, isKanban, kanbanPeriod]);
+
+  // Fetch weekly flow data for Kanban boards
+  useEffect(() => {
+    if (!isKanban || kanbanPeriod !== 'week') return;
+
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    getKanbanWeeks(selectedBoard)
+      .then((res) => {
+        if (!cancelled) setKanbanWeekData(res ?? []);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to load Kanban weekly data');
+          setKanbanWeekData([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBoard, isKanban, kanbanPeriod]);
 
   // Quarter rows derived client-side from raw sprint data (Scrum)
   const quarterRows = useMemo(() => groupByQuarter(rawData), [rawData]);
@@ -303,19 +372,41 @@ export default function PlanningPage() {
   // ---------------------------------------------------------------------------
   // Kanban summary stats
   // ---------------------------------------------------------------------------
-  const { avgDeliveryRate, totalDelivered } = useMemo(() => {
-    if (kanbanData.length === 0) return { avgDeliveryRate: 0, totalDelivered: 0 };
+  const { avgDeliveryRate, totalDelivered, periodLabel } = useMemo(() => {
+    if (isKanban && kanbanPeriod === 'week') {
+      if (kanbanWeekData.length === 0) return { avgDeliveryRate: 0, totalDelivered: 0, periodLabel: 'weeks' };
+      const rate = kanbanWeekData.reduce((s, r) => s + r.deliveryRate, 0) / kanbanWeekData.length;
+      const delivered = kanbanWeekData.reduce((s, r) => s + r.completed, 0);
+      return {
+        avgDeliveryRate: rate,
+        totalDelivered: delivered,
+        periodLabel: `week${kanbanWeekData.length !== 1 ? 's' : ''}`,
+      };
+    }
+    if (kanbanData.length === 0) return { avgDeliveryRate: 0, totalDelivered: 0, periodLabel: 'quarters' };
     const rate = kanbanData.reduce((s, r) => s + r.deliveryRate, 0) / kanbanData.length;
     const delivered = kanbanData.reduce((s, r) => s + r.completed, 0);
-    return { avgDeliveryRate: rate, totalDelivered: delivered };
-  }, [kanbanData]);
+    return {
+      avgDeliveryRate: rate,
+      totalDelivered: delivered,
+      periodLabel: `quarter${kanbanData.length !== 1 ? 's' : ''}`,
+    };
+  }, [isKanban, kanbanPeriod, kanbanData, kanbanWeekData]);
 
   // ---------------------------------------------------------------------------
   // Chart data
   // ---------------------------------------------------------------------------
   const chartData = useMemo<ChartDataPoint[][]>(() => {
+    if (isKanban && kanbanPeriod === 'week') {
+      const chronological = [...kanbanWeekData].reverse();
+      return [
+        chronological.map((w) => ({ label: abbreviateLabel(w.week), value: w.issuesPulledIn })),
+        chronological.map((w) => ({ label: abbreviateLabel(w.week), value: w.completed })),
+        chronological.map((w) => ({ label: abbreviateLabel(w.week), value: w.deliveryRate })),
+      ];
+    }
     if (isKanban) {
-      // Kanban: chronological order (oldest first)
+      // Kanban quarter: chronological order (oldest first)
       const chronological = [...kanbanData].reverse();
       return [
         chronological.map((q) => ({ label: abbreviateLabel(q.quarter), value: q.issuesPulledIn })),
@@ -337,24 +428,11 @@ export default function PlanningPage() {
       chronological.map((q) => ({ label: abbreviateLabel(q.quarter), value: q.completed })),
       chronological.map((q) => ({ label: abbreviateLabel(q.quarter), value: q.scopeChangePercent })),
     ];
-  }, [isKanban, kanbanData, rawData, quarterRows, periodType]);
+  }, [isKanban, kanbanPeriod, kanbanData, kanbanWeekData, rawData, quarterRows, periodType]);
 
   // ---------------------------------------------------------------------------
   // Table columns
   // ---------------------------------------------------------------------------
-
-  const stateChip = (value: unknown) => {
-    const state = String(value);
-    const color =
-      state === 'active'
-        ? 'text-green-600 bg-green-50'
-        : 'text-gray-600 bg-gray-100';
-    return (
-      <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium capitalize ${color}`}>
-        {state}
-      </span>
-    );
-  };
 
   const sprintColumns = useMemo<Column<SprintAccuracy>[]>(
     () => [
@@ -375,7 +453,7 @@ export default function PlanningPage() {
         key: 'state',
         label: 'State',
         sortable: true,
-        render: stateChip,
+        render: renderStateChip,
       },
       { key: 'commitment', label: 'Commitment', sortable: true },
       { key: 'added', label: 'Added', sortable: true },
@@ -459,7 +537,7 @@ export default function PlanningPage() {
         key: 'state',
         label: 'State',
         sortable: true,
-        render: stateChip,
+        render: renderStateChip,
       },
       { key: 'issuesPulledIn', label: 'Pulled In', sortable: true },
       { key: 'completed', label: 'Completed', sortable: true },
@@ -470,11 +548,43 @@ export default function PlanningPage() {
         key: 'deliveryRate',
         label: 'Delivery Rate',
         sortable: true,
-        render: (value) => {
-          const pct = Number(value);
-          const color = pct < 50 ? 'text-red-600 font-semibold' : pct < 80 ? 'text-amber-600 font-semibold' : 'text-green-700 font-semibold';
-          return <span className={color}>{pct.toFixed(1)}%</span>;
-        },
+        render: renderDeliveryRate,
+      },
+    ],
+    [selectedBoard],
+  );
+
+  const kanbanWeekColumns = useMemo<Column<KanbanWeekSummary>[]>(
+    () => [
+      {
+        key: 'week',
+        label: 'Week',
+        sortable: true,
+        render: (value) => (
+          <Link
+            href={`/week/${encodeURIComponent(selectedBoard)}/${encodeURIComponent(String(value))}?from=planning`}
+            className="font-medium text-blue-600 hover:underline"
+          >
+            {String(value)}
+          </Link>
+        ),
+      },
+      {
+        key: 'state',
+        label: 'State',
+        sortable: true,
+        render: renderStateChip,
+      },
+      { key: 'issuesPulledIn', label: 'Pulled In', sortable: true },
+      { key: 'completed', label: 'Completed', sortable: true },
+      { key: 'addedMidWeek', label: 'Mid-Week', sortable: true },
+      { key: 'pointsIn', label: 'Points In', sortable: true },
+      { key: 'pointsDone', label: 'Points Done', sortable: true },
+      {
+        key: 'deliveryRate',
+        label: 'Delivery Rate',
+        sortable: true,
+        render: renderDeliveryRate,
       },
     ],
     [selectedBoard],
@@ -484,13 +594,17 @@ export default function PlanningPage() {
   // Derived flags
   // ---------------------------------------------------------------------------
   const hasData = isKanban
-    ? kanbanData.length > 0
+    ? kanbanPeriod === 'week'
+      ? kanbanWeekData.length > 0
+      : kanbanData.length > 0
     : periodType === 'sprint'
       ? rawData.length > 0
       : quarterRows.length > 0;
 
   const rowCount = isKanban
-    ? kanbanData.length
+    ? kanbanPeriod === 'week'
+      ? kanbanWeekData.length
+      : kanbanData.length
     : periodType === 'sprint'
       ? rawData.length
       : quarterRows.length;
@@ -502,7 +616,9 @@ export default function PlanningPage() {
         <h1 className="text-2xl font-bold">Planning Accuracy</h1>
         <p className="mt-1 text-sm text-muted">
           {isKanban
-            ? 'Quarterly flow metrics — issues pulled in vs delivered'
+            ? kanbanPeriod === 'week'
+              ? 'Weekly flow metrics — issues pulled in vs delivered'
+              : 'Quarterly flow metrics — issues pulled in vs delivered'
             : 'Sprint commitment vs delivery metrics'}
         </p>
       </div>
@@ -526,12 +642,37 @@ export default function PlanningPage() {
           </div>
         </div>
 
-        {/* Period type toggle — hidden for Kanban (quarterly only) */}
-        {!isKanban && (
-          <div>
-            <label className="mb-2 block text-sm font-medium text-muted">
-              Period
-            </label>
+        {/* Period type toggle */}
+        <div>
+          <label className="mb-2 block text-sm font-medium text-muted">
+            Period
+          </label>
+          {isKanban ? (
+            <div className="inline-flex rounded-lg border border-border">
+              <button
+                type="button"
+                onClick={() => setKanbanPeriod('quarter')}
+                className={`rounded-l-lg px-4 py-2 text-sm font-medium transition-colors ${
+                  kanbanPeriod === 'quarter'
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-muted hover:bg-gray-50'
+                }`}
+              >
+                Quarter
+              </button>
+              <button
+                type="button"
+                onClick={() => setKanbanPeriod('week')}
+                className={`rounded-r-lg px-4 py-2 text-sm font-medium transition-colors ${
+                  kanbanPeriod === 'week'
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-muted hover:bg-gray-50'
+                }`}
+              >
+                Week
+              </button>
+            </div>
+          ) : (
             <div className="inline-flex rounded-lg border border-border">
               <button
                 type="button"
@@ -556,8 +697,8 @@ export default function PlanningPage() {
                 Quarter
               </button>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Loading */}
@@ -584,14 +725,14 @@ export default function PlanningPage() {
                   <h3 className="text-sm font-medium text-muted">Avg Delivery Rate</h3>
                   <p className="mt-2 text-3xl font-bold">{avgDeliveryRate.toFixed(1)}%</p>
                   <p className="mt-1 text-xs text-muted">
-                    across {rowCount} quarter{rowCount !== 1 ? 's' : ''}
+                    across {rowCount} {periodLabel}
                   </p>
                 </div>
                 <div className="rounded-xl border border-border bg-card p-5">
                   <h3 className="text-sm font-medium text-muted">Total Issues Delivered</h3>
                   <p className="mt-2 text-3xl font-bold">{totalDelivered}</p>
                   <p className="mt-1 text-xs text-muted">
-                    across {rowCount} quarter{rowCount !== 1 ? 's' : ''}
+                    across {rowCount} {periodLabel}
                   </p>
                 </div>
               </>
@@ -634,11 +775,19 @@ export default function PlanningPage() {
 
           {/* Data table */}
           {isKanban ? (
-            <DataTable<KanbanQuarterSummary>
-              columns={kanbanColumns}
-              data={kanbanData}
-              rowClassName={kanbanRowColor}
-            />
+            kanbanPeriod === 'week' ? (
+              <DataTable<KanbanWeekSummary>
+                columns={kanbanWeekColumns}
+                data={kanbanWeekData}
+                rowClassName={kanbanWeekRowColor}
+              />
+            ) : (
+              <DataTable<KanbanQuarterSummary>
+                columns={kanbanColumns}
+                data={kanbanData}
+                rowClassName={kanbanRowColor}
+              />
+            )
           ) : periodType === 'sprint' ? (
             <DataTable<SprintAccuracy>
               columns={sprintColumns}
@@ -659,7 +808,13 @@ export default function PlanningPage() {
       {!loading && !error && !hasData && (
         <EmptyState
           title="No planning data"
-          message={isKanban ? 'No quarterly flow data found for this board.' : 'Select a board to view sprint accuracy.'}
+          message={
+            isKanban
+              ? kanbanPeriod === 'week'
+                ? 'No weekly flow data found for this board.'
+                : 'No quarterly flow data found for this board.'
+              : 'Select a board to view sprint accuracy.'
+          }
         />
       )}
     </div>

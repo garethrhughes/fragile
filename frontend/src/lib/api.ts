@@ -309,6 +309,71 @@ export function getKanbanQuarters(boardId: string): Promise<KanbanQuarterSummary
   )
 }
 
+// ---- Kanban weekly flow metrics ------------------------------------------
+
+export interface KanbanWeekSummary {
+  week: string
+  state: string
+  weekStart: string
+  issuesPulledIn: number
+  completed: number
+  addedMidWeek: number
+  pointsIn: number
+  pointsDone: number
+  deliveryRate: number
+}
+
+export interface WeekDetailIssue {
+  key: string
+  summary: string
+  issueType: string
+  priority: string | null
+  status: string
+  points: number | null
+  epicKey: string | null
+  assignedWeek: string
+  completedInWeek: boolean
+  addedMidWeek: boolean
+  linkedToRoadmap: boolean
+  isIncident: boolean
+  isFailure: boolean
+  labels: string[]
+  boardEntryDate: string
+  jiraUrl: string
+}
+
+export interface WeekDetailSummary {
+  totalIssues: number
+  completedIssues: number
+  addedMidWeek: number
+  linkedToRoadmap: number
+  totalPoints: number
+  completedPoints: number
+}
+
+export interface WeekDetailBoardConfig {
+  boardType: string
+  doneStatusNames: string[]
+}
+
+export interface WeekDetailResponse {
+  boardId: string
+  week: string
+  weekStart: string
+  weekEnd: string
+  summary: WeekDetailSummary
+  issues: WeekDetailIssue[]
+  boardConfig: WeekDetailBoardConfig
+}
+
+export function getKanbanWeeks(boardId: string): Promise<KanbanWeekSummary[]> {
+  return apiFetch<KanbanWeekSummary[]>(`/api/planning/kanban-weeks/${encodeURIComponent(boardId)}`)
+}
+
+export function getWeekDetail(boardId: string, week: string): Promise<WeekDetailResponse> {
+  return apiFetch<WeekDetailResponse>(`/api/weeks/${encodeURIComponent(boardId)}/${encodeURIComponent(week)}/detail`)
+}
+
 // ---- Roadmap Accuracy types and endpoints --------------------------------
 
 export interface RoadmapConfig {
@@ -332,17 +397,21 @@ export interface RoadmapSprintAccuracy {
 }
 
 export function getRoadmapAccuracy(params: {
-  boardId: string;
-  sprintId?: string;
-  quarter?: string;
+  boardId: string
+  sprintId?: string
+  quarter?: string
+  week?: string
+  weekMode?: boolean
 }): Promise<RoadmapSprintAccuracy[]> {
   return apiFetch(
     `/api/roadmap/accuracy${toQueryString({
       boardId: params.boardId,
       sprintId: params.sprintId,
       quarter: params.quarter,
+      week: params.week,
+      weekMode: params.weekMode !== undefined ? String(params.weekMode) : undefined,
     })}`,
-  );
+  )
 }
 
 export function getRoadmapConfigs(): Promise<RoadmapConfig[]> {

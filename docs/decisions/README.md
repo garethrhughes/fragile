@@ -28,3 +28,4 @@ a new ADR is created for the replacement decision.
 | [0014](0014-sprint-detail-view.md) | Sprint Detail View: new SprintModule with per-issue annotation endpoint | Accepted | 2026-04-10 |
 | [0015](0015-board-config-as-metric-filter-composition-point.md) | BoardConfig as the sole composition point for metric filter rules | Proposed | 2026-04-10 |
 | [0016](0016-quarter-detail-view.md) | Calendar-period drill-down as a first-class view pattern | Proposed | 2026-04-10 |
+| [0017](0017-kanban-backlog-inflation-fix.md) | Kanban backlog inflation fix: statusId storage, per-board backlog config, and two-tier exclusion logic | Accepted | 2026-04-11 |

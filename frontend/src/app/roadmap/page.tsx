@@ -129,8 +129,11 @@ function quarterRowColor(row: QuarterRow): string {
   return '';
 }
 
+// weekRowColor uses the same logic as sprintRowColor (RoadmapSprintAccuracy is reused for weeks)
+const weekRowColor = sprintRowColor;
+
 // ---------------------------------------------------------------------------
-// Abbreviated sprint/quarter label for chart x-axis
+// Abbreviated sprint/quarter/week label for chart x-axis
 // ---------------------------------------------------------------------------
 
 function abbreviateLabel(name: string): string {
@@ -138,6 +141,11 @@ function abbreviateLabel(name: string): string {
   const qMatch = name.match(/^(\d{4})-Q([1-4])$/);
   if (qMatch) {
     return `Q${qMatch[2]} '${qMatch[1].slice(2)}`;
+  }
+  // Week key: "2026-W15" → "W15 '26"
+  const wMatch = name.match(/^(\d{4})-W(\d+)$/);
+  if (wMatch) {
+    return `W${wMatch[2]} '${wMatch[1].slice(2)}`;
   }
   // Try to grab a number from the sprint name
   const numMatch = name.match(/(\d+)/);
@@ -213,9 +221,11 @@ function TrendChart({ title, data, color, unit = '' }: TrendChartProps) {
 export default function RoadmapPage() {
   const [selectedBoard, setSelectedBoard] = useState<string>('ACC');
   const [periodType, setPeriodType] = useState<'sprint' | 'quarter'>('sprint');
+  const [kanbanPeriod, setKanbanPeriod] = useState<'quarter' | 'week'>('quarter');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rawData, setRawData] = useState<RoadmapSprintAccuracy[]>([]);
+  const [kanbanWeekData, setKanbanWeekData] = useState<RoadmapSprintAccuracy[]>([]);
   const [hasConfigs, setHasConfigs] = useState<boolean | null>(null);
 
   const isKanban = KANBAN_BOARDS.has(selectedBoard);
@@ -235,6 +245,7 @@ export default function RoadmapPage() {
   const handleSelectBoard = useCallback((boardId: string) => {
     setSelectedBoard(boardId);
     setRawData([]);
+    setKanbanWeekData([]);
     setError(null);
     // Kanban boards have no sprints — switch to quarter view automatically
     if (KANBAN_BOARDS.has(boardId)) {
@@ -242,8 +253,11 @@ export default function RoadmapPage() {
     }
   }, []);
 
-  // Fetch roadmap accuracy data whenever board changes
+  // Fetch roadmap accuracy data whenever board or kanbanPeriod changes
   useEffect(() => {
+    // For Kanban weekly mode, use separate fetch below
+    if (isKanban && kanbanPeriod === 'week') return;
+
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -267,14 +281,50 @@ export default function RoadmapPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedBoard]);
+  }, [selectedBoard, isKanban, kanbanPeriod]);
+
+  // Fetch weekly roadmap accuracy data for Kanban boards
+  useEffect(() => {
+    if (!isKanban || kanbanPeriod !== 'week') return;
+
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    getRoadmapAccuracy({ boardId: selectedBoard, weekMode: true })
+      .then((res) => {
+        if (!cancelled) setKanbanWeekData(res ?? []);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setError(
+            err instanceof Error ? err.message : 'Failed to load weekly roadmap data',
+          );
+          setKanbanWeekData([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBoard, isKanban, kanbanPeriod]);
 
   // Quarter rows derived client-side from raw sprint data
   const quarterRows = useMemo(() => groupByQuarter(rawData), [rawData]);
 
   // Summary stats across ALL displayed rows
   const { avgCoverage, avgDeliveryRate } = useMemo(() => {
-    const rows = periodType === 'quarter' ? quarterRows : rawData;
+    const rows: Array<{ roadmapCoverage: number; roadmapDeliveryRate: number }> =
+      isKanban
+        ? kanbanPeriod === 'week'
+          ? kanbanWeekData
+          : quarterRows
+        : periodType === 'quarter'
+          ? quarterRows
+          : rawData;
     if (rows.length === 0) return { avgCoverage: 0, avgDeliveryRate: 0 };
     const totalCoverage = rows.reduce((s, r) => s + r.roadmapCoverage, 0);
     const totalDelivery = rows.reduce((s, r) => s + r.roadmapDeliveryRate, 0);
@@ -282,34 +332,41 @@ export default function RoadmapPage() {
       avgCoverage: totalCoverage / rows.length,
       avgDeliveryRate: totalDelivery / rows.length,
     };
-  }, [rawData, quarterRows, periodType]);
+  }, [isKanban, kanbanPeriod, kanbanWeekData, rawData, quarterRows, periodType]);
+
+  // Stat label describing the data range shown
+  const statPeriodLabel = useMemo(() => {
+    if (isKanban && kanbanPeriod === 'week') {
+      return `${kanbanWeekData.length} week${kanbanWeekData.length !== 1 ? 's' : ''}`;
+    }
+    if (isKanban || periodType === 'quarter') {
+      return `${quarterRows.length} quarter${quarterRows.length !== 1 ? 's' : ''}`;
+    }
+    return `${rawData.length} sprint${rawData.length !== 1 ? 's' : ''}`;
+  }, [isKanban, kanbanPeriod, kanbanWeekData, quarterRows, rawData, periodType]);
 
   // Chart data — oldest on left → newest on right
   const chartData = useMemo<[ChartDataPoint[], ChartDataPoint[]]>(() => {
-    if (periodType === 'sprint') {
-      const chronological = [...rawData].reverse();
-      const coverage: ChartDataPoint[] = chronological.map((s) => ({
-        label: abbreviateLabel(s.sprintName),
-        value: s.roadmapCoverage,
-      }));
-      const delivery: ChartDataPoint[] = chronological.map((s) => ({
-        label: abbreviateLabel(s.sprintName),
-        value: s.roadmapDeliveryRate,
-      }));
-      return [coverage, delivery];
-    } else {
-      const chronological = [...quarterRows].reverse();
-      const coverage: ChartDataPoint[] = chronological.map((q) => ({
-        label: abbreviateLabel(q.quarter),
-        value: q.roadmapCoverage,
-      }));
-      const delivery: ChartDataPoint[] = chronological.map((q) => ({
-        label: abbreviateLabel(q.quarter),
-        value: q.roadmapDeliveryRate,
-      }));
-      return [coverage, delivery];
+    if (isKanban && kanbanPeriod === 'week') {
+      const chronological = [...kanbanWeekData].reverse();
+      return [
+        chronological.map((w) => ({ label: abbreviateLabel(w.sprintName), value: w.roadmapCoverage })),
+        chronological.map((w) => ({ label: abbreviateLabel(w.sprintName), value: w.roadmapDeliveryRate })),
+      ];
     }
-  }, [rawData, quarterRows, periodType]);
+    if (isKanban || periodType === 'quarter') {
+      const chronological = [...quarterRows].reverse();
+      return [
+        chronological.map((q) => ({ label: abbreviateLabel(q.quarter), value: q.roadmapCoverage })),
+        chronological.map((q) => ({ label: abbreviateLabel(q.quarter), value: q.roadmapDeliveryRate })),
+      ];
+    }
+    const chronological = [...rawData].reverse();
+    return [
+      chronological.map((s) => ({ label: abbreviateLabel(s.sprintName), value: s.roadmapCoverage })),
+      chronological.map((s) => ({ label: abbreviateLabel(s.sprintName), value: s.roadmapDeliveryRate })),
+    ];
+  }, [isKanban, kanbanPeriod, kanbanWeekData, rawData, quarterRows, periodType]);
 
   // Sprint-mode table columns
   const sprintColumns = useMemo<Column<RoadmapSprintAccuracy>[]>(
@@ -420,8 +477,76 @@ export default function RoadmapPage() {
     [selectedBoard],
   );
 
-  const hasData =
-    periodType === 'sprint' ? rawData.length > 0 : quarterRows.length > 0;
+  // Week-mode table columns (Kanban only — sprintId = week key, sprintName = week key)
+  const weekColumns = useMemo<Column<RoadmapSprintAccuracy>[]>(
+    () => [
+      {
+        key: 'sprintName',
+        label: 'Week',
+        sortable: true,
+        render: (value) => (
+          <Link
+            href={`/week/${encodeURIComponent(selectedBoard)}/${encodeURIComponent(String(value))}?from=roadmap`}
+            className="font-medium text-blue-600 hover:underline"
+          >
+            {String(value)}
+          </Link>
+        ),
+      },
+      {
+        key: 'state',
+        label: 'State',
+        sortable: true,
+        render: (value) => {
+          const state = String(value);
+          const color =
+            state === 'active'
+              ? 'text-green-600 bg-green-50'
+              : 'text-gray-600 bg-gray-100';
+          return (
+            <span
+              className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium capitalize ${color}`}
+            >
+              {state}
+            </span>
+          );
+        },
+      },
+      { key: 'totalIssues', label: 'Total Issues', sortable: true },
+      { key: 'coveredIssues', label: 'Covered', sortable: true },
+      { key: 'uncoveredIssues', label: 'Uncovered', sortable: true },
+      {
+        key: 'roadmapCoverage',
+        label: 'Coverage %',
+        sortable: true,
+        render: (value) => {
+          const pct = Number(value);
+          const color =
+            pct < 50
+              ? 'text-red-600 font-semibold'
+              : pct < 80
+                ? 'text-amber-600 font-semibold'
+                : 'text-green-600 font-semibold';
+          return <span className={color}>{pct.toFixed(1)}%</span>;
+        },
+      },
+      {
+        key: 'roadmapDeliveryRate',
+        label: 'Delivery Rate %',
+        sortable: true,
+        render: (value) => `${Number(value).toFixed(1)}%`,
+      },
+    ],
+    [selectedBoard],
+  );
+
+  const hasData = isKanban
+    ? kanbanPeriod === 'week'
+      ? kanbanWeekData.length > 0
+      : quarterRows.length > 0
+    : periodType === 'sprint'
+      ? rawData.length > 0
+      : quarterRows.length > 0;
 
   // Still loading config check
   if (hasConfigs === null) {
@@ -476,38 +601,56 @@ export default function RoadmapPage() {
               <label className="mb-2 block text-sm font-medium text-muted">
                 Period
               </label>
-              <div className="inline-flex rounded-lg border border-border">
-                <button
-                  type="button"
-                  disabled={isKanban}
-                  onClick={() => setPeriodType('sprint')}
-                  className={`rounded-l-lg px-4 py-2 text-sm font-medium transition-colors ${
-                    isKanban
-                      ? 'cursor-not-allowed text-muted/40'
-                      : periodType === 'sprint'
+              {isKanban ? (
+                <div className="inline-flex rounded-lg border border-border">
+                  <button
+                    type="button"
+                    onClick={() => setKanbanPeriod('quarter')}
+                    className={`rounded-l-lg px-4 py-2 text-sm font-medium transition-colors ${
+                      kanbanPeriod === 'quarter'
                         ? 'bg-blue-50 text-blue-700'
                         : 'text-muted hover:bg-gray-50'
-                  }`}
-                  title={isKanban ? 'Sprint view is not available for Kanban boards' : undefined}
-                >
-                  Sprint
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPeriodType('quarter')}
-                  className={`rounded-r-lg px-4 py-2 text-sm font-medium transition-colors ${
-                    periodType === 'quarter'
-                      ? 'bg-blue-50 text-blue-700'
-                      : 'text-muted hover:bg-gray-50'
-                  }`}
-                >
-                  Quarter
-                </button>
-              </div>
-              {isKanban && (
-                <p className="mt-1 text-xs text-muted">
-                  Kanban boards use quarter grouping based on when issues were pulled onto the board.
-                </p>
+                    }`}
+                  >
+                    Quarter
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setKanbanPeriod('week')}
+                    className={`rounded-r-lg px-4 py-2 text-sm font-medium transition-colors ${
+                      kanbanPeriod === 'week'
+                        ? 'bg-blue-50 text-blue-700'
+                        : 'text-muted hover:bg-gray-50'
+                    }`}
+                  >
+                    Week
+                  </button>
+                </div>
+              ) : (
+                <div className="inline-flex rounded-lg border border-border">
+                  <button
+                    type="button"
+                    onClick={() => setPeriodType('sprint')}
+                    className={`rounded-l-lg px-4 py-2 text-sm font-medium transition-colors ${
+                      periodType === 'sprint'
+                        ? 'bg-blue-50 text-blue-700'
+                        : 'text-muted hover:bg-gray-50'
+                    }`}
+                  >
+                    Sprint
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPeriodType('quarter')}
+                    className={`rounded-r-lg px-4 py-2 text-sm font-medium transition-colors ${
+                      periodType === 'quarter'
+                        ? 'bg-blue-50 text-blue-700'
+                        : 'text-muted hover:bg-gray-50'
+                    }`}
+                  >
+                    Quarter
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -538,10 +681,7 @@ export default function RoadmapPage() {
                     {avgCoverage.toFixed(1)}%
                   </p>
                   <p className="mt-1 text-xs text-muted">
-                    across all{' '}
-                    {periodType === 'sprint'
-                      ? `${rawData.length} sprint${rawData.length !== 1 ? 's' : ''}`
-                      : `${quarterRows.length} quarter${quarterRows.length !== 1 ? 's' : ''}`}
+                    across all {statPeriodLabel}
                   </p>
                 </div>
                 <div className="rounded-xl border border-border bg-card p-5">
@@ -552,10 +692,7 @@ export default function RoadmapPage() {
                     {avgDeliveryRate.toFixed(1)}%
                   </p>
                   <p className="mt-1 text-xs text-muted">
-                    across all{' '}
-                    {periodType === 'sprint'
-                      ? `${rawData.length} sprint${rawData.length !== 1 ? 's' : ''}`
-                      : `${quarterRows.length} quarter${quarterRows.length !== 1 ? 's' : ''}`}
+                    across all {statPeriodLabel}
                   </p>
                 </div>
               </div>
@@ -577,17 +714,23 @@ export default function RoadmapPage() {
               </div>
 
               {/* Data table */}
-              {periodType === 'sprint' ? (
+              {isKanban && kanbanPeriod === 'week' ? (
                 <DataTable<RoadmapSprintAccuracy>
-                  columns={sprintColumns}
-                  data={rawData}
-                  rowClassName={sprintRowColor}
+                  columns={weekColumns}
+                  data={kanbanWeekData}
+                  rowClassName={weekRowColor}
                 />
-              ) : (
+              ) : isKanban || periodType === 'quarter' ? (
                 <DataTable<QuarterRow>
                   columns={quarterColumns}
                   data={quarterRows}
                   rowClassName={quarterRowColor}
+                />
+              ) : (
+                <DataTable<RoadmapSprintAccuracy>
+                  columns={sprintColumns}
+                  data={rawData}
+                  rowClassName={sprintRowColor}
                 />
               )}
             </>

@@ -28,7 +28,7 @@ export class RoadmapController {
   })
   @Get('accuracy')
   async getAccuracy(@Query() query: RoadmapAccuracyQueryDto) {
-    return this.roadmapService.getAccuracy(query.boardId, query.sprintId, query.quarter);
+    return this.roadmapService.getAccuracy(query.boardId, query.sprintId, query.quarter, query.week, query.weekMode);
   }
 
   @ApiOperation({ summary: 'List all JPD roadmap config entries' })

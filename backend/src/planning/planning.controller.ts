@@ -50,4 +50,12 @@ export class PlanningController {
   async getKanbanQuarters(@Param('boardId') boardId: string) {
     return this.planningService.getKanbanQuarters(boardId);
   }
+
+  @ApiOperation({
+    summary: 'Get weekly flow metrics for a Kanban board. Returns 400 for Scrum boards.',
+  })
+  @Get('kanban-weeks/:boardId')
+  async getKanbanWeeks(@Param('boardId') boardId: string) {
+    return this.planningService.getKanbanWeeks(boardId);
+  }
 }

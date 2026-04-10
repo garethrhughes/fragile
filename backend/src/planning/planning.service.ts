@@ -39,7 +39,19 @@ export interface KanbanQuarterSummary {
   addedMidQuarter: number;
   pointsIn: number;
   pointsDone: number;
-  deliveryRate: number; // 0–100
+  deliveryRate: number; // 0-100
+}
+
+export interface KanbanWeekSummary {
+  week: string;           // "2026-W15"
+  state: string;          // 'active' | 'closed'
+  weekStart: string;      // ISO date string
+  issuesPulledIn: number;
+  completed: number;
+  addedMidWeek: number;   // board entry date is > 1 day after week start
+  pointsIn: number;
+  pointsDone: number;
+  deliveryRate: number;   // 0-100
 }
 
 @Injectable()
@@ -192,7 +204,7 @@ export class PlanningService {
     for (const [issueKey, logs] of logsByIssue) {
       // Issues with no sprint changelog were assigned to the sprint at creation.
       // But if createdAt is after the grace-period window, the issue was created
-      // mid-sprint (e.g. filed directly into an active sprint) — treat as added.
+      // mid-sprint (e.g. filed directly into an active sprint) -- treat as added.
       const createdAt = issueCreatedAtMap.get(issueKey);
       const createdMidSprint =
         logs.length === 0 &&
@@ -464,7 +476,7 @@ export class PlanningService {
 
     const issueKeys = allIssues.map((i) => i.key);
 
-    // Bulk-load the earliest "To Do → *" status changelog per issue (board-entry date)
+    // Bulk-load the earliest "To Do -> *" status changelog per issue (board-entry date)
     const boardEntryChangelogs = await this.changelogRepo
       .createQueryBuilder('cl')
       .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
@@ -473,7 +485,7 @@ export class PlanningService {
       .orderBy('cl.changedAt', 'ASC')
       .getMany();
 
-    // issueKey → earliest date it left "To Do"
+    // issueKey -> earliest date it left "To Do"
     const boardEntryDate = new Map<string, Date>();
     for (const cl of boardEntryChangelogs) {
       if (!boardEntryDate.has(cl.issueKey)) {
@@ -588,6 +600,150 @@ export class PlanningService {
     return results;
   }
 
+  async getKanbanWeeks(boardId: string): Promise<KanbanWeekSummary[]> {
+    // Verify this is actually a Kanban board
+    const config = await this.boardConfigRepo.findOne({ where: { boardId } });
+    if (!config || config.boardType !== 'kanban') {
+      throw new BadRequestException(
+        `Board ${boardId} is not a Kanban board`,
+      );
+    }
+
+    const doneStatuses: string[] = config.doneStatusNames ?? ['Done', 'Closed', 'Released'];
+    const backlogStatusIds: string[] = config.backlogStatusIds ?? [];
+
+    // Load all issues for this board, excluding Epics and Sub-tasks
+    const allIssues = (
+      await this.issueRepo.find({ where: { boardId } })
+    ).filter((i) => i.issueType !== 'Epic' && i.issueType !== 'Sub-task');
+
+    if (allIssues.length === 0) {
+      return [];
+    }
+
+    const issueKeys = allIssues.map((i) => i.key);
+
+    // Bulk-load the earliest "To Do -> *" status changelog per issue (board-entry date)
+    const boardEntryChangelogs = await this.changelogRepo
+      .createQueryBuilder('cl')
+      .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
+      .andWhere('cl.field = :field', { field: 'status' })
+      .andWhere('cl.fromValue = :from', { from: 'To Do' })
+      .orderBy('cl.changedAt', 'ASC')
+      .getMany();
+
+    // issueKey -> earliest date it left "To Do"
+    const boardEntryDate = new Map<string, Date>();
+    for (const cl of boardEntryChangelogs) {
+      if (!boardEntryDate.has(cl.issueKey)) {
+        boardEntryDate.set(cl.issueKey, cl.changedAt);
+      }
+    }
+
+    // Bulk-load the set of issue keys that have ANY status changelog
+    const issueKeysWithChangelog = new Set<string>(
+      boardEntryChangelogs.map((cl) => cl.issueKey),
+    );
+    if (backlogStatusIds.length === 0) {
+      const anyStatusChangelogs = await this.changelogRepo
+        .createQueryBuilder('cl')
+        .select('DISTINCT cl."issueKey"', 'issueKey')
+        .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
+        .andWhere('cl.field = :field', { field: 'status' })
+        .getRawMany<{ issueKey: string }>();
+      for (const row of anyStatusChangelogs) {
+        issueKeysWithChangelog.add(row.issueKey);
+      }
+    }
+
+    // Exclude pure-backlog issues
+    const onBoardIssues = allIssues.filter((issue) => {
+      if (backlogStatusIds.length > 0) {
+        if (issue.statusId !== null) {
+          return !backlogStatusIds.includes(issue.statusId);
+        }
+      }
+      return issueKeysWithChangelog.has(issue.key);
+    });
+
+    if (onBoardIssues.length === 0) {
+      return [];
+    }
+
+    // Bucket issues by the week of their board-entry date (fall back to createdAt)
+    const weekMap = new Map<string, typeof onBoardIssues>();
+    for (const issue of onBoardIssues) {
+      const entryDate = boardEntryDate.get(issue.key) ?? issue.createdAt;
+      const key = this.dateToWeekKey(entryDate);
+      const list = weekMap.get(key) ?? [];
+      list.push(issue);
+      weekMap.set(key, list);
+    }
+
+    const now = new Date();
+    const currentWeekKey = this.dateToWeekKey(now);
+
+    const results: KanbanWeekSummary[] = [];
+
+    const sortedKeys = Array.from(weekMap.keys()).sort((a, b) =>
+      b.localeCompare(a),
+    );
+
+    for (const wKey of sortedKeys) {
+      const issues = weekMap.get(wKey)!;
+      const { weekStart } = this.weekKeyToDates(wKey);
+      // 1-day grace period (instead of 14-day for quarters)
+      const gracePeriodEnd = new Date(
+        weekStart.getTime() + 1 * 24 * 60 * 60 * 1000,
+      );
+      const state = wKey === currentWeekKey ? 'active' : 'closed';
+
+      let completed = 0;
+      let addedMidWeek = 0;
+      let pointsIn = 0;
+      let pointsDone = 0;
+
+      for (const issue of issues) {
+        const pts = issue.points ?? 0;
+        pointsIn += pts;
+
+        if (doneStatuses.includes(issue.status)) {
+          completed++;
+          pointsDone += pts;
+        }
+
+        const entryDate = boardEntryDate.get(issue.key) ?? issue.createdAt;
+        if (entryDate > gracePeriodEnd) {
+          addedMidWeek++;
+        }
+      }
+
+      const issuesPulledIn = issues.length;
+      const deliveryRate =
+        issuesPulledIn > 0
+          ? Math.round((completed / issuesPulledIn) * 10000) / 100
+          : 0;
+
+      results.push({
+        week: wKey,
+        state,
+        weekStart: weekStart.toISOString(),
+        issuesPulledIn,
+        completed,
+        addedMidWeek,
+        pointsIn,
+        pointsDone,
+        deliveryRate,
+      });
+    }
+
+    return results;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Quarter helpers
+  // ---------------------------------------------------------------------------
+
   private dateToQuarterKey(date: Date): string {
     const q = Math.floor(date.getMonth() / 3) + 1;
     return `${date.getFullYear()}-Q${q}`;
@@ -612,5 +768,59 @@ export class PlanningService {
       startDate: new Date(year, startMonth, 1),
       endDate: new Date(year, startMonth + 3, 0, 23, 59, 59, 999),
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // ISO week helpers
+  // ---------------------------------------------------------------------------
+
+  private dateToWeekKey(date: Date): string {
+    // Find the Thursday of the week (ISO weeks start Monday)
+    // Days to Thursday: Mon=+3, Tue=+2, Wed=+1, Thu=0, Fri=-1, Sat=-2, Sun=+4
+    const thursday = new Date(date);
+    const day = date.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+    const daysToThursday = day === 0 ? 4 : 4 - day;
+    thursday.setDate(date.getDate() + daysToThursday);
+
+    const isoYear = thursday.getFullYear();
+
+    // Day of year for Thursday
+    const startOfYear = new Date(isoYear, 0, 1);
+    const diffMs = thursday.getTime() - startOfYear.getTime();
+    const dayOfYear = Math.floor(diffMs / (24 * 60 * 60 * 1000)) + 1;
+    const weekNumber = Math.ceil(dayOfYear / 7);
+
+    return `${isoYear}-W${String(weekNumber).padStart(2, '0')}`;
+  }
+
+  private weekKeyToDates(week: string): { weekStart: Date; weekEnd: Date } {
+    const match = week.match(/^(\d{4})-W(\d{2})$/);
+    if (!match) {
+      throw new BadRequestException(
+        `Invalid week format: ${week}. Expected YYYY-Www`,
+      );
+    }
+
+    const year = parseInt(match[1], 10);
+    const weekNum = parseInt(match[2], 10);
+
+    // Jan 4 is always in ISO week 1
+    const jan4 = new Date(Date.UTC(year, 0, 4));
+    const jan4Day = jan4.getUTCDay(); // 0=Sun, 1=Mon, ...
+    // Monday of week 1
+    const mondayOfWeek1 = new Date(jan4);
+    const daysToMon = jan4Day === 0 ? -6 : 1 - jan4Day;
+    mondayOfWeek1.setUTCDate(jan4.getUTCDate() + daysToMon);
+
+    // Monday of the requested week
+    const weekStart = new Date(mondayOfWeek1);
+    weekStart.setUTCDate(mondayOfWeek1.getUTCDate() + (weekNum - 1) * 7);
+
+    // Sunday 23:59:59.999 (6 days after Monday)
+    const weekEnd = new Date(weekStart);
+    weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
+    weekEnd.setUTCHours(23, 59, 59, 999);
+
+    return { weekStart, weekEnd };
   }
 }

@@ -55,6 +55,8 @@ export class RoadmapService {
     boardId: string,
     sprintId?: string,
     quarter?: string,
+    week?: string,
+    weekMode?: boolean,
   ): Promise<RoadmapSprintAccuracy[]> {
     const boardConfig = await this.boardConfigRepo.findOne({ where: { boardId } });
     const isKanban = boardConfig?.boardType === 'kanban';
@@ -64,6 +66,15 @@ export class RoadmapService {
       throw new BadRequestException(
         'Sprint-level accuracy is not available for Kanban boards. Use quarter mode instead.',
       );
+    }
+
+    if (isKanban && week) {
+      return this.getKanbanWeeklyAccuracy(boardId, boardConfig, week);
+    }
+
+    // weekMode=true on a Kanban board: return all weeks without filtering
+    if (isKanban && weekMode) {
+      return this.getKanbanWeeklyAccuracy(boardId, boardConfig, undefined);
     }
 
     if (isKanban) {
@@ -289,6 +300,185 @@ export class RoadmapService {
   private issueToQuarterKey(date: Date): string {
     const q = Math.floor(date.getMonth() / 3) + 1;
     return `${date.getFullYear()}-Q${q}`;
+  }
+
+  private dateToWeekKey(date: Date): string {
+    // Find the Thursday of the week (ISO: weeks start Monday)
+    const thursday = new Date(date);
+    const day = date.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+    const daysToThursday = day === 0 ? 4 : 4 - day;
+    thursday.setDate(date.getDate() + daysToThursday);
+
+    const isoYear = thursday.getFullYear();
+
+    const startOfYear = new Date(isoYear, 0, 1);
+    const diffMs = thursday.getTime() - startOfYear.getTime();
+    const dayOfYear = Math.floor(diffMs / (24 * 60 * 60 * 1000)) + 1;
+    const weekNumber = Math.ceil(dayOfYear / 7);
+
+    return `${isoYear}-W${String(weekNumber).padStart(2, '0')}`;
+  }
+
+  private weekKeyToDates(week: string): { weekStart: Date; weekEnd: Date } {
+    const match = week.match(/^(\d{4})-W(\d{2})$/);
+    if (!match) {
+      throw new BadRequestException(
+        `Invalid week format: ${week}. Expected YYYY-Www`,
+      );
+    }
+
+    const year = parseInt(match[1], 10);
+    const weekNum = parseInt(match[2], 10);
+
+    // Jan 4 is always in ISO week 1
+    const jan4 = new Date(Date.UTC(year, 0, 4));
+    const jan4Day = jan4.getUTCDay();
+    const daysToMon = jan4Day === 0 ? -6 : 1 - jan4Day;
+    const mondayOfWeek1 = new Date(jan4);
+    mondayOfWeek1.setUTCDate(jan4.getUTCDate() + daysToMon);
+
+    const weekStart = new Date(mondayOfWeek1);
+    weekStart.setUTCDate(mondayOfWeek1.getUTCDate() + (weekNum - 1) * 7);
+
+    const weekEnd = new Date(weekStart);
+    weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
+    weekEnd.setUTCHours(23, 59, 59, 999);
+
+    return { weekStart, weekEnd };
+  }
+
+  /**
+   * For Kanban boards: group issues by the ISO week in which they were first
+   * moved off "To Do" (i.e. pulled onto the board).
+   */
+  private async getKanbanWeeklyAccuracy(
+    boardId: string,
+    boardConfig: BoardConfig | null,
+    week?: string,
+  ): Promise<RoadmapSprintAccuracy[]> {
+    const coveredEpicKeys = await this.loadCoveredEpicKeys();
+    const doneStatusNames: string[] =
+      boardConfig?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
+    const backlogStatusIds: string[] = boardConfig?.backlogStatusIds ?? [];
+
+    // Load all Kanban issues for this board, excluding Epics and Sub-tasks
+    const allIssues = (await this.issueRepo.find({ where: { boardId } })).filter(
+      (i) => i.issueType !== 'Epic' && i.issueType !== 'Sub-task',
+    );
+
+    if (allIssues.length === 0) {
+      return [];
+    }
+
+    const issueKeys = allIssues.map((i) => i.key);
+
+    // Bulk-load status changelogs for all these issues in one query
+    const changelogs = await this.changelogRepo
+      .createQueryBuilder('cl')
+      .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
+      .andWhere('cl.field = :field', { field: 'status' })
+      .andWhere('cl.fromValue = :from', { from: 'To Do' })
+      .orderBy('cl.changedAt', 'ASC')
+      .getMany();
+
+    // Build map: issueKey → earliest date it left "To Do"
+    const boardEntryDate = new Map<string, Date>();
+    for (const cl of changelogs) {
+      if (!boardEntryDate.has(cl.issueKey)) {
+        boardEntryDate.set(cl.issueKey, cl.changedAt);
+      }
+    }
+
+    // Build set of issue keys that have any status changelog (fallback heuristic)
+    const issueKeysWithChangelog = new Set<string>(changelogs.map((cl) => cl.issueKey));
+    if (backlogStatusIds.length === 0) {
+      const anyStatusChangelogs = await this.changelogRepo
+        .createQueryBuilder('cl')
+        .select('DISTINCT cl."issueKey"', 'issueKey')
+        .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
+        .andWhere('cl.field = :field', { field: 'status' })
+        .getRawMany<{ issueKey: string }>();
+      for (const row of anyStatusChangelogs) {
+        issueKeysWithChangelog.add(row.issueKey);
+      }
+    }
+
+    // Exclude pure-backlog issues
+    const onBoardIssues = allIssues.filter((issue) => {
+      if (backlogStatusIds.length > 0) {
+        if (issue.statusId !== null) {
+          return !backlogStatusIds.includes(issue.statusId);
+        }
+      }
+      return issueKeysWithChangelog.has(issue.key);
+    });
+
+    if (onBoardIssues.length === 0) {
+      return [];
+    }
+
+    // Group issues by the week of their board-entry date (fall back to createdAt)
+    const weekMap = new Map<string, JiraIssue[]>();
+    for (const issue of onBoardIssues) {
+      const entryDate = boardEntryDate.get(issue.key) ?? issue.createdAt;
+      const key = this.dateToWeekKey(entryDate);
+      const list = weekMap.get(key) ?? [];
+      list.push(issue);
+      weekMap.set(key, list);
+    }
+
+    // Filter to requested week if provided; otherwise all, newest first
+    const filteredKeys = week
+      ? Array.from(weekMap.keys()).filter((k) => k === week)
+      : Array.from(weekMap.keys()).sort((a, b) => b.localeCompare(a));
+
+    const now = new Date();
+    const currentWeekKey = this.dateToWeekKey(now);
+
+    const results: RoadmapSprintAccuracy[] = [];
+    for (const wKey of filteredKeys) {
+      const issues = weekMap.get(wKey)!;
+      const { weekStart } = this.weekKeyToDates(wKey);
+      const state = wKey === currentWeekKey ? 'active' : 'closed';
+
+      const coveredIssues = issues.filter(
+        (i) => i.epicKey !== null && coveredEpicKeys.has(i.epicKey),
+      );
+      const coveredKeys = new Set(coveredIssues.map((i) => i.key));
+
+      const completedKeys = new Set<string>(
+        issues
+          .filter((i) => doneStatusNames.includes(i.status))
+          .map((i) => i.key),
+      );
+
+      const totalIssues = issues.length;
+      const coveredCount = coveredIssues.length;
+      const linkedCompletedIssues = [...completedKeys].filter((k) =>
+        coveredKeys.has(k),
+      ).length;
+
+      results.push({
+        sprintId: wKey,
+        sprintName: wKey,
+        state,
+        startDate: weekStart.toISOString(),
+        totalIssues,
+        coveredIssues: coveredCount,
+        uncoveredIssues: totalIssues - coveredCount,
+        roadmapCoverage:
+          totalIssues > 0
+            ? Math.round((coveredCount / totalIssues) * 10000) / 100
+            : 0,
+        linkedCompletedIssues,
+        roadmapDeliveryRate:
+          coveredCount > 0
+            ? Math.round((linkedCompletedIssues / coveredCount) * 10000) / 100
+            : 0,
+      });
+    }
+
+    return results;
   }
 
   private async calculateSprintAccuracy(
