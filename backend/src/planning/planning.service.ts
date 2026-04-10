@@ -4,7 +4,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository } from 'typeorm';
 import {
   JiraSprint,
   JiraIssue,
@@ -16,6 +16,7 @@ export interface SprintAccuracy {
   sprintId: string;
   sprintName: string;
   state: string;
+  startDate: string | null;
   commitment: number;
   added: number;
   removed: number;
@@ -79,11 +80,16 @@ export class PlanningService {
         .orderBy('s.startDate', 'ASC')
         .getMany();
     } else {
-      sprints = await this.sprintRepo.find({
+      // Return all non-future sprints: active first, then closed descending
+      const active = await this.sprintRepo.find({
+        where: { boardId, state: 'active' },
+        order: { startDate: 'DESC' },
+      });
+      const closed = await this.sprintRepo.find({
         where: { boardId, state: 'closed' },
         order: { startDate: 'DESC' },
-        take: 10,
       });
+      sprints = [...active, ...closed];
     }
 
     const results: SprintAccuracy[] = [];
@@ -293,6 +299,7 @@ export class PlanningService {
       sprintId: sprint.id,
       sprintName: sprint.name,
       state: sprint.state,
+      startDate: sprint.startDate ? sprint.startDate.toISOString() : null,
       commitment,
       added,
       removed,
@@ -366,6 +373,7 @@ export class PlanningService {
       sprintId: sprint.id,
       sprintName: sprint.name,
       state: sprint.state,
+      startDate: sprint.startDate ? sprint.startDate.toISOString() : null,
       commitment: 0,
       added: 0,
       removed: 0,

@@ -1,13 +1,18 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Save, Eye, EyeOff, Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { Save, Eye, EyeOff, Loader2, CheckCircle, XCircle, Plus, Trash2, RefreshCw } from 'lucide-react';
 import { useAuthStore } from '@/store/auth-store';
 import {
   getBoards,
   getBoardConfig,
   updateBoardConfig,
+  getRoadmapConfigs,
+  createRoadmapConfig,
+  deleteRoadmapConfig,
+  triggerRoadmapSync,
   type BoardConfig,
+  type RoadmapConfig,
 } from '@/lib/api';
 
 // ---------------------------------------------------------------------------
@@ -89,6 +94,13 @@ export default function SettingsPage() {
   const [configLoading, setConfigLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // JPD / Roadmap config
+  const [jpdConfigs, setJpdConfigs] = useState<RoadmapConfig[]>([]);
+  const [jpdConfigsLoading, setJpdConfigsLoading] = useState(false);
+  const [newJpdKey, setNewJpdKey] = useState('');
+  const [jpdSyncing, setJpdSyncing] = useState(false);
+  const [jpdAdding, setJpdAdding] = useState(false);
+
   // Load board list
   useEffect(() => {
     getBoards()
@@ -100,6 +112,11 @@ export default function SettingsPage() {
       .catch(() => {
         // Boards may not be available yet
       });
+    setJpdConfigsLoading(true);
+    getRoadmapConfigs()
+      .then(setJpdConfigs)
+      .catch(() => {})
+      .finally(() => setJpdConfigsLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load config when active board changes
@@ -357,6 +374,128 @@ export default function SettingsPage() {
           <p className="text-sm text-muted">
             No boards available. Please sync data first.
           </p>
+        )}
+      </section>
+
+      {/* Roadmap Config (JPD) section */}
+      <section className="rounded-xl border border-border bg-card p-6">
+        <h2 className="mb-4 text-lg font-semibold">Roadmap Config (JPD)</h2>
+
+        {jpdConfigsLoading && (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-6 w-6 animate-spin text-muted" />
+          </div>
+        )}
+
+        {!jpdConfigsLoading && (
+          <div className="space-y-4">
+            {/* Existing configs list */}
+            {jpdConfigs.length > 0 && (
+              <div className="space-y-2">
+                {jpdConfigs.map((cfg) => (
+                  <div
+                    key={cfg.id}
+                    className="flex items-center justify-between rounded-lg border border-border bg-background px-4 py-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <code className="rounded bg-gray-100 px-2 py-0.5 text-sm font-mono">
+                        {cfg.jpdKey}
+                      </code>
+                      {cfg.description && (
+                        <span className="text-sm text-muted">{cfg.description}</span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        deleteRoadmapConfig(cfg.id)
+                          .then(() => {
+                            setJpdConfigs((prev) => prev.filter((c) => c.id !== cfg.id));
+                            show('success', `Removed JPD config for ${cfg.jpdKey}`);
+                          })
+                          .catch(() => {
+                            show('error', `Failed to delete config for ${cfg.jpdKey}`);
+                          });
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {jpdConfigs.length === 0 && (
+              <p className="text-sm text-muted">No JPD project keys configured.</p>
+            )}
+
+            {/* Add new config */}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newJpdKey}
+                onChange={(e) => setNewJpdKey(e.target.value)}
+                placeholder="JPD project key, e.g. DISC"
+                className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm placeholder:text-muted focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+              <button
+                type="button"
+                disabled={jpdAdding || !newJpdKey.trim()}
+                onClick={() => {
+                  const key = newJpdKey.trim();
+                  if (!key) return;
+                  setJpdAdding(true);
+                  createRoadmapConfig({ jpdKey: key })
+                    .then((cfg) => {
+                      setJpdConfigs((prev) => [...prev, cfg]);
+                      setNewJpdKey('');
+                      show('success', `Added JPD config for ${cfg.jpdKey}`);
+                    })
+                    .catch(() => {
+                      show('error', 'Failed to add JPD config');
+                    })
+                    .finally(() => setJpdAdding(false));
+                }}
+                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+              >
+                {jpdAdding ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Plus className="h-4 w-4" />
+                )}
+                {jpdAdding ? 'Adding…' : 'Add'}
+              </button>
+            </div>
+
+            {/* Sync button */}
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                disabled={jpdSyncing}
+                onClick={() => {
+                  setJpdSyncing(true);
+                  triggerRoadmapSync()
+                    .then((res) => {
+                      show('success', res.message ?? 'Roadmap sync triggered');
+                    })
+                    .catch(() => {
+                      show('error', 'Failed to trigger roadmap sync');
+                    })
+                    .finally(() => setJpdSyncing(false));
+                }}
+                className="inline-flex items-center gap-2 rounded-lg border border-border px-5 py-2.5 text-sm font-medium transition-colors hover:bg-gray-50 disabled:opacity-50"
+              >
+                {jpdSyncing ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+                {jpdSyncing ? 'Syncing…' : 'Sync Roadmaps'}
+              </button>
+            </div>
+          </div>
         )}
       </section>
     </div>

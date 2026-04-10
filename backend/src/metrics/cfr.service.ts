@@ -15,6 +15,8 @@ export interface CfrResult {
   failureCount: number;
   changeFailureRate: number;
   band: DoraBand;
+  /** True when no BoardConfig row exists for this board and hardcoded defaults are in use. */
+  usingDefaultConfig: boolean;
 }
 
 @Injectable()
@@ -38,6 +40,7 @@ export class CfrService {
     const config = await this.boardConfigRepo.findOne({
       where: { boardId },
     });
+    const usingDefaultConfig = config === null;
     const doneStatuses = config?.doneStatusNames ?? [
       'Done',
       'Closed',
@@ -65,6 +68,7 @@ export class CfrService {
         failureCount: 0,
         changeFailureRate: 0,
         band: classifyChangeFailureRate(0),
+        usingDefaultConfig,
       };
     }
 
@@ -139,6 +143,7 @@ export class CfrService {
       failureCount,
       changeFailureRate,
       band: classifyChangeFailureRate(changeFailureRate),
+      usingDefaultConfig,
     };
   }
 }

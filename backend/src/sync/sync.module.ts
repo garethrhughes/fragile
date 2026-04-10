@@ -10,6 +10,8 @@ import {
   JiraVersion,
   SyncLog,
   BoardConfig,
+  RoadmapConfig,
+  JpdIdea,
 } from '../database/entities/index.js';
 
 @Module({
@@ -21,6 +23,8 @@ import {
       JiraVersion,
       SyncLog,
       BoardConfig,
+      RoadmapConfig,
+      JpdIdea,
     ]),
     JiraModule,
   ],

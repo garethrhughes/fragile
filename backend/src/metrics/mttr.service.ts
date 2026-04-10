@@ -69,20 +69,30 @@ export class MttrService {
 
     const incidentKeys = incidentIssues.map((i) => i.key);
 
-    // Get recovery transitions in bulk
-    const recoveryChangelogs = await this.changelogRepo
+    // Get all status changelogs for incident issues (in period for recovery,
+    // but we also need pre-period In Progress transitions for start time)
+    const allIncidentChangelogs = await this.changelogRepo
       .createQueryBuilder('cl')
       .where('cl.issueKey IN (:...keys)', { keys: incidentKeys })
       .andWhere('cl.field = :field', { field: 'status' })
-      .andWhere('cl.toValue IN (:...statuses)', {
-        statuses: recoveryStatuses,
-      })
-      .andWhere('cl.changedAt BETWEEN :start AND :end', {
-        start: startDate,
-        end: endDate,
-      })
       .orderBy('cl.changedAt', 'ASC')
       .getMany();
+
+    // Group all changelogs by issue
+    const changelogsByIssue = new Map<string, JiraChangelog[]>();
+    for (const cl of allIncidentChangelogs) {
+      const list = changelogsByIssue.get(cl.issueKey) ?? [];
+      list.push(cl);
+      changelogsByIssue.set(cl.issueKey, list);
+    }
+
+    // Get recovery transitions in bulk (within the period)
+    const recoveryChangelogs = allIncidentChangelogs.filter(
+      (cl) =>
+        recoveryStatuses.includes(cl.toValue ?? '') &&
+        cl.changedAt >= startDate &&
+        cl.changedAt <= endDate,
+    );
 
     // Group by issue and take first recovery transition
     const firstRecoveryByIssue = new Map<string, Date>();
@@ -92,7 +102,12 @@ export class MttrService {
       }
     }
 
-    // Calculate MTTR for each incident
+    // Calculate MTTR for each incident.
+    // Start time = first "In Progress" transition (when work began), falling
+    // back to issue creation if no such transition exists. This avoids
+    // undercounting when tickets are created hours after the incident starts
+    // being actively worked — measuring ticket lifecycle rather than wall-clock
+    // discovery time.
     const issueMap = new Map(incidentIssues.map((i) => [i.key, i]));
     const recoveryHours: number[] = [];
 
@@ -100,9 +115,16 @@ export class MttrService {
       const issue = issueMap.get(issueKey);
       if (!issue) continue;
 
+      const issueLogs = changelogsByIssue.get(issueKey) ?? [];
+      const inProgressTransition = issueLogs.find(
+        (cl) => cl.toValue === 'In Progress',
+      );
+      const startTime = inProgressTransition
+        ? inProgressTransition.changedAt
+        : issue.createdAt;
+
       const hours =
-        (recoveryDate.getTime() - issue.createdAt.getTime()) /
-        (1000 * 60 * 60);
+        (recoveryDate.getTime() - startTime.getTime()) / (1000 * 60 * 60);
       if (hours >= 0) {
         recoveryHours.push(hours);
       }

@@ -3,7 +3,7 @@ export type DoraBand = 'elite' | 'high' | 'medium' | 'low';
 export function classifyDeploymentFrequency(
   deploymentsPerDay: number,
 ): DoraBand {
-  if (deploymentsPerDay >= 2) return 'elite';
+  if (deploymentsPerDay >= 1) return 'elite'; // at least daily (on-demand)
   if (deploymentsPerDay >= 1 / 7) return 'high'; // at least weekly
   if (deploymentsPerDay >= 1 / 30) return 'medium'; // at least monthly
   return 'low';

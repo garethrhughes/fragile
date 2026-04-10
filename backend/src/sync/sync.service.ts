@@ -11,6 +11,8 @@ import {
   JiraVersion,
   SyncLog,
   BoardConfig,
+  RoadmapConfig,
+  JpdIdea,
 } from '../database/entities/index.js';
 import type {
   JiraChangelogEntry,
@@ -36,6 +38,10 @@ export class SyncService {
     private readonly syncLogRepo: Repository<SyncLog>,
     @InjectRepository(BoardConfig)
     private readonly boardConfigRepo: Repository<BoardConfig>,
+    @InjectRepository(RoadmapConfig)
+    private readonly roadmapConfigRepo: Repository<RoadmapConfig>,
+    @InjectRepository(JpdIdea)
+    private readonly jpdIdeaRepo: Repository<JpdIdea>,
   ) {}
 
   @Cron('0 */30 * * * *')
@@ -55,6 +61,14 @@ export class SyncService {
     for (const boardId of boardIds) {
       const result = await this.syncBoard(boardId);
       results.push(result);
+    }
+
+    try {
+      await this.syncRoadmaps();
+    } catch (error) {
+      this.logger.warn(
+        `syncRoadmaps failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     return { boards: boardIds, results };
@@ -264,6 +278,17 @@ export class SyncService {
       issue.points = null;
     }
 
+    // Extract epicKey: prefer modern parent link (only if parent is an Epic),
+    // fall back to legacy customfield_10014 epic link field.
+    const parent = raw.fields.parent;
+    if (parent?.fields?.issuetype?.name === 'Epic') {
+      issue.epicKey = parent.key;
+    } else if (typeof raw.fields.customfield_10014 === 'string') {
+      issue.epicKey = raw.fields.customfield_10014;
+    } else {
+      issue.epicKey = null;
+    }
+
     return issue;
   }
 
@@ -345,6 +370,70 @@ export class SyncService {
         `Could not sync versions for board ${boardId}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  async syncRoadmaps(): Promise<void> {
+    const configs = await this.roadmapConfigRepo.find();
+    for (const cfg of configs) {
+      try {
+        await this.syncJpdProject(cfg.jpdKey);
+      } catch (error) {
+        this.logger.warn(
+          `Failed to sync JPD project ${cfg.jpdKey}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+
+  private async syncJpdProject(jpdKey: string): Promise<void> {
+    let nextPageToken: string | undefined;
+    const ideas: JpdIdea[] = [];
+
+    do {
+      const response = await this.jiraClient.getJpdIdeas(jpdKey, nextPageToken);
+
+      for (const issue of response.issues) {
+        const deliveryIssueKeys: string[] = [];
+
+        for (const link of issue.fields.issuelinks ?? []) {
+          const inward = link.type.inward.toLowerCase();
+          const outward = link.type.outward.toLowerCase();
+
+          // Polaris work item link: idea "is implemented by" an Epic (inward side)
+          // Also handles legacy "is delivered by" / "delivers" naming.
+          const isDeliveryLink =
+            inward.includes('is implemented by') ||
+            inward.includes('is delivered by') ||
+            outward.includes('implements') ||
+            outward.includes('delivers');
+
+          if (isDeliveryLink) {
+            if (link.inwardIssue?.fields?.issuetype?.name === 'Epic') {
+              deliveryIssueKeys.push(link.inwardIssue.key);
+            }
+            if (link.outwardIssue?.fields?.issuetype?.name === 'Epic') {
+              deliveryIssueKeys.push(link.outwardIssue.key);
+            }
+          }
+        }
+
+        const idea = new JpdIdea();
+        idea.key = issue.key;
+        idea.summary = issue.fields.summary;
+        idea.status = issue.fields.status.name;
+        idea.jpdKey = jpdKey;
+        idea.deliveryIssueKeys = deliveryIssueKeys.length > 0 ? deliveryIssueKeys : null;
+        ideas.push(idea);
+      }
+
+      nextPageToken = response.nextPageToken;
+    } while (nextPageToken);
+
+    if (ideas.length > 0) {
+      await this.jpdIdeaRepo.upsert(ideas, ['key']);
+    }
+
+    this.logger.log(`Synced ${ideas.length} JPD ideas for project ${jpdKey}`);
   }
 
   async getStatus(): Promise<

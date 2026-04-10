@@ -101,17 +101,22 @@ export class LeadTimeService {
     for (const issue of issues) {
       const issueLogs = changelogsByIssue.get(issue.key) ?? [];
 
-      // Determine start time
+      // Determine start time.
+      // For both Scrum and Kanban: prefer the first "In Progress" transition,
+      // which reflects when a team member actually began the work (aligns with
+      // LinearB's Jira-based Coding Time methodology and is more accurate than
+      // issue creation, which can precede active work by days or weeks).
+      // Kanban: skip issues with no In Progress transition (no meaningful start).
+      // Scrum: fall back to issue creation if no transition exists.
+      const inProgressTransition = issueLogs.find(
+        (cl) => cl.toValue === 'In Progress',
+      );
       let startTime: Date;
-      if (isKanban) {
-        // For Kanban: cycle time starts at first "In Progress" transition
-        const inProgressTransition = issueLogs.find(
-          (cl) => cl.toValue === 'In Progress',
-        );
-        if (!inProgressTransition) continue;
+      if (inProgressTransition) {
         startTime = inProgressTransition.changedAt;
+      } else if (isKanban) {
+        continue;
       } else {
-        // For Scrum: lead time starts at issue creation
         startTime = issue.createdAt;
       }
 

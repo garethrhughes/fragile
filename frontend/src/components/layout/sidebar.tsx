@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { BarChart3, Target, Settings } from 'lucide-react';
+import { BarChart3, Target, Map, Settings } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 interface NavItem {
@@ -14,6 +14,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { label: 'DORA Dashboard', href: '/dora', icon: <BarChart3 className="h-5 w-5" /> },
   { label: 'Planning', href: '/planning', icon: <Target className="h-5 w-5" /> },
+  { label: 'Roadmap', href: '/roadmap', icon: <Map className="h-5 w-5" /> },
   { label: 'Settings', href: '/settings', icon: <Settings className="h-5 w-5" /> },
 ];
 

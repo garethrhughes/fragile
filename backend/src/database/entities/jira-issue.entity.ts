@@ -31,6 +31,9 @@ export class JiraIssue {
   @Column()
   boardId!: string;
 
+  @Column({ type: 'varchar', nullable: true })
+  epicKey!: string | null;
+
   @Column('simple-json', { default: '[]' })
   labels!: string[];
 

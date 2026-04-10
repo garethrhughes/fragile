@@ -10,6 +10,7 @@ import { SyncModule } from './sync/sync.module.js';
 import { BoardsModule } from './boards/boards.module.js';
 import { MetricsModule } from './metrics/metrics.module.js';
 import { PlanningModule } from './planning/planning.module.js';
+import { RoadmapModule } from './roadmap/roadmap.module.js';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { PlanningModule } from './planning/planning.module.js';
     BoardsModule,
     MetricsModule,
     PlanningModule,
+    RoadmapModule,
     HealthModule,
   ],
 })

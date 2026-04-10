@@ -7,13 +7,13 @@ import {
 
 describe('DORA Band Classification', () => {
   describe('classifyDeploymentFrequency', () => {
-    it('should classify elite (multiple per day)', () => {
+    it('should classify elite (at least daily)', () => {
       expect(classifyDeploymentFrequency(3)).toBe('elite');
       expect(classifyDeploymentFrequency(2)).toBe('elite');
+      expect(classifyDeploymentFrequency(1)).toBe('elite');
     });
 
-    it('should classify high (daily to weekly)', () => {
-      expect(classifyDeploymentFrequency(1)).toBe('high');
+    it('should classify high (less than daily but at least weekly)', () => {
       expect(classifyDeploymentFrequency(0.5)).toBe('high');
       expect(classifyDeploymentFrequency(1 / 7)).toBe('high');
     });

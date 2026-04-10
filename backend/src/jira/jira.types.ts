@@ -16,6 +16,11 @@ export interface JiraSprintValue {
   originBoardId: number;
 }
 
+export interface JiraParentField {
+  key: string;
+  fields: { issuetype: { name: string } };
+}
+
 export interface JiraIssueSearchResponse {
   startAt: number;
   maxResults: number;
@@ -36,6 +41,8 @@ export interface JiraIssueValue {
     created: string;
     updated: string;
     issuelinks?: JiraIssueLink[];
+    parent?: JiraParentField;
+    customfield_10014?: string;
   };
 }
 

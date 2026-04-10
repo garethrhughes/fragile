@@ -2,9 +2,12 @@
 description: ADR authoring agent for the Jira DORA & Planning Metrics Dashboard. Captures and maintains architectural and technical decisions in docs/decisions/ using the ADR format, and keeps the decision index up to date.
 mode: subagent
 permission:
+  edit: allow
   bash:
     "*": ask
     "ls *": allow
+    "find *": allow
+    "mkdir *": allow
 ---
 
 You are the Decision Log agent for the Jira DORA & Planning Metrics Dashboard project.

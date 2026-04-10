@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getSprints, type SprintInfo } from '@/lib/api';
 
 interface SprintSelectProps {
@@ -12,6 +12,13 @@ interface SprintSelectProps {
 export function SprintSelect({ boardId, value, onChange }: SprintSelectProps) {
   const [sprints, setSprints] = useState<SprintInfo[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // Keep stable refs so the fetch effect only re-runs when boardId changes,
+  // not on every onChange / value identity change (which callers don't memoize).
+  const onChangeRef = useRef(onChange);
+  const valueRef = useRef(value);
+  useEffect(() => { onChangeRef.current = onChange; });
+  useEffect(() => { valueRef.current = value; });
 
   useEffect(() => {
     if (!boardId) {
@@ -26,9 +33,9 @@ export function SprintSelect({ boardId, value, onChange }: SprintSelectProps) {
           const list = res ?? [];
           setSprints(list);
           // Auto-select the first sprint (active first, then most recent closed)
-          if (list.length > 0 && !value) {
+          if (list.length > 0 && !valueRef.current) {
             const active = list.find((s) => s.state === 'active');
-            onChange((active ?? list[0]).id);
+            onChangeRef.current((active ?? list[0]).id);
           }
         }
       })

@@ -42,7 +42,7 @@ export class JiraClientService {
   ): Promise<JiraIssueSearchResponse> {
     const url =
       `${this.baseUrl}/rest/agile/1.0/board/${boardId}/sprint/${sprintId}/issue` +
-      `?maxResults=100&startAt=${startAt}&fields=summary,status,issuetype,fixVersions,labels,created,updated,issuelinks` +
+      `?maxResults=100&startAt=${startAt}&fields=summary,status,issuetype,fixVersions,labels,created,updated,issuelinks,parent` +
       `&expand=names`;
     return this.fetchWithRetry<JiraIssueSearchResponse>(url);
   }
@@ -64,14 +64,30 @@ export class JiraClientService {
 
   async searchIssues(
     jql: string,
-    startAt = 0,
+    _startAt = 0,
     maxResults = 100,
     nextPageToken?: string,
   ): Promise<JiraIssueSearchResponse> {
     const params = new URLSearchParams({
       jql,
       maxResults: String(maxResults),
-      fields: 'summary,status,issuetype,fixVersions,labels,created,updated,issuelinks',
+      fields: 'summary,status,issuetype,fixVersions,labels,created,updated,issuelinks,parent',
+    });
+    if (nextPageToken) {
+      params.set('nextPageToken', nextPageToken);
+    }
+    const url = `${this.baseUrl}/rest/api/3/search/jql?${params.toString()}`;
+    return this.fetchWithRetry<JiraIssueSearchResponse>(url);
+  }
+
+  async getJpdIdeas(
+    jpdKey: string,
+    nextPageToken?: string,
+  ): Promise<JiraIssueSearchResponse> {
+    const params = new URLSearchParams({
+      jql: `project=${jpdKey} ORDER BY updated DESC`,
+      fields: 'summary,status,issuelinks',
+      maxResults: '100',
     });
     if (nextPageToken) {
       params.set('nextPageToken', nextPageToken);

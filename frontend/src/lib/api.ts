@@ -31,6 +31,7 @@ export interface SprintAccuracy {
   sprintId: string;
   sprintName: string;
   state: string;
+  startDate: string | null;
   commitment: number;
   added: number;
   removed: number;
@@ -66,7 +67,7 @@ interface SyncStatusItem {
 
 type SyncStatusResponse = SyncStatusItem[];
 
-interface DoraMetricsBoard {
+export interface DoraMetricsBoard {
   boardId: string;
   period: { start: string; end: string };
   deploymentFrequency: {
@@ -89,6 +90,7 @@ interface DoraMetricsBoard {
     failureCount: number;
     changeFailureRate: number;
     band: DoraBand;
+    usingDefaultConfig: boolean;
   };
   mttr: {
     boardId: string;
@@ -104,7 +106,7 @@ type PlanningAccuracyResponse = SprintAccuracy[];
 
 export type SprintsResponse = SprintInfo[];
 
-interface QuarterInfo {
+export interface QuarterInfo {
   quarter: string;
   startDate: string;
   endDate: string;
@@ -285,4 +287,62 @@ export function getSprints(boardId: string): Promise<SprintsResponse> {
 
 export function getQuarters(): Promise<QuartersResponse> {
   return apiFetch('/api/planning/quarters');
+}
+
+// ---- Roadmap Accuracy types and endpoints --------------------------------
+
+export interface RoadmapConfig {
+  id: number;
+  jpdKey: string;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface RoadmapSprintAccuracy {
+  sprintId: string;
+  sprintName: string;
+  state: string;
+  startDate: string | null;
+  totalIssues: number;
+  coveredIssues: number;
+  uncoveredIssues: number;
+  roadmapCoverage: number;
+  linkedCompletedIssues: number;
+  roadmapDeliveryRate: number;
+}
+
+export function getRoadmapAccuracy(params: {
+  boardId: string;
+  sprintId?: string;
+  quarter?: string;
+}): Promise<RoadmapSprintAccuracy[]> {
+  return apiFetch(
+    `/api/roadmap/accuracy${toQueryString({
+      boardId: params.boardId,
+      sprintId: params.sprintId,
+      quarter: params.quarter,
+    })}`,
+  );
+}
+
+export function getRoadmapConfigs(): Promise<RoadmapConfig[]> {
+  return apiFetch('/api/roadmap/configs');
+}
+
+export function createRoadmapConfig(body: {
+  jpdKey: string;
+  description?: string;
+}): Promise<RoadmapConfig> {
+  return apiFetch('/api/roadmap/configs', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteRoadmapConfig(id: number): Promise<void> {
+  return apiFetch(`/api/roadmap/configs/${id}`, { method: 'DELETE' });
+}
+
+export function triggerRoadmapSync(): Promise<{ message: string }> {
+  return apiFetch('/api/roadmap/sync', { method: 'POST' });
 }
