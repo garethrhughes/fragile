@@ -451,6 +451,7 @@ export class PlanningService {
     }
 
     const doneStatuses: string[] = config.doneStatusNames ?? ['Done', 'Closed', 'Released'];
+    const backlogStatusIds: string[] = config.backlogStatusIds ?? [];
 
     // Load all issues for this board, excluding Epics and Sub-tasks
     const allIssues = (
@@ -461,9 +462,9 @@ export class PlanningService {
       return [];
     }
 
-    // Bulk-load the earliest "To Do → *" changelog for each issue
-    // (board-entry date — same logic as RoadmapService.getKanbanAccuracy)
     const issueKeys = allIssues.map((i) => i.key);
+
+    // Bulk-load the earliest "To Do → *" status changelog per issue (board-entry date)
     const boardEntryChangelogs = await this.changelogRepo
       .createQueryBuilder('cl')
       .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
@@ -480,9 +481,46 @@ export class PlanningService {
       }
     }
 
+    // Bulk-load the set of issue keys that have ANY status changelog
+    // (used as fallback when backlogStatusIds is not configured)
+    const issueKeysWithChangelog = new Set<string>(
+      boardEntryChangelogs.map((cl) => cl.issueKey),
+    );
+    // Also catch issues that moved between non-"To Do" statuses
+    if (backlogStatusIds.length === 0) {
+      const anyStatusChangelogs = await this.changelogRepo
+        .createQueryBuilder('cl')
+        .select('DISTINCT cl."issueKey"', 'issueKey')
+        .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
+        .andWhere('cl.field = :field', { field: 'status' })
+        .getRawMany<{ issueKey: string }>();
+      for (const row of anyStatusChangelogs) {
+        issueKeysWithChangelog.add(row.issueKey);
+      }
+    }
+
+    // Exclude pure-backlog issues: those that have never been pulled onto the board.
+    // Primary: statusId is in backlogStatusIds (precise, requires post-sync data).
+    // Fallback: issue has no status changelog at all (heuristic for pre-migration data).
+    const onBoardIssues = allIssues.filter((issue) => {
+      if (backlogStatusIds.length > 0) {
+        // If statusId is known and matches a backlog status, exclude it.
+        // If statusId is null (pre-migration), fall back to changelog heuristic.
+        if (issue.statusId !== null) {
+          return !backlogStatusIds.includes(issue.statusId);
+        }
+      }
+      // Fallback: only include issues that have moved at least once
+      return issueKeysWithChangelog.has(issue.key);
+    });
+
+    if (onBoardIssues.length === 0) {
+      return [];
+    }
+
     // Bucket issues by the quarter of their board-entry date (fall back to createdAt)
-    const quarterMap = new Map<string, typeof allIssues>();
-    for (const issue of allIssues) {
+    const quarterMap = new Map<string, typeof onBoardIssues>();
+    for (const issue of onBoardIssues) {
       const entryDate = boardEntryDate.get(issue.key) ?? issue.createdAt;
       const key = this.dateToQuarterKey(entryDate);
       const list = quarterMap.get(key) ?? [];
@@ -518,13 +556,11 @@ export class PlanningService {
         const pts = issue.points ?? 0;
         pointsIn += pts;
 
-        // Completed = currently in a done status
         if (doneStatuses.includes(issue.status)) {
           completed++;
           pointsDone += pts;
         }
 
-        // Mid-quarter = board-entry date is after the grace period
         const entryDate = boardEntryDate.get(issue.key) ?? issue.createdAt;
         if (entryDate > gracePeriodEnd) {
           addedMidQuarter++;

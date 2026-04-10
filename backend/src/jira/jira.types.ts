@@ -33,7 +33,7 @@ export interface JiraIssueValue {
   key: string;
   fields: {
     summary: string;
-    status: { name: string };
+    status: { id: string; name: string };
     issuetype: { name: string };
     fixVersions: { id: string; name: string; releaseDate?: string; released?: boolean }[];
     [customField: string]: unknown;

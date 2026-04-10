@@ -151,6 +151,7 @@ export class RoadmapService {
     const coveredEpicKeys = await this.loadCoveredEpicKeys();
     const doneStatusNames: string[] =
       boardConfig?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
+    const backlogStatusIds: string[] = boardConfig?.backlogStatusIds ?? [];
 
     // Load all Kanban issues for this board, excluding Epics and Sub-tasks
     const allIssues = (await this.issueRepo.find({ where: { boardId } })).filter(
@@ -161,8 +162,9 @@ export class RoadmapService {
       return [];
     }
 
-    // Bulk-load status changelogs for all these issues in one query
     const issueKeys = allIssues.map((i) => i.key);
+
+    // Bulk-load status changelogs for all these issues in one query
     const changelogs = await this.changelogRepo
       .createQueryBuilder('cl')
       .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
@@ -179,9 +181,37 @@ export class RoadmapService {
       }
     }
 
+    // Build set of issue keys that have any status changelog (fallback heuristic)
+    const issueKeysWithChangelog = new Set<string>(changelogs.map((cl) => cl.issueKey));
+    if (backlogStatusIds.length === 0) {
+      const anyStatusChangelogs = await this.changelogRepo
+        .createQueryBuilder('cl')
+        .select('DISTINCT cl."issueKey"', 'issueKey')
+        .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
+        .andWhere('cl.field = :field', { field: 'status' })
+        .getRawMany<{ issueKey: string }>();
+      for (const row of anyStatusChangelogs) {
+        issueKeysWithChangelog.add(row.issueKey);
+      }
+    }
+
+    // Exclude pure-backlog issues
+    const onBoardIssues = allIssues.filter((issue) => {
+      if (backlogStatusIds.length > 0) {
+        if (issue.statusId !== null) {
+          return !backlogStatusIds.includes(issue.statusId);
+        }
+      }
+      return issueKeysWithChangelog.has(issue.key);
+    });
+
+    if (onBoardIssues.length === 0) {
+      return [];
+    }
+
     // Group issues by the quarter of their board-entry date (fall back to createdAt)
     const quarterMap = new Map<string, JiraIssue[]>();
-    for (const issue of allIssues) {
+    for (const issue of onBoardIssues) {
       const entryDate = boardEntryDate.get(issue.key) ?? issue.createdAt;
       const key = this.issueToQuarterKey(entryDate);
       const list = quarterMap.get(key) ?? [];

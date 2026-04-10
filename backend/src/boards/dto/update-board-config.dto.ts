@@ -54,4 +54,14 @@ export class UpdateBoardConfigDto {
   @IsArray()
   @IsString({ each: true })
   incidentLabels?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['10303'],
+    description: 'Status IDs that represent the Kanban backlog (never-on-board). When set, issues whose current statusId is in this list are excluded from flow metrics.',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  backlogStatusIds?: string[];
 }

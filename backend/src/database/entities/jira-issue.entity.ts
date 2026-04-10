@@ -16,6 +16,9 @@ export class JiraIssue {
   @Column()
   status!: string;
 
+  @Column({ type: 'varchar', nullable: true, default: null })
+  statusId!: string | null;
+
   @Column()
   issueType!: string;
 

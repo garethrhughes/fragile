@@ -261,6 +261,7 @@ export class SyncService {
     issue.key = raw.key;
     issue.summary = raw.fields.summary;
     issue.status = raw.fields.status.name;
+    issue.statusId = raw.fields.status.id ?? null;
     issue.issueType = raw.fields.issuetype.name;
     issue.fixVersion =
       raw.fields.fixVersions?.length > 0

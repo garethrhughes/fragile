@@ -142,6 +142,7 @@ export class QuarterDetailService {
     const failureIssueTypes: string[] = boardConfig?.failureIssueTypes ?? ['Bug', 'Incident'];
     const failureLabels: string[] = boardConfig?.failureLabels ?? ['regression', 'incident', 'hotfix'];
     const boardType: string = boardConfig?.boardType ?? 'scrum';
+    const backlogStatusIds: string[] = boardConfig?.backlogStatusIds ?? [];
 
     // -----------------------------------------------------------------------
     // Step 3 — Load all issues for board
@@ -171,8 +172,14 @@ export class QuarterDetailService {
       changelogsByIssue.set(cl.issueKey, list);
     }
 
+    // Build set of issue keys that have any status changelog (backlog fallback)
+    const issueKeysWithStatusChangelog = new Set<string>();
+    for (const cl of allChangelogs) {
+      if (cl.field === 'status') issueKeysWithStatusChangelog.add(cl.issueKey);
+    }
+
     // -----------------------------------------------------------------------
-    // Step 5 — Compute board-entry date per issue
+    // Step 5 — Compute board-entry date per issue and exclude backlog items
     // -----------------------------------------------------------------------
     const boardEntryDateByKey = new Map<string, Date>();
 
@@ -198,10 +205,21 @@ export class QuarterDetailService {
       boardEntryDateByKey.set(issue.key, entryDate);
     }
 
+    // For Kanban boards, exclude pure-backlog issues (never pulled onto the board).
+    // Primary: statusId is in backlogStatusIds. Fallback: no status changelog at all.
+    const filteredIssues = boardType === 'kanban'
+      ? issues.filter((issue) => {
+          if (backlogStatusIds.length > 0 && issue.statusId !== null) {
+            return !backlogStatusIds.includes(issue.statusId);
+          }
+          return issueKeysWithStatusChangelog.has(issue.key);
+        })
+      : issues;
+
     // -----------------------------------------------------------------------
     // Step 6 — Filter issues to those whose boardEntryDate falls within the quarter
     // -----------------------------------------------------------------------
-    const quarterIssues = issues.filter((issue) => {
+    const quarterIssues = filteredIssues.filter((issue) => {
       const entryDate = boardEntryDateByKey.get(issue.key);
       if (!entryDate) return false;
       return entryDate >= quarterStart && entryDate <= quarterEnd;

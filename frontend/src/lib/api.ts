@@ -25,6 +25,7 @@ export interface BoardConfig {
   incidentIssueTypes: string[];
   recoveryStatusNames: string[];
   incidentLabels: string[];
+  backlogStatusIds: string[];
 }
 
 export interface SprintAccuracy {

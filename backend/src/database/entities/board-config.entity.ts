@@ -31,4 +31,13 @@ export class BoardConfig {
 
   @Column({ type: 'simple-json', default: '["Critical"]' })
   incidentPriorities!: string[];
+
+  /**
+   * Status IDs (not names) that represent the backlog / pre-board state for
+   * Kanban boards.  Issues whose current statusId is in this list have never
+   * been pulled onto the board and should be excluded from flow metrics.
+   * When empty the fallback heuristic (no status changelog = backlog) is used.
+   */
+  @Column({ type: 'simple-json', default: '[]' })
+  backlogStatusIds!: string[];
 }
