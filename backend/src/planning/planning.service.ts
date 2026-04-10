@@ -159,6 +159,9 @@ export class PlanningService {
     }
 
     // Classify each issue: committed, added, or removed
+    // IMPORTANT: Only consider changes within the sprint window [start, end].
+    // Changes after sprint end (carry-overs, sprint completion shuffles) are noise.
+    const sprintEnd = sprint.endDate ?? new Date();
     const committedKeys = new Set<string>();
     const addedKeys = new Set<string>();
     const removedKeys = new Set<string>();
@@ -170,38 +173,37 @@ export class PlanningService {
         sprintStart,
       );
 
-      // Track final sprint membership after sprint start
-      let inSprint = wasAtStart;
+      // Track membership only within the sprint window
+      let inSprintAtEnd = wasAtStart;
+      let wasAddedDuringSprint = false;
+
       for (const cl of logs) {
         if (cl.changedAt <= sprintStart) continue;
+        if (cl.changedAt > sprintEnd) break; // ignore post-sprint changes
+
         if (this.sprintValueContains(cl.toValue, sprintName)) {
-          inSprint = true;
+          if (!inSprintAtEnd && !wasAtStart) {
+            wasAddedDuringSprint = true;
+          }
+          inSprintAtEnd = true;
         }
         if (
           this.sprintValueContains(cl.fromValue, sprintName) &&
           !this.sprintValueContains(cl.toValue, sprintName)
         ) {
-          inSprint = false;
+          inSprintAtEnd = false;
         }
       }
 
       if (wasAtStart) {
         committedKeys.add(issueKey);
-        if (!inSprint) {
+        if (!inSprintAtEnd) {
           removedKeys.add(issueKey);
         }
-      } else {
-        // Was it ever added to this sprint after the start?
-        const addedAfterStart = logs.some(
-          (cl) =>
-            cl.changedAt > sprintStart &&
-            this.sprintValueContains(cl.toValue, sprintName),
-        );
-        if (addedAfterStart) {
-          addedKeys.add(issueKey);
-          if (!inSprint) {
-            removedKeys.add(issueKey);
-          }
+      } else if (wasAddedDuringSprint) {
+        addedKeys.add(issueKey);
+        if (!inSprintAtEnd) {
+          removedKeys.add(issueKey);
         }
       }
     }
