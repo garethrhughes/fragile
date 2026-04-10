@@ -1,0 +1,357 @@
+import {
+  Injectable,
+  BadRequestException,
+  Logger,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, In } from 'typeorm';
+import {
+  JiraSprint,
+  JiraIssue,
+  JiraChangelog,
+  BoardConfig,
+} from '../database/entities/index.js';
+
+export interface SprintAccuracy {
+  sprintId: string;
+  sprintName: string;
+  commitment: number;
+  added: number;
+  removed: number;
+  completed: number;
+  scopeChangePercent: number;
+  completionRate: number;
+}
+
+export interface QuarterInfo {
+  quarter: string;
+  startDate: string;
+  endDate: string;
+}
+
+@Injectable()
+export class PlanningService {
+  private readonly logger = new Logger(PlanningService.name);
+
+  constructor(
+    @InjectRepository(JiraSprint)
+    private readonly sprintRepo: Repository<JiraSprint>,
+    @InjectRepository(JiraIssue)
+    private readonly issueRepo: Repository<JiraIssue>,
+    @InjectRepository(JiraChangelog)
+    private readonly changelogRepo: Repository<JiraChangelog>,
+    @InjectRepository(BoardConfig)
+    private readonly boardConfigRepo: Repository<BoardConfig>,
+  ) {}
+
+  async getAccuracy(
+    boardId: string,
+    sprintId?: string,
+    quarter?: string,
+  ): Promise<SprintAccuracy[]> {
+    // Check for Kanban board
+    const config = await this.boardConfigRepo.findOne({
+      where: { boardId },
+    });
+    if (config?.boardType === 'kanban') {
+      throw new BadRequestException(
+        'Planning accuracy is not available for Kanban boards',
+      );
+    }
+
+    // Get sprints to analyze
+    let sprints: JiraSprint[];
+
+    if (sprintId) {
+      const sprint = await this.sprintRepo.findOne({
+        where: { id: sprintId, boardId },
+      });
+      sprints = sprint ? [sprint] : [];
+    } else if (quarter) {
+      const { startDate, endDate } = this.quarterToDates(quarter);
+      sprints = await this.sprintRepo
+        .createQueryBuilder('s')
+        .where('s.boardId = :boardId', { boardId })
+        .andWhere('s.state = :state', { state: 'closed' })
+        .andWhere('s.startDate >= :start', { start: startDate })
+        .andWhere('s.endDate <= :end', { end: endDate })
+        .orderBy('s.startDate', 'ASC')
+        .getMany();
+    } else {
+      sprints = await this.sprintRepo.find({
+        where: { boardId, state: 'closed' },
+        order: { startDate: 'DESC' },
+        take: 10,
+      });
+    }
+
+    const results: SprintAccuracy[] = [];
+
+    for (const sprint of sprints) {
+      const accuracy = await this.calculateSprintAccuracy(sprint);
+      results.push(accuracy);
+    }
+
+    return results;
+  }
+
+  private async calculateSprintAccuracy(
+    sprint: JiraSprint,
+  ): Promise<SprintAccuracy> {
+    if (!sprint.startDate) {
+      return this.emptyAccuracy(sprint);
+    }
+
+    // Get all issues currently associated with this sprint
+    const currentIssues = await this.issueRepo.find({
+      where: { sprintId: sprint.id },
+    });
+
+    const issueKeys = currentIssues.map((i) => i.key);
+
+    if (issueKeys.length === 0) {
+      return this.emptyAccuracy(sprint);
+    }
+
+    // Fetch all sprint-field changelogs for these issues in bulk
+    const sprintChangelogs = await this.changelogRepo
+      .createQueryBuilder('cl')
+      .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
+      .andWhere('cl.field = :field', { field: 'Sprint' })
+      .orderBy('cl.changedAt', 'ASC')
+      .getMany();
+
+    // Also get status changelogs in bulk
+    const statusChangelogs = await this.changelogRepo
+      .createQueryBuilder('cl')
+      .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
+      .andWhere('cl.field = :field', { field: 'status' })
+      .orderBy('cl.changedAt', 'ASC')
+      .getMany();
+
+    // Reconstruct sprint membership at sprint start date
+    // An issue was "committed" if it was in the sprint at sprint start
+    const sprintName = sprint.name;
+    const sprintStart = sprint.startDate;
+
+    const committedKeys = new Set<string>();
+    const addedKeys = new Set<string>();
+    const removedKeys = new Set<string>();
+
+    for (const issue of currentIssues) {
+      // Check if issue was added to sprint before or at sprint start
+      const issueSprintLogs = sprintChangelogs.filter(
+        (cl) => cl.issueKey === issue.key,
+      );
+
+      const wasInSprintAtStart = this.wasInSprintAtDate(
+        issueSprintLogs,
+        sprintName,
+        sprintStart,
+      );
+
+      if (wasInSprintAtStart) {
+        committedKeys.add(issue.key);
+      } else {
+        // Added after sprint start
+        addedKeys.add(issue.key);
+      }
+    }
+
+    // Check for removed issues: look for changelogs where sprint was removed
+    // from any issue after sprint started
+    const allSprintChangelogs = await this.changelogRepo
+      .createQueryBuilder('cl')
+      .where('cl.field = :field', { field: 'Sprint' })
+      .andWhere('cl.fromValue LIKE :sprintName', {
+        sprintName: `%${sprintName}%`,
+      })
+      .andWhere('cl.changedAt > :start', { start: sprintStart })
+      .getMany();
+
+    for (const cl of allSprintChangelogs) {
+      // The issue was removed from this sprint if the fromValue contained
+      // this sprint name and the toValue does not
+      if (
+        cl.fromValue?.includes(sprintName) &&
+        !cl.toValue?.includes(sprintName)
+      ) {
+        removedKeys.add(cl.issueKey);
+      }
+    }
+
+    // Determine completed issues
+    const config = await this.boardConfigRepo.findOne({
+      where: { boardId: sprint.boardId },
+    });
+    const doneStatuses = config?.doneStatusNames ?? [
+      'Done',
+      'Closed',
+      'Released',
+    ];
+
+    const completedKeys = new Set<string>();
+    const statusLogsByIssue = new Map<string, JiraChangelog[]>();
+    for (const cl of statusChangelogs) {
+      const list = statusLogsByIssue.get(cl.issueKey) ?? [];
+      list.push(cl);
+      statusLogsByIssue.set(cl.issueKey, list);
+    }
+
+    for (const issue of currentIssues) {
+      // An issue is completed if its current status is done,
+      // or if it has a done transition during the sprint window
+      if (doneStatuses.includes(issue.status)) {
+        completedKeys.add(issue.key);
+      } else {
+        const logs = statusLogsByIssue.get(issue.key) ?? [];
+        const hasDoneTransition = logs.some(
+          (cl) =>
+            doneStatuses.includes(cl.toValue ?? '') &&
+            sprint.endDate &&
+            cl.changedAt <= sprint.endDate,
+        );
+        if (hasDoneTransition) {
+          completedKeys.add(issue.key);
+        }
+      }
+    }
+
+    const commitment = committedKeys.size;
+    const added = addedKeys.size;
+    const removed = removedKeys.size;
+    const completed = completedKeys.size;
+    const totalScope = commitment + added;
+    const scopeChangePercent =
+      commitment > 0
+        ? Math.round(((added + removed) / commitment) * 10000) / 100
+        : 0;
+    const completionRate =
+      totalScope > 0
+        ? Math.round((completed / totalScope) * 10000) / 100
+        : 0;
+
+    return {
+      sprintId: sprint.id,
+      sprintName: sprint.name,
+      commitment,
+      added,
+      removed,
+      completed,
+      scopeChangePercent,
+      completionRate,
+    };
+  }
+
+  private wasInSprintAtDate(
+    sprintChangelogs: JiraChangelog[],
+    sprintName: string,
+    date: Date,
+  ): boolean {
+    // Look through changelogs before the date to determine if issue was in the sprint
+    let inSprint = false;
+
+    for (const cl of sprintChangelogs) {
+      if (cl.changedAt > date) break;
+
+      if (cl.toValue?.includes(sprintName)) {
+        inSprint = true;
+      }
+      if (
+        cl.fromValue?.includes(sprintName) &&
+        !cl.toValue?.includes(sprintName)
+      ) {
+        inSprint = false;
+      }
+    }
+
+    // If no changelog found, the issue might have been created with the sprint
+    // (first sprint assignment doesn't always have a changelog)
+    if (sprintChangelogs.length === 0) {
+      return true; // Assume committed if no sprint changelog exists
+    }
+
+    return inSprint;
+  }
+
+  private emptyAccuracy(sprint: JiraSprint): SprintAccuracy {
+    return {
+      sprintId: sprint.id,
+      sprintName: sprint.name,
+      commitment: 0,
+      added: 0,
+      removed: 0,
+      completed: 0,
+      scopeChangePercent: 0,
+      completionRate: 0,
+    };
+  }
+
+  async getSprints(
+    boardId: string,
+  ): Promise<{ id: string; name: string; state: string }[]> {
+    const sprints = await this.sprintRepo.find({
+      where: { boardId },
+      order: { startDate: 'DESC' },
+    });
+
+    return sprints.map((s) => ({
+      id: s.id,
+      name: s.name,
+      state: s.state,
+    }));
+  }
+
+  async getQuarters(): Promise<QuarterInfo[]> {
+    const sprints = await this.sprintRepo.find({
+      where: { state: 'closed' },
+      order: { startDate: 'ASC' },
+    });
+
+    const quarters = new Map<string, QuarterInfo>();
+
+    for (const sprint of sprints) {
+      if (!sprint.startDate) continue;
+      const d = sprint.startDate;
+      const q = Math.floor(d.getMonth() / 3) + 1;
+      const year = d.getFullYear();
+      const key = `${year}-Q${q}`;
+
+      if (!quarters.has(key)) {
+        const startMonth = (q - 1) * 3;
+        const startDate = new Date(year, startMonth, 1);
+        const endDate = new Date(year, startMonth + 3, 0, 23, 59, 59, 999);
+        quarters.set(key, {
+          quarter: key,
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+        });
+      }
+    }
+
+    return [...quarters.values()].sort((a, b) =>
+      b.quarter.localeCompare(a.quarter),
+    );
+  }
+
+  private quarterToDates(quarter: string): {
+    startDate: Date;
+    endDate: Date;
+  } {
+    const match = quarter.match(/^(\d{4})-Q([1-4])$/);
+    if (!match) {
+      throw new BadRequestException(
+        `Invalid quarter format: ${quarter}. Expected YYYY-QN`,
+      );
+    }
+
+    const year = parseInt(match[1], 10);
+    const q = parseInt(match[2], 10);
+    const startMonth = (q - 1) * 3;
+
+    return {
+      startDate: new Date(year, startMonth, 1),
+      endDate: new Date(year, startMonth + 3, 0, 23, 59, 59, 999),
+    };
+  }
+}

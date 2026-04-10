@@ -1,0 +1,43 @@
+import {
+  Entity,
+  Column,
+  PrimaryColumn,
+  UpdateDateColumn,
+  CreateDateColumn,
+} from 'typeorm';
+
+@Entity('jira_issues')
+export class JiraIssue {
+  @PrimaryColumn()
+  key!: string;
+
+  @Column()
+  summary!: string;
+
+  @Column()
+  status!: string;
+
+  @Column()
+  issueType!: string;
+
+  @Column({ type: 'varchar', nullable: true })
+  fixVersion!: string | null;
+
+  @Column({ type: 'float', nullable: true })
+  points!: number | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  sprintId!: string | null;
+
+  @Column()
+  boardId!: string;
+
+  @Column('simple-json', { default: '[]' })
+  labels!: string[];
+
+  @CreateDateColumn({ type: 'timestamptz' })
+  createdAt!: Date;
+
+  @UpdateDateColumn({ type: 'timestamptz' })
+  updatedAt!: Date;
+}

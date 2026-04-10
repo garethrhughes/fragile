@@ -1,9 +1,10 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { ClientShell } from '@/components/layout/client-shell';
 
 export const metadata: Metadata = {
-  title: 'AI Starter',
-  description: 'Full-stack TypeScript starter project',
+  title: 'DORA Metrics Dashboard',
+  description: 'Jira DORA & Planning Metrics Dashboard',
 };
 
 export default function RootLayout({
@@ -13,7 +14,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <ClientShell>{children}</ClientShell>
+      </body>
     </html>
   );
 }

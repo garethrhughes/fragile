@@ -1,0 +1,6 @@
+export { BoardConfig } from './board-config.entity.js';
+export { JiraSprint } from './jira-sprint.entity.js';
+export { JiraIssue } from './jira-issue.entity.js';
+export { JiraChangelog } from './jira-changelog.entity.js';
+export { JiraVersion } from './jira-version.entity.js';
+export { SyncLog } from './sync-log.entity.js';

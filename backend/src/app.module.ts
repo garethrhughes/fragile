@@ -2,12 +2,20 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 import { HealthModule } from './health/health.module.js';
+import { AuthModule } from './auth/auth.module.js';
+import { JiraModule } from './jira/jira.module.js';
+import { SyncModule } from './sync/sync.module.js';
+import { BoardsModule } from './boards/boards.module.js';
+import { MetricsModule } from './metrics/metrics.module.js';
+import { PlanningModule } from './planning/planning.module.js';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    ThrottlerModule.forRoot([{ ttl: 60000, limit: 60 }]),
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
+    ScheduleModule.forRoot(),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -24,6 +32,12 @@ import { HealthModule } from './health/health.module.js';
         synchronize: false,
       }),
     }),
+    AuthModule,
+    JiraModule,
+    SyncModule,
+    BoardsModule,
+    MetricsModule,
+    PlanningModule,
     HealthModule,
   ],
 })

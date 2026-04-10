@@ -1,0 +1,300 @@
+import { BadRequestException } from '@nestjs/common';
+import { PlanningService } from './planning.service.js';
+import { Repository } from 'typeorm';
+import {
+  JiraSprint,
+  JiraIssue,
+  JiraChangelog,
+  BoardConfig,
+} from '../database/entities/index.js';
+
+function mockRepo<T>(): jest.Mocked<Repository<T>> {
+  return {
+    find: jest.fn().mockResolvedValue([]),
+    findOne: jest.fn().mockResolvedValue(null),
+    createQueryBuilder: jest.fn().mockReturnValue({
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([]),
+    }),
+  } as unknown as jest.Mocked<Repository<T>>;
+}
+
+describe('PlanningService', () => {
+  let service: PlanningService;
+  let sprintRepo: jest.Mocked<Repository<JiraSprint>>;
+  let issueRepo: jest.Mocked<Repository<JiraIssue>>;
+  let changelogRepo: jest.Mocked<Repository<JiraChangelog>>;
+  let boardConfigRepo: jest.Mocked<Repository<BoardConfig>>;
+
+  beforeEach(() => {
+    sprintRepo = mockRepo<JiraSprint>();
+    issueRepo = mockRepo<JiraIssue>();
+    changelogRepo = mockRepo<JiraChangelog>();
+    boardConfigRepo = mockRepo<BoardConfig>();
+
+    service = new PlanningService(
+      sprintRepo,
+      issueRepo,
+      changelogRepo,
+      boardConfigRepo,
+    );
+  });
+
+  describe('getAccuracy', () => {
+    it('should throw for Kanban boards', async () => {
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardId: 'PLAT',
+        boardType: 'kanban',
+      } as BoardConfig);
+
+      await expect(service.getAccuracy('PLAT')).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(service.getAccuracy('PLAT')).rejects.toThrow(
+        'Planning accuracy is not available for Kanban boards',
+      );
+    });
+
+    it('should return empty array when no sprints found', async () => {
+      sprintRepo.find.mockResolvedValue([]);
+
+      const result = await service.getAccuracy('ACC');
+
+      expect(result).toEqual([]);
+    });
+
+    it('should calculate sprint accuracy with committed issues', async () => {
+      const sprint: JiraSprint = {
+        id: 'sprint-1',
+        name: 'Sprint 1',
+        boardId: 'ACC',
+        state: 'closed',
+        startDate: new Date('2025-01-06'),
+        endDate: new Date('2025-01-20'),
+        goal: '',
+      } as JiraSprint;
+
+      sprintRepo.find.mockResolvedValue([sprint]);
+
+      // 3 issues in the sprint
+      issueRepo.find.mockResolvedValue([
+        { key: 'ACC-1', sprintId: 'sprint-1', status: 'Done' },
+        { key: 'ACC-2', sprintId: 'sprint-1', status: 'Done' },
+        { key: 'ACC-3', sprintId: 'sprint-1', status: 'In Progress' },
+      ] as JiraIssue[]);
+
+      // Sprint changelogs: all 3 were added before sprint start
+      const sprintQb = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn(),
+      };
+
+      // Status changelogs
+      const statusQb = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn(),
+      };
+
+      // Removed changelogs
+      const removedQb = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([]),
+      };
+
+      let qbCallCount = 0;
+      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
+        qbCallCount++;
+        if (qbCallCount === 1) {
+          // Sprint changelogs: all added before sprint start
+          sprintQb.getMany.mockResolvedValue([
+            {
+              issueKey: 'ACC-1',
+              field: 'Sprint',
+              toValue: 'Sprint 1',
+              fromValue: null,
+              changedAt: new Date('2025-01-04'),
+            },
+            {
+              issueKey: 'ACC-2',
+              field: 'Sprint',
+              toValue: 'Sprint 1',
+              fromValue: null,
+              changedAt: new Date('2025-01-05'),
+            },
+            {
+              issueKey: 'ACC-3',
+              field: 'Sprint',
+              toValue: 'Sprint 1',
+              fromValue: null,
+              changedAt: new Date('2025-01-05'),
+            },
+          ]);
+          return sprintQb;
+        }
+        if (qbCallCount === 2) {
+          // Status changelogs
+          statusQb.getMany.mockResolvedValue([
+            {
+              issueKey: 'ACC-1',
+              field: 'status',
+              toValue: 'Done',
+              changedAt: new Date('2025-01-15'),
+            },
+            {
+              issueKey: 'ACC-2',
+              field: 'status',
+              toValue: 'Done',
+              changedAt: new Date('2025-01-18'),
+            },
+          ]);
+          return statusQb;
+        }
+        return removedQb;
+      });
+
+      const result = await service.getAccuracy('ACC');
+
+      expect(result).toHaveLength(1);
+      expect(result[0].commitment).toBe(3);
+      expect(result[0].added).toBe(0);
+      expect(result[0].completed).toBe(2);
+      expect(result[0].completionRate).toBeCloseTo(66.67, 1);
+    });
+
+    it('should detect added issues (after sprint start)', async () => {
+      const sprint: JiraSprint = {
+        id: 'sprint-2',
+        name: 'Sprint 2',
+        boardId: 'ACC',
+        state: 'closed',
+        startDate: new Date('2025-02-01'),
+        endDate: new Date('2025-02-14'),
+        goal: '',
+      } as JiraSprint;
+
+      sprintRepo.find.mockResolvedValue([sprint]);
+
+      issueRepo.find.mockResolvedValue([
+        { key: 'ACC-10', sprintId: 'sprint-2', status: 'Done' },
+        { key: 'ACC-11', sprintId: 'sprint-2', status: 'Done' },
+      ] as JiraIssue[]);
+
+      let qbCallCount = 0;
+      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
+        qbCallCount++;
+        const qb = {
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          orderBy: jest.fn().mockReturnThis(),
+          getMany: jest.fn(),
+        };
+
+        if (qbCallCount === 1) {
+          // Sprint changelogs: ACC-10 before start, ACC-11 after start
+          qb.getMany.mockResolvedValue([
+            {
+              issueKey: 'ACC-10',
+              field: 'Sprint',
+              toValue: 'Sprint 2',
+              fromValue: null,
+              changedAt: new Date('2025-01-30'),
+            },
+            {
+              issueKey: 'ACC-11',
+              field: 'Sprint',
+              toValue: 'Sprint 2',
+              fromValue: null,
+              changedAt: new Date('2025-02-05'), // After sprint start
+            },
+          ]);
+        } else if (qbCallCount === 2) {
+          qb.getMany.mockResolvedValue([
+            {
+              issueKey: 'ACC-10',
+              field: 'status',
+              toValue: 'Done',
+              changedAt: new Date('2025-02-10'),
+            },
+            {
+              issueKey: 'ACC-11',
+              field: 'status',
+              toValue: 'Done',
+              changedAt: new Date('2025-02-12'),
+            },
+          ]);
+        } else {
+          qb.getMany.mockResolvedValue([]);
+        }
+        return qb;
+      });
+
+      const result = await service.getAccuracy('ACC');
+
+      expect(result[0].commitment).toBe(1);
+      expect(result[0].added).toBe(1);
+      expect(result[0].scopeChangePercent).toBe(100); // (1+0)/1 * 100
+    });
+  });
+
+  describe('getSprints', () => {
+    it('should return sprints for a board', async () => {
+      sprintRepo.find.mockResolvedValue([
+        { id: 's1', name: 'Sprint 1', state: 'closed', boardId: 'ACC' },
+        { id: 's2', name: 'Sprint 2', state: 'active', boardId: 'ACC' },
+      ] as JiraSprint[]);
+
+      const result = await service.getSprints('ACC');
+
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual({
+        id: 's1',
+        name: 'Sprint 1',
+        state: 'closed',
+      });
+    });
+  });
+
+  describe('getQuarters', () => {
+    it('should extract unique quarters from sprint dates', async () => {
+      sprintRepo.find.mockResolvedValue([
+        {
+          id: 's1',
+          state: 'closed',
+          startDate: new Date('2025-01-10'),
+        },
+        {
+          id: 's2',
+          state: 'closed',
+          startDate: new Date('2025-01-24'),
+        },
+        {
+          id: 's3',
+          state: 'closed',
+          startDate: new Date('2025-04-01'),
+        },
+      ] as JiraSprint[]);
+
+      const result = await service.getQuarters();
+
+      expect(result).toHaveLength(2);
+      expect(result[0].quarter).toBe('2025-Q2');
+      expect(result[1].quarter).toBe('2025-Q1');
+    });
+
+    it('should return empty array when no sprints', async () => {
+      sprintRepo.find.mockResolvedValue([]);
+
+      const result = await service.getQuarters();
+
+      expect(result).toEqual([]);
+    });
+  });
+});

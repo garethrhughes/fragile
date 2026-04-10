@@ -8,7 +8,10 @@ export default new DataSource({
   username: process.env.DB_USERNAME ?? 'postgres',
   password: process.env.DB_PASSWORD ?? 'postgres',
   database: process.env.DB_DATABASE ?? 'ai_starter',
-  entities: ['src/**/*.entity{.ts,.js}'],
+  entities: [
+    'src/**/*.entity{.ts,.js}',
+    'src/database/entities/*.entity{.ts,.js}',
+  ],
   migrations: ['src/migrations/*{.ts,.js}'],
   synchronize: false,
 });
