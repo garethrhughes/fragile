@@ -66,11 +66,17 @@ export class JiraClientService {
     jql: string,
     startAt = 0,
     maxResults = 100,
+    nextPageToken?: string,
   ): Promise<JiraIssueSearchResponse> {
-    const url =
-      `${this.baseUrl}/rest/api/3/search` +
-      `?jql=${encodeURIComponent(jql)}&maxResults=${maxResults}&startAt=${startAt}` +
-      `&fields=summary,status,issuetype,fixVersions,labels,created,updated,issuelinks`;
+    const params = new URLSearchParams({
+      jql,
+      maxResults: String(maxResults),
+      fields: 'summary,status,issuetype,fixVersions,labels,created,updated,issuelinks',
+    });
+    if (nextPageToken) {
+      params.set('nextPageToken', nextPageToken);
+    }
+    const url = `${this.baseUrl}/rest/api/3/search/jql?${params.toString()}`;
     return this.fetchWithRetry<JiraIssueSearchResponse>(url);
   }
 

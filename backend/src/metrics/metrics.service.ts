@@ -36,8 +36,19 @@ export class MetricsService {
   ) {}
 
   async getDora(query: MetricsQueryDto): Promise<DoraMetricsResult[]> {
-    const { startDate, endDate } = this.resolvePeriod(query);
+    let { startDate, endDate } = this.resolvePeriod(query);
     const boardIds = this.resolveBoardIds(query);
+
+    // If sprintId is provided, resolve dates from the sprint record
+    if (query.sprintId) {
+      const sprint = await this.sprintRepo.findOne({
+        where: { id: query.sprintId },
+      });
+      if (sprint?.startDate && sprint?.endDate) {
+        startDate = sprint.startDate;
+        endDate = sprint.endDate;
+      }
+    }
 
     const results: DoraMetricsResult[] = [];
 
@@ -118,7 +129,7 @@ export class MetricsService {
 
   private resolveBoardIds(query: MetricsQueryDto): string[] {
     if (query.boardId) {
-      return [query.boardId];
+      return query.boardId.split(',').map((id) => id.trim());
     }
     const boardIdsStr = this.configService.get<string>(
       'JIRA_BOARD_IDS',
@@ -131,18 +142,25 @@ export class MetricsService {
     startDate: Date;
     endDate: Date;
   } {
-    // Explicit period takes precedence
-    if (query.period) {
-      const [start, end] = query.period.split(':');
-      return {
-        startDate: new Date(start),
-        endDate: new Date(end),
-      };
-    }
-
     // Quarter format: YYYY-QN
     if (query.quarter) {
       return this.quarterToDates(query.quarter);
+    }
+
+    // Sprint: look up sprint dates from DB (handled synchronously via fallback)
+    if (query.sprintId) {
+      // Sprint date resolution is async, handled in resolvePeriodAsync
+      // For now fall through to default
+    }
+
+    // Explicit date range: YYYY-MM-DD:YYYY-MM-DD
+    if (query.period && query.period.includes(':')) {
+      const [start, end] = query.period.split(':');
+      const startDate = new Date(start);
+      const endDate = new Date(end);
+      if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+        return { startDate, endDate };
+      }
     }
 
     // Default: last 90 days

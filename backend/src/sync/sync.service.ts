@@ -156,21 +156,19 @@ export class SyncService {
     // Fetch recent issues for the Kanban project via JQL
     const jql = `project = ${boardId} ORDER BY updated DESC`;
     const allIssues: JiraIssue[] = [];
-    let startAt = 0;
-    let total = 0;
+    let nextPageToken: string | undefined;
 
     do {
-      const response = await this.jiraClient.searchIssues(jql, startAt, 100);
-      total = response.total;
+      const response = await this.jiraClient.searchIssues(jql, 0, 100, nextPageToken);
 
       const issues = response.issues.map((i) =>
         this.mapJiraIssue(i, boardId, null),
       );
       allIssues.push(...issues);
-      startAt += response.maxResults;
+      nextPageToken = response.nextPageToken;
       // Cap at 1000 issues per Kanban board to avoid excessive API calls
-      if (startAt >= 1000) break;
-    } while (startAt < total);
+      if (allIssues.length >= 1000) break;
+    } while (nextPageToken);
 
     if (allIssues.length > 0) {
       await this.issueRepo.upsert(allIssues, ['key']);
