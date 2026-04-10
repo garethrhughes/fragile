@@ -12,7 +12,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: 'DORA Dashboard', href: '/dora', icon: <BarChart3 className="h-5 w-5" /> },
+  { label: 'DORA', href: '/dora', icon: <BarChart3 className="h-5 w-5" /> },
   { label: 'Planning', href: '/planning', icon: <Target className="h-5 w-5" /> },
   { label: 'Roadmap', href: '/roadmap', icon: <Map className="h-5 w-5" /> },
   { label: 'Settings', href: '/settings', icon: <Settings className="h-5 w-5" /> },
@@ -26,7 +26,7 @@ export function Sidebar() {
       {/* Brand */}
       <div className="flex items-center gap-2 px-5 py-6">
         <BarChart3 className="h-7 w-7 text-squirrel-500" />
-        <span className="text-lg font-bold tracking-tight text-text-primary">DORA Metrics</span>
+        <span className="text-lg font-bold tracking-tight text-text-primary">Wagile</span>
       </div>
 
       {/* Navigation */}

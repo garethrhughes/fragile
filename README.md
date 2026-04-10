@@ -1,4 +1,4 @@
-# Jira DORA & Planning Metrics Dashboard
+# Wagile
 
 Internal engineering metrics dashboard that reads data from Jira Cloud and produces
 DORA metrics reports and sprint planning accuracy reports.

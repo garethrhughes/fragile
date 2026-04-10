@@ -23,9 +23,9 @@ async function bootstrap() {
   );
 
   const swaggerConfig = new DocumentBuilder()
-    .setTitle('Jira DORA & Planning Metrics Dashboard API')
+    .setTitle('Wagile API')
     .setDescription(
-      'REST API for Jira DORA metrics and sprint planning accuracy.',
+      'REST API for Wagile — Jira DORA metrics and sprint planning accuracy.',
     )
     .setVersion('1.0')
     .addApiKey(

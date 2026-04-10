@@ -45,9 +45,9 @@ export function AuthGate({ children }: AuthGateProps) {
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-surface-active">
             <KeyRound className="h-6 w-6 text-squirrel-600" />
           </div>
-          <h1 className="text-xl font-bold">DORA Metrics Dashboard</h1>
+          <h1 className="text-xl font-bold">Wagile</h1>
           <p className="text-center text-sm text-muted">
-            Enter your API key to access the dashboard.
+            Enter your API key to access Wagile.
           </p>
         </div>
 
