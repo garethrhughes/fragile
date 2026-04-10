@@ -290,16 +290,30 @@ export class PlanningService {
   /**
    * Check if an issue was in the sprint at the given date by
    * replaying Sprint-field changelogs.
+   *
+   * A grace period is applied to absorb Jira's bulk-add delay: when a sprint
+   * is started, Jira records the startDate at the moment of creation, but the
+   * initial backlog issues are added ~20-60 seconds later.  Any issue whose
+   * first Sprint changelog falls within that window should count as part of
+   * the original commitment, not as a mid-sprint addition.
    */
+  private static readonly SPRINT_GRACE_PERIOD_MS = 5 * 60 * 1000; // 5 minutes
+
   private wasInSprintAtDate(
     sprintChangelogs: JiraChangelog[],
     sprintName: string,
     date: Date,
   ): boolean {
+    // Extend the cutoff by the grace period so that issues added in the
+    // initial bulk-load (typically seconds after sprint start) are treated
+    // as committed rather than added.
+    const effectiveDate = new Date(
+      date.getTime() + PlanningService.SPRINT_GRACE_PERIOD_MS,
+    );
     let inSprint = false;
 
     for (const cl of sprintChangelogs) {
-      if (cl.changedAt > date) break;
+      if (cl.changedAt > effectiveDate) break;
 
       if (this.sprintValueContains(cl.toValue, sprintName)) {
         inSprint = true;
