@@ -25,8 +25,8 @@ const KANBAN_BOARDS = new Set(['PLAT']);
 // ---------------------------------------------------------------------------
 
 function rowColor(row: SprintAccuracy): string {
-  if (row.scopeChangePct > 40) return 'bg-red-50';
-  if (row.scopeChangePct > 20) return 'bg-amber-50';
+  if (row.scopeChangePercent > 40) return 'bg-red-50';
+  if (row.scopeChangePercent > 20) return 'bg-amber-50';
   return '';
 }
 
@@ -108,7 +108,7 @@ export default function PlanningPage() {
   // Summary stats
   const { avgScopeChange, avgCompletion } = useMemo(() => {
     if (data.length === 0) return { avgScopeChange: 0, avgCompletion: 0 };
-    const totalScope = data.reduce((s, r) => s + r.scopeChangePct, 0);
+    const totalScope = data.reduce((s, r) => s + r.scopeChangePercent, 0);
     const totalComp = data.reduce((s, r) => s + r.completionRate, 0);
     return {
       avgScopeChange: totalScope / data.length,
@@ -146,7 +146,7 @@ export default function PlanningPage() {
       { key: 'removed', label: 'Removed', sortable: true },
       { key: 'completed', label: 'Completed', sortable: true },
       {
-        key: 'scopeChangePct',
+        key: 'scopeChangePercent',
         label: 'Scope Change %',
         sortable: true,
         render: (value) => {

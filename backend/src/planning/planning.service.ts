@@ -15,6 +15,7 @@ import {
 export interface SprintAccuracy {
   sprintId: string;
   sprintName: string;
+  state: string;
   commitment: number;
   added: number;
   removed: number;
@@ -234,6 +235,7 @@ export class PlanningService {
     return {
       sprintId: sprint.id,
       sprintName: sprint.name,
+      state: sprint.state,
       commitment,
       added,
       removed,
@@ -278,6 +280,7 @@ export class PlanningService {
     return {
       sprintId: sprint.id,
       sprintName: sprint.name,
+      state: sprint.state,
       commitment: 0,
       added: 0,
       removed: 0,

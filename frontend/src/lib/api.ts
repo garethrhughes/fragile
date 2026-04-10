@@ -35,7 +35,7 @@ export interface SprintAccuracy {
   added: number;
   removed: number;
   completed: number;
-  scopeChangePct: number;
+  scopeChangePercent: number;
   completionRate: number;
 }
 
