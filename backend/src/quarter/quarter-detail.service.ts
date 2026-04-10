@@ -255,10 +255,11 @@ export class QuarterDetailService {
       const linkedToRoadmap =
         issue.epicKey != null && coveredEpicKeys.has(issue.epicKey);
 
-      // isIncident
-      const isIncident =
+      // isIncident: must match type/label AND be Critical priority
+      const matchesIncidentTypeOrLabel =
         incidentIssueTypes.includes(issue.issueType) ||
         (incidentLabels.length > 0 && issue.labels.some((l) => incidentLabels.includes(l)));
+      const isIncident = matchesIncidentTypeOrLabel && issue.priority === 'Critical';
 
       // isFailure
       const isFailure =

@@ -156,27 +156,12 @@ function buildColumns(): Column<QuarterDetailIssue>[] {
         ),
     },
     {
-      key: 'addedMidQuarter',
-      label: 'Mid-Quarter',
-      sortable: true,
-      render: (value) =>
-        value ? (
-          <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-            ⚠ Mid-quarter
-          </span>
-        ) : (
-          <span className="text-muted">—</span>
-        ),
-    },
-    {
       key: 'linkedToRoadmap',
       label: 'Roadmap',
       sortable: true,
       render: (value) =>
         value ? (
-          <span className="inline-flex items-center gap-1 rounded-md bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
-            Roadmap
-          </span>
+          <span className="font-semibold text-green-600">✓</span>
         ) : (
           <span className="text-muted">—</span>
         ),
