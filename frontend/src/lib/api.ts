@@ -131,6 +131,11 @@ export async function apiFetch<T>(
   });
 
   if (!res.ok) {
+    // On 401, clear the stored key so the AuthGate shows the login form
+    if (res.status === 401 && typeof window !== 'undefined') {
+      localStorage.removeItem('dashboard_api_key');
+      window.location.reload();
+    }
     const body = await res.text().catch(() => '');
     throw new ApiError(res.status, `API error ${res.status}: ${body}`);
   }

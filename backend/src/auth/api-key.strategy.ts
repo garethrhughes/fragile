@@ -12,11 +12,14 @@ export class ApiKeyStrategy extends PassportStrategy(
     super({ header: 'x-api-key', prefix: '' }, false);
   }
 
-  validate(apiKey: string): boolean {
+  validate(
+    apiKey: string,
+    done: (error: Error | null, data: unknown) => void,
+  ): void {
     const validKey = this.configService.get<string>('APP_API_KEY');
     if (apiKey === validKey) {
-      return true;
+      return done(null, true);
     }
-    throw new UnauthorizedException('Invalid API key');
+    return done(new UnauthorizedException('Invalid API key'), null);
   }
 }
