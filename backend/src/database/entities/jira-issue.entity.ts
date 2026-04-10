@@ -3,7 +3,6 @@ import {
   Column,
   PrimaryColumn,
   UpdateDateColumn,
-  CreateDateColumn,
 } from 'typeorm';
 
 @Entity('jira_issues')
@@ -35,7 +34,7 @@ export class JiraIssue {
   @Column('simple-json', { default: '[]' })
   labels!: string[];
 
-  @CreateDateColumn({ type: 'timestamptz' })
+  @Column({ type: 'timestamptz' })
   createdAt!: Date;
 
   @UpdateDateColumn({ type: 'timestamptz' })

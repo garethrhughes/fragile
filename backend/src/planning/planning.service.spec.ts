@@ -80,9 +80,9 @@ describe('PlanningService', () => {
 
       // All board issues (includes issues from this sprint)
       issueRepo.find.mockResolvedValue([
-        { key: 'ACC-1', sprintId: 'sprint-1', status: 'Done', boardId: 'ACC' },
-        { key: 'ACC-2', sprintId: 'sprint-1', status: 'Done', boardId: 'ACC' },
-        { key: 'ACC-3', sprintId: 'sprint-1', status: 'In Progress', boardId: 'ACC' },
+        { key: 'ACC-1', sprintId: 'sprint-1', status: 'Done', boardId: 'ACC', createdAt: new Date('2025-01-01') },
+        { key: 'ACC-2', sprintId: 'sprint-1', status: 'Done', boardId: 'ACC', createdAt: new Date('2025-01-01') },
+        { key: 'ACC-3', sprintId: 'sprint-1', status: 'In Progress', boardId: 'ACC', createdAt: new Date('2025-01-01') },
       ] as JiraIssue[]);
 
       let qbCallCount = 0;
@@ -169,8 +169,8 @@ describe('PlanningService', () => {
       sprintRepo.find.mockResolvedValue([sprint]);
 
       issueRepo.find.mockResolvedValue([
-        { key: 'ACC-10', sprintId: 'sprint-2', status: 'Done', boardId: 'ACC' },
-        { key: 'ACC-11', sprintId: 'sprint-2', status: 'Done', boardId: 'ACC' },
+        { key: 'ACC-10', sprintId: 'sprint-2', status: 'Done', boardId: 'ACC', createdAt: new Date('2025-01-01') },
+        { key: 'ACC-11', sprintId: 'sprint-2', status: 'Done', boardId: 'ACC', createdAt: new Date('2025-01-01') },
       ] as JiraIssue[]);
 
       let qbCallCount = 0;

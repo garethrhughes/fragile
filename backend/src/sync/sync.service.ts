@@ -245,6 +245,7 @@ export class SyncService {
     issue.labels = raw.fields.labels ?? [];
     issue.boardId = boardId;
     issue.sprintId = sprintId;
+    issue.createdAt = new Date(raw.fields.created);
 
     // Attempt to extract story points from common field names
     const storyPointFields = [

@@ -121,6 +121,9 @@ export class PlanningService {
     const issueStatusMap = new Map(
       boardIssues.map((i) => [i.key, i.status]),
     );
+    const issueCreatedAtMap = new Map(
+      boardIssues.map((i) => [i.key, i.createdAt]),
+    );
 
     // Fetch Sprint-field changelogs for all board issues in bulk
     const sprintChangelogs = await this.changelogRepo
@@ -162,20 +165,32 @@ export class PlanningService {
     // IMPORTANT: Only consider changes within the sprint window [start, end].
     // Changes after sprint end (carry-overs, sprint completion shuffles) are noise.
     const sprintEnd = sprint.endDate ?? new Date();
+    const effectiveSprintStart = new Date(
+      sprintStart.getTime() + PlanningService.SPRINT_GRACE_PERIOD_MS,
+    );
     const committedKeys = new Set<string>();
     const addedKeys = new Set<string>();
     const removedKeys = new Set<string>();
 
     for (const [issueKey, logs] of logsByIssue) {
-      const wasAtStart = this.wasInSprintAtDate(
-        logs,
-        sprintName,
-        sprintStart,
-      );
+      // Issues with no sprint changelog were assigned to the sprint at creation.
+      // But if createdAt is after the grace-period window, the issue was created
+      // mid-sprint (e.g. filed directly into an active sprint) — treat as added.
+      const createdAt = issueCreatedAtMap.get(issueKey);
+      const createdMidSprint =
+        logs.length === 0 &&
+        createdAt != null &&
+        createdAt > effectiveSprintStart;
 
-      // Track membership only within the sprint window
-      let inSprintAtEnd = wasAtStart;
-      let wasAddedDuringSprint = false;
+      const wasAtStart =
+        !createdMidSprint &&
+        this.wasInSprintAtDate(logs, sprintName, sprintStart);
+
+      // Track membership only within the sprint window.
+      // For mid-sprint creations, assume the issue stays in the sprint
+      // (no remove changelog exists), so inSprintAtEnd starts true.
+      let inSprintAtEnd = wasAtStart || createdMidSprint;
+      let wasAddedDuringSprint = createdMidSprint;
 
       for (const cl of logs) {
         if (cl.changedAt <= sprintStart) continue;
