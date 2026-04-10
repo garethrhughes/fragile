@@ -42,8 +42,8 @@ export function AuthGate({ children }: AuthGateProps) {
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-md rounded-xl border border-border bg-card p-8 shadow-sm">
         <div className="mb-6 flex flex-col items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-50">
-            <KeyRound className="h-6 w-6 text-blue-600" />
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-surface-active">
+            <KeyRound className="h-6 w-6 text-squirrel-600" />
           </div>
           <h1 className="text-xl font-bold">DORA Metrics Dashboard</h1>
           <p className="text-center text-sm text-muted">
@@ -68,7 +68,7 @@ export function AuthGate({ children }: AuthGateProps) {
                 setError('');
               }}
               placeholder="Enter your API key"
-              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm placeholder:text-muted focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm placeholder:text-muted focus:border-squirrel-400 focus:outline-none focus:ring-1 focus:ring-squirrel-400"
             />
             {error && (
               <p className="mt-1 text-xs text-red-500">{error}</p>
@@ -77,7 +77,7 @@ export function AuthGate({ children }: AuthGateProps) {
 
           <button
             type="submit"
-            className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+            className="w-full rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-fg transition-colors hover:bg-primary-hover"
           >
             Continue
           </button>

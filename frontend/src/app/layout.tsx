@@ -1,6 +1,10 @@
 import type { Metadata } from 'next';
+import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 import { ClientShell } from '@/components/layout/client-shell';
+
+const geistSans = Geist({ subsets: ['latin'], variable: '--font-geist-sans' });
+const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-mono' });
 
 export const metadata: Metadata = {
   title: 'DORA Metrics Dashboard',
@@ -14,7 +18,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>
+      <body className={`${geistSans.variable} ${geistMono.variable} bg-background text-foreground`}>
         <ClientShell>{children}</ClientShell>
       </body>
     </html>

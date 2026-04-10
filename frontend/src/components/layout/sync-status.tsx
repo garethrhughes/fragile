@@ -45,7 +45,7 @@ export function SyncStatus() {
         type="button"
         onClick={() => void triggerSync()}
         disabled={isSyncing}
-        className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-gray-50 disabled:opacity-50"
+        className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover disabled:opacity-50"
       >
         <RefreshCw
           className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`}

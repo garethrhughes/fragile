@@ -1,36 +1,138 @@
 @import "tailwindcss";
 
+@variant dark (&:where(.dark, .dark *));
+
 @theme inline {
+  /* Squirrel colour scale (blue) */
+  --color-squirrel-50: #eff6ff;
+  --color-squirrel-100: #dbeafe;
+  --color-squirrel-200: #bfdbfe;
+  --color-squirrel-300: #93c5fd;
+  --color-squirrel-400: #60a5fa;
+  --color-squirrel-500: #3b82f6;
+  --color-squirrel-600: #2563eb;
+  --color-squirrel-700: #1d4ed8;
+  --color-squirrel-800: #1e40af;
+  --color-squirrel-900: #1e3a8a;
+
+  /* Semantic surface tokens */
+  --color-surface: var(--surface);
+  --color-surface-alt: var(--surface-alt);
+  --color-surface-brand: var(--surface-brand);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-active: var(--surface-active);
+
+  /* Border tokens */
+  --color-border: var(--border-color);
+  --color-border-light: var(--border-light);
+
+  /* Text tokens */
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-text-muted: var(--text-muted);
+  --color-text-faint: var(--text-faint);
+
+  /* Core tokens */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-tab-active: var(--tab-active);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-fg: var(--primary-fg);
+
+  /* Font tokens */
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  /* ── Bridge aliases ─────────────────────────────────────────────────────
+     wagile-2000 components use bg-card, bg-sidebar, text-muted, etc.
+     Map these to the squirrel-notes semantic layer so both sets of class
+     names resolve without touching page-level files.
+  ── */
+  --color-card: var(--surface);
   --color-sidebar: var(--sidebar-bg);
-  --color-card: var(--card-bg);
-  --color-border: var(--border-color);
-  --color-muted: var(--muted-color);
+  --color-muted: var(--text-muted);
 }
 
+/* ── Light theme ────────────────────────────────────────────────────────────── */
 :root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
-  --sidebar-bg: #1e293b;
-  --card-bg: #ffffff;
+  --background: #ffffff;
+  --foreground: #1e293b;
+  --surface: #ffffff;
+  --surface-alt: #f8fafc;
+  --surface-brand: #eff6ff;    /* bg-squirrel-50 — brand-tinted sidebar bg */
+  --surface-hover: #f1f5f9;
+  --surface-raised: #e2e8f0;
+  --surface-active: #dbeafe;   /* bg-squirrel-100 — selected items */
   --border-color: #e2e8f0;
-  --muted-color: #64748b;
+  --border-light: #f1f5f9;
+  --text-primary: #1e293b;
+  --text-secondary: #334155;
+  --text-tertiary: #475569;
+  --text-muted: #64748b;
+  --text-faint: #94a3b8;
+
+  /* wagile-2000 sidebar (dark navy) — kept for the bridge alias */
+  --sidebar-bg: #1e293b;
+
+  /* Tab bar */
+  --tab-active: #3b82f6;
+
+  /* Primary action */
+  --primary: #3b82f6;
+  --primary-hover: #2563eb;
+  --primary-fg: #ffffff;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0f172a;
-    --foreground: #f1f5f9;
-    --sidebar-bg: #020617;
-    --card-bg: #1e293b;
-    --border-color: #334155;
-    --muted-color: #94a3b8;
-  }
+/* ── Dark theme ─────────────────────────────────────────────────────────────── */
+.dark {
+  /* One Monokai inspired */
+  --background: #282c34;
+  --foreground: #abb2bf;
+  --surface: #282c34;
+  --surface-alt: #21252b;
+  --surface-brand: #2c313a;
+  --surface-hover: #2c313a;
+  --surface-raised: #3e4451;
+  --surface-active: #3e4451;
+  --border-color: #3e4451;
+  --border-light: #2c313a;
+  --text-primary: #abb2bf;
+  --text-secondary: #9da5b4;
+  --text-tertiary: #7f8799;
+  --text-muted: #636d83;
+  --text-faint: #5c6370;
+
+  /* wagile-2000 sidebar bridge — deep dark in dark mode */
+  --sidebar-bg: #21252b;
+
+  /* Tab bar */
+  --tab-active: #61afef;
+
+  /* Primary action */
+  --primary: #528bff;
+  --primary-hover: #4070e0;
+  --primary-fg: #ffffff;
 }
+
+/* ── Base styles ────────────────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--surface-raised);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
 }
