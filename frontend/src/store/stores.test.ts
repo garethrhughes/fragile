@@ -63,7 +63,7 @@ describe('useFilterStore', () => {
     expect(useFilterStore.getState().selectedBoards).toEqual(['ACC', 'BPT']);
   });
 
-  it('resets period selections when changing period type', () => {
+  it('preserves period selections when changing period type', () => {
     useFilterStore.getState().setSelectedSprint('sprint-1');
     useFilterStore.getState().setSelectedQuarter('2025-Q1');
 
@@ -71,8 +71,9 @@ describe('useFilterStore', () => {
 
     const state = useFilterStore.getState();
     expect(state.periodType).toBe('sprint');
-    expect(state.selectedSprint).toBeNull();
-    expect(state.selectedQuarter).toBeNull();
+    // Selections are preserved so dropdowns keep their auto-selected values
+    expect(state.selectedSprint).toBe('sprint-1');
+    expect(state.selectedQuarter).toBe('2025-Q1');
   });
 
   it('sets selected sprint', () => {

@@ -17,7 +17,14 @@ export function QuarterSelect({ value, onChange }: QuarterSelectProps) {
     setLoading(true);
     getQuarters()
       .then((res) => {
-        if (!cancelled) setQuarters((res ?? []).map((q) => q.quarter));
+        if (!cancelled) {
+          const qs = (res ?? []).map((q) => q.quarter);
+          setQuarters(qs);
+          // Auto-select the most recent quarter if nothing is selected
+          if (qs.length > 0 && !value) {
+            onChange(qs[0]);
+          }
+        }
       })
       .catch(() => {
         if (!cancelled) setQuarters([]);
@@ -28,6 +35,7 @@ export function QuarterSelect({ value, onChange }: QuarterSelectProps) {
     return () => {
       cancelled = true;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

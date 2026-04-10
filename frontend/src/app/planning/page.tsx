@@ -209,10 +209,7 @@ export default function PlanningPage() {
             <div className="inline-flex rounded-lg border border-border">
               <button
                 type="button"
-                onClick={() => {
-                  setPeriodType('sprint');
-                  setSelectedQuarter(null);
-                }}
+                onClick={() => setPeriodType('sprint')}
                 className={`rounded-l-lg px-4 py-2 text-sm font-medium transition-colors ${
                   periodType === 'sprint'
                     ? 'bg-blue-50 text-blue-700'
@@ -223,10 +220,7 @@ export default function PlanningPage() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setPeriodType('quarter');
-                  setSelectedSprint(null);
-                }}
+                onClick={() => setPeriodType('quarter')}
                 className={`rounded-r-lg px-4 py-2 text-sm font-medium transition-colors ${
                   periodType === 'quarter'
                     ? 'bg-blue-50 text-blue-700'

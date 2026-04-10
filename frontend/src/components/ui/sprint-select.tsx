@@ -22,7 +22,15 @@ export function SprintSelect({ boardId, value, onChange }: SprintSelectProps) {
     setLoading(true);
     getSprints(boardId)
       .then((res) => {
-        if (!cancelled) setSprints(res ?? []);
+        if (!cancelled) {
+          const list = res ?? [];
+          setSprints(list);
+          // Auto-select the first sprint (active first, then most recent closed)
+          if (list.length > 0 && !value) {
+            const active = list.find((s) => s.state === 'active');
+            onChange((active ?? list[0]).id);
+          }
+        }
       })
       .catch(() => {
         if (!cancelled) setSprints([]);

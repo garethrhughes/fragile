@@ -21,8 +21,9 @@ export const useFilterStore = create<FilterState>((set) => ({
 
   setSelectedBoards: (boards: string[]) => set({ selectedBoards: boards }),
 
-  setPeriodType: (type: 'sprint' | 'quarter') =>
-    set({ periodType: type, selectedSprint: null, selectedQuarter: null }),
+  // Preserve existing selections when switching period type so dropdowns
+  // keep their auto-selected values rather than forcing a re-pick.
+  setPeriodType: (type: 'sprint' | 'quarter') => set({ periodType: type }),
 
   setSelectedSprint: (sprintId: string | null) =>
     set({ selectedSprint: sprintId }),
