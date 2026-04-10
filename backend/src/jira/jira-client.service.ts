@@ -5,6 +5,7 @@ import type {
   JiraIssueSearchResponse,
   JiraChangelogResponse,
   JiraVersionResponse,
+  JiraBoardResponse,
 } from './jira.types.js';
 
 const MAX_RETRIES = 3;
@@ -21,6 +22,12 @@ export class JiraClientService {
     const email = this.configService.get<string>('JIRA_USER_EMAIL', '');
     const token = this.configService.get<string>('JIRA_API_TOKEN', '');
     this.authHeader = `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}`;
+  }
+
+  async getBoardsForProject(projectKey: string): Promise<JiraBoardResponse> {
+    const url =
+      `${this.baseUrl}/rest/agile/1.0/board?projectKeyOrId=${encodeURIComponent(projectKey)}&maxResults=50`;
+    return this.fetchWithRetry<JiraBoardResponse>(url);
   }
 
   async getSprints(boardId: string): Promise<JiraSprintResponse> {

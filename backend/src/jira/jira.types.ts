@@ -76,6 +76,27 @@ export interface JiraVersionResponse {
   projectId?: number;
 }
 
+export interface JiraBoardResponse {
+  maxResults: number;
+  startAt: number;
+  total: number;
+  isLast: boolean;
+  values: JiraBoardValue[];
+}
+
+export interface JiraBoardValue {
+  id: number;
+  self: string;
+  name: string;
+  type: string;
+  location?: {
+    projectId: number;
+    projectName: string;
+    projectKey: string;
+    projectTypeKey: string;
+  };
+}
+
 export interface JiraStoryPointField {
   fieldId: string;
   value: number | null;

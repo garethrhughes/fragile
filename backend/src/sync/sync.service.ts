@@ -71,8 +71,11 @@ export class SyncService {
       // Ensure board config exists
       await this.ensureBoardConfig(boardId);
 
+      // Resolve project key to numeric Jira board ID
+      const numericBoardId = await this.resolveNumericBoardId(boardId);
+
       // Sync sprints
-      const sprints = await this.syncSprints(boardId);
+      const sprints = await this.syncSprints(boardId, numericBoardId);
       this.logger.log(
         `Synced ${sprints.length} sprints for board ${boardId}`,
       );
@@ -82,7 +85,7 @@ export class SyncService {
       const allIssueKeys: string[] = [];
 
       for (const sprint of sprints) {
-        const issues = await this.syncSprintIssues(boardId, sprint.id);
+        const issues = await this.syncSprintIssues(boardId, numericBoardId, sprint.id);
         totalIssues += issues.length;
         allIssueKeys.push(...issues.map((i) => i.key));
       }
@@ -109,6 +112,24 @@ export class SyncService {
     return this.syncLogRepo.save(syncLog);
   }
 
+  private async resolveNumericBoardId(projectKey: string): Promise<string> {
+    // If the key is already numeric, use it directly
+    if (/^\d+$/.test(projectKey)) return projectKey;
+
+    const response = await this.jiraClient.getBoardsForProject(projectKey);
+    if (response.values.length === 0) {
+      throw new Error(
+        `No Jira board found for project key "${projectKey}". ` +
+        `Ensure the project exists and has a board.`,
+      );
+    }
+    const board = response.values[0];
+    this.logger.log(
+      `Resolved project key "${projectKey}" to board ID ${board.id} ("${board.name}", type: ${board.type})`,
+    );
+    return String(board.id);
+  }
+
   private async ensureBoardConfig(boardId: string): Promise<void> {
     const existing = await this.boardConfigRepo.findOne({
       where: { boardId },
@@ -122,8 +143,8 @@ export class SyncService {
     }
   }
 
-  private async syncSprints(boardId: string): Promise<JiraSprint[]> {
-    const response = await this.jiraClient.getSprints(boardId);
+  private async syncSprints(boardId: string, numericBoardId: string): Promise<JiraSprint[]> {
+    const response = await this.jiraClient.getSprints(numericBoardId);
     const sprints: JiraSprint[] = response.values.map((s) => {
       const sprint = new JiraSprint();
       sprint.id = String(s.id);
@@ -144,6 +165,7 @@ export class SyncService {
 
   private async syncSprintIssues(
     boardId: string,
+    numericBoardId: string,
     sprintId: string,
   ): Promise<JiraIssue[]> {
     const allIssues: JiraIssue[] = [];
@@ -152,7 +174,7 @@ export class SyncService {
 
     do {
       const response = await this.jiraClient.getSprintIssues(
-        boardId,
+        numericBoardId,
         sprintId,
         startAt,
       );
