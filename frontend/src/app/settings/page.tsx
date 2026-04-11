@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Save, Loader2, CheckCircle, XCircle, Plus, Trash2, RefreshCw } from 'lucide-react';
 import {
   getBoards,
@@ -53,26 +53,65 @@ interface CsvFieldProps {
   onChange: (values: string[]) => void;
 }
 
+/**
+ * A controlled text input for comma-separated values.
+ *
+ * The core problem with the previous implementation was that `value` was
+ * derived by joining the stored `string[]` and `onChange` parsed it back on
+ * every keystroke.  This round-trip stripped trailing commas and spaces the
+ * moment the user typed them, making it impossible to enter e.g.
+ * "In Progress, Done".
+ *
+ * Fix: keep a local `draft` string that the user edits freely.  The array is
+ * only parsed and committed to the parent via `onChange` when the field loses
+ * focus (`onBlur`).  When the parent value changes from outside (e.g. a new
+ * board is selected) the draft is re-initialised from the incoming array.
+ */
 function CsvField({ label, value, onChange }: CsvFieldProps) {
+  // Local free-text draft — the user types into this without any mid-keystroke
+  // parsing that would strip commas or spaces.
+  const [draft, setDraft] = useState<string>(() => value.join(', '))
+
+  // Keep track of the last committed array so we can detect external changes
+  // (e.g. a different board being loaded) and re-initialise the draft.
+  const committedRef = useRef<string[]>(value)
+
+  useEffect(() => {
+    // Only reset the draft when the array reference has genuinely changed from
+    // outside — i.e. the parent pushed a new value rather than us calling
+    // onChange ourselves.  Compare by serialised value to avoid reference churn.
+    const incoming = value.join('\x00')
+    const committed = committedRef.current.join('\x00')
+    if (incoming !== committed) {
+      committedRef.current = value
+      setDraft(value.join(', '))
+    }
+  }, [value])
+
+  // Parse the draft string into a trimmed, non-empty string array and commit
+  // to the parent.  Called on blur and (indirectly) before save.
+  const commit = useCallback(() => {
+    const parsed = draft
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    committedRef.current = parsed
+    onChange(parsed)
+  }, [draft, onChange])
+
   return (
     <div>
       <label className="mb-1.5 block text-sm font-medium">{label}</label>
       <input
         type="text"
-        value={value.join(', ')}
-        onChange={(e) =>
-          onChange(
-            e.target.value
-              .split(',')
-              .map((s) => s.trim())
-              .filter(Boolean),
-          )
-        }
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
         className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm placeholder:text-muted focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
         placeholder="Value1, Value2, Value3"
       />
     </div>
-  );
+  )
 }
 
 // ---------------------------------------------------------------------------
