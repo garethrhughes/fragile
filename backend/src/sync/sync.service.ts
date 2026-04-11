@@ -479,13 +479,24 @@ export class SyncService {
         idea.jpdKey = jpdKey;
         idea.deliveryIssueKeys = deliveryIssueKeys.length > 0 ? deliveryIssueKeys : null;
 
-        // Extract date fields if configured
-        const rawStart = config?.startDateFieldId
-          ? (issue.fields[config.startDateFieldId] as string | null | undefined) ?? null
+        // Extract date fields if configured.
+        // Polaris interval fields return { start: "YYYY-MM-DD", end: "YYYY-MM-DD" };
+        // plain date fields return a "YYYY-MM-DD" string.
+        // For startDate we use the .start boundary; for targetDate we use .end.
+        const rawStartField = config?.startDateFieldId
+          ? (issue.fields[config.startDateFieldId] as { start?: string } | string | null | undefined) ?? null
           : null;
-        const rawTarget = config?.targetDateFieldId
-          ? (issue.fields[config.targetDateFieldId] as string | null | undefined) ?? null
+        const rawTargetField = config?.targetDateFieldId
+          ? (issue.fields[config.targetDateFieldId] as { end?: string } | string | null | undefined) ?? null
           : null;
+
+        const rawStart = rawStartField !== null && typeof rawStartField === 'object'
+          ? (rawStartField.start ?? null)
+          : rawStartField ?? null;
+        const rawTarget = rawTargetField !== null && typeof rawTargetField === 'object'
+          ? (rawTargetField.end ?? null)
+          : rawTargetField ?? null;
+
         idea.startDate = rawStart ? new Date(rawStart) : null;
         idea.targetDate = rawTarget ? new Date(rawTarget) : null;
 
