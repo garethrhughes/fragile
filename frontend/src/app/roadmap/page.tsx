@@ -342,6 +342,19 @@ export default function RoadmapPage() {
     };
   }, [isKanban, kanbanPeriod, kanbanWeekData, rawData, quarterRows, periodType]);
 
+  // True when at least one period has covered issues (i.e. ideas have dates)
+  const roadmapHasDates = useMemo(() => {
+    const rows: Array<{ coveredIssues: number }> =
+      isKanban
+        ? kanbanPeriod === 'week'
+          ? kanbanWeekData
+          : quarterRows
+        : periodType === 'quarter'
+          ? quarterRows
+          : rawData;
+    return rows.some((r) => r.coveredIssues > 0);
+  }, [isKanban, kanbanPeriod, kanbanWeekData, rawData, quarterRows, periodType]);
+
   // Stat label describing the data range shown
   const statPeriodLabel = useMemo(() => {
     if (isKanban && kanbanPeriod === 'week') {
@@ -679,6 +692,18 @@ export default function RoadmapPage() {
 
           {!loading && !error && hasData && (
             <>
+              {/* Warn when all ideas lack dates (coverage will be 0% everywhere) */}
+              {!roadmapHasDates && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                  <span className="font-semibold">Roadmap coverage shows 0%</span> — JPD ideas have no start/target
+                  dates. Verify the date field IDs in{' '}
+                  <a href="/settings" className="font-medium underline">
+                    Settings
+                  </a>{' '}
+                  and trigger a sync.
+                </div>
+              )}
+
               {/* Summary stats */}
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="rounded-xl border border-border bg-card p-5">
