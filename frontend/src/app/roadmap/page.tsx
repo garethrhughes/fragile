@@ -58,9 +58,8 @@ interface QuarterRow {
   totalIssues: number;
   coveredIssues: number;
   uncoveredIssues: number;
-  linkedCompletedIssues: number;
   roadmapCoverage: number;
-  roadmapDeliveryRate: number;
+  roadmapOnTimeRate: number;
 }
 
 function groupByQuarter(sprints: RoadmapSprintAccuracy[]): QuarterRow[] {
@@ -81,27 +80,24 @@ function groupByQuarter(sprints: RoadmapSprintAccuracy[]): QuarterRow[] {
     const totalIssues = group.reduce((acc, s) => acc + s.totalIssues, 0);
     const coveredIssues = group.reduce((acc, s) => acc + s.coveredIssues, 0);
     const uncoveredIssues = group.reduce((acc, s) => acc + s.uncoveredIssues, 0);
-    const linkedCompletedIssues = group.reduce(
-      (acc, s) => acc + s.linkedCompletedIssues,
-      0,
-    );
     // Recompute from totals for consistency
     const roadmapCoverage =
       totalIssues > 0
         ? Math.round((coveredIssues / totalIssues) * 10000) / 100
         : 0;
-    const roadmapDeliveryRate =
-      coveredIssues > 0
-        ? Math.round((linkedCompletedIssues / coveredIssues) * 10000) / 100
+    // roadmapOnTimeRate: weighted average of per-sprint on-time rates
+    const totalOnTimeRateSum = group.reduce((acc, s) => acc + s.roadmapOnTimeRate, 0);
+    const roadmapOnTimeRate =
+      group.length > 0
+        ? Math.round((totalOnTimeRateSum / group.length) * 100) / 100
         : 0;
     rows.push({
       quarter,
       totalIssues,
       coveredIssues,
       uncoveredIssues,
-      linkedCompletedIssues,
       roadmapCoverage,
-      roadmapDeliveryRate,
+      roadmapOnTimeRate,
     });
   }
 
@@ -324,8 +320,8 @@ export default function RoadmapPage() {
   const quarterRows = useMemo(() => groupByQuarter(rawData), [rawData]);
 
   // Summary stats across ALL displayed rows
-  const { avgCoverage, avgDeliveryRate } = useMemo(() => {
-    const rows: Array<{ roadmapCoverage: number; roadmapDeliveryRate: number }> =
+  const { avgCoverage, avgOnTimeRate } = useMemo(() => {
+    const rows: Array<{ roadmapCoverage: number; roadmapOnTimeRate: number }> =
       isKanban
         ? kanbanPeriod === 'week'
           ? kanbanWeekData
@@ -333,12 +329,12 @@ export default function RoadmapPage() {
         : periodType === 'quarter'
           ? quarterRows
           : rawData;
-    if (rows.length === 0) return { avgCoverage: 0, avgDeliveryRate: 0 };
+    if (rows.length === 0) return { avgCoverage: 0, avgOnTimeRate: 0 };
     const totalCoverage = rows.reduce((s, r) => s + r.roadmapCoverage, 0);
-    const totalDelivery = rows.reduce((s, r) => s + r.roadmapDeliveryRate, 0);
+    const totalOnTime = rows.reduce((s, r) => s + r.roadmapOnTimeRate, 0);
     return {
       avgCoverage: totalCoverage / rows.length,
-      avgDeliveryRate: totalDelivery / rows.length,
+      avgOnTimeRate: totalOnTime / rows.length,
     };
   }, [isKanban, kanbanPeriod, kanbanWeekData, rawData, quarterRows, periodType]);
 
@@ -372,20 +368,20 @@ export default function RoadmapPage() {
       const chronological = [...kanbanWeekData].reverse();
       return [
         chronological.map((w) => ({ label: abbreviateLabel(w.sprintName), value: w.roadmapCoverage })),
-        chronological.map((w) => ({ label: abbreviateLabel(w.sprintName), value: w.roadmapDeliveryRate })),
+        chronological.map((w) => ({ label: abbreviateLabel(w.sprintName), value: w.roadmapOnTimeRate })),
       ];
     }
     if (isKanban || periodType === 'quarter') {
       const chronological = [...quarterRows].reverse();
       return [
         chronological.map((q) => ({ label: abbreviateLabel(q.quarter), value: q.roadmapCoverage })),
-        chronological.map((q) => ({ label: abbreviateLabel(q.quarter), value: q.roadmapDeliveryRate })),
+        chronological.map((q) => ({ label: abbreviateLabel(q.quarter), value: q.roadmapOnTimeRate })),
       ];
     }
     const chronological = [...rawData].reverse();
     return [
       chronological.map((s) => ({ label: abbreviateLabel(s.sprintName), value: s.roadmapCoverage })),
-      chronological.map((s) => ({ label: abbreviateLabel(s.sprintName), value: s.roadmapDeliveryRate })),
+      chronological.map((s) => ({ label: abbreviateLabel(s.sprintName), value: s.roadmapOnTimeRate })),
     ];
   }, [isKanban, kanbanPeriod, kanbanWeekData, rawData, quarterRows, periodType]);
 
@@ -445,8 +441,8 @@ export default function RoadmapPage() {
         },
       },
       {
-        key: 'roadmapDeliveryRate',
-        label: 'Delivery Rate %',
+        key: 'roadmapOnTimeRate',
+        label: 'On-Time Rate %',
         sortable: true,
         render: (value) => `${Number(value).toFixed(1)}%`,
       },
@@ -489,8 +485,8 @@ export default function RoadmapPage() {
         },
       },
       {
-        key: 'roadmapDeliveryRate',
-        label: 'Delivery Rate %',
+        key: 'roadmapOnTimeRate',
+        label: 'On-Time Rate %',
         sortable: true,
         render: (value) => `${Number(value).toFixed(1)}%`,
       },
@@ -552,8 +548,8 @@ export default function RoadmapPage() {
         },
       },
       {
-        key: 'roadmapDeliveryRate',
-        label: 'Delivery Rate %',
+        key: 'roadmapOnTimeRate',
+        label: 'On-Time Rate %',
         sortable: true,
         render: (value) => `${Number(value).toFixed(1)}%`,
       },
@@ -719,10 +715,10 @@ export default function RoadmapPage() {
                 </div>
                 <div className="rounded-xl border border-border bg-card p-5">
                   <h3 className="text-sm font-medium text-muted">
-                    Avg Delivery Rate
+                    Avg On-Time Rate
                   </h3>
                   <p className="mt-2 text-3xl font-bold">
-                    {avgDeliveryRate.toFixed(1)}%
+                    {avgOnTimeRate.toFixed(1)}%
                   </p>
                   <p className="mt-1 text-xs text-muted">
                     across all {statPeriodLabel}

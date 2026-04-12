@@ -58,4 +58,14 @@ export class BoardConfig {
    */
   @Column({ type: 'simple-json', default: '["In Progress"]' })
   inProgressStatusNames!: string[];
+
+  /**
+   * Status names that represent a cancelled / abandoned issue.
+   * Issues whose current status matches one of these names are excluded
+   * from roadmap coverage calculations (neither counted in the numerator
+   * nor the denominator) and are shown with a dash in the sprint detail view.
+   * Uses simple-json to support status names containing commas.
+   */
+  @Column({ type: 'simple-json', default: '["Cancelled"]' })
+  cancelledStatusNames!: string[];
 }

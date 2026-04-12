@@ -28,8 +28,12 @@ export interface RoadmapSprintAccuracy {
   coveredIssues: number;
   uncoveredIssues: number;
   roadmapCoverage: number;
-  linkedCompletedIssues: number;
-  roadmapDeliveryRate: number;
+  /**
+   * On-time delivery rate: green ÷ (green + amber).
+   * = issues delivered on or before targetDate ÷ all roadmap-linked issues.
+   * 0 when there are no roadmap-linked issues.
+   */
+  roadmapOnTimeRate: number;
 }
 
 interface RoadmapItemWindow {
@@ -117,9 +121,11 @@ export class RoadmapService {
       sprints = [...active, ...closed];
     }
 
-    // Resolve doneStatusNames from board config
+    // Resolve doneStatusNames and cancelledStatusNames from board config
     const doneStatusNames: string[] =
       boardConfig?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
+    const cancelledStatusNames: string[] =
+      boardConfig?.cancelledStatusNames ?? ['Cancelled'];
 
     if (sprints.length === 0) {
       return [];
@@ -148,6 +154,7 @@ export class RoadmapService {
         sprint,
         sprintIssues,
         doneStatusNames,
+        cancelledStatusNames,
         allIdeasForSprints,
       );
       results.push(accuracy);
@@ -314,17 +321,13 @@ export class RoadmapService {
       });
       const eligibleCoveredKeys = new Set(eligibleCoveredIssues.map((i) => i.key));
 
-      const completedKeys = new Set<string>(
-        issues
-          .filter((i) => doneStatusNames.includes(i.status))
-          .map((i) => i.key),
-      );
-
       const totalIssues = issues.length;
       const coveredCount = eligibleCoveredIssues.length;
-      const linkedCompletedIssues = [...completedKeys].filter((k) =>
-        eligibleCoveredKeys.has(k),
+      // Issues linked to any active idea but not covered (amber equivalent for Kanban)
+      const linkedNotCoveredCount = issues.filter(
+        (i) => i.epicKey !== null && activeIdeas.has(i.epicKey) && !eligibleCoveredKeys.has(i.key),
       ).length;
+      const totalLinkedKanban = coveredCount + linkedNotCoveredCount;
 
       results.push({
         sprintId: qKey,
@@ -338,10 +341,9 @@ export class RoadmapService {
           totalIssues > 0
             ? Math.round((coveredCount / totalIssues) * 10000) / 100
             : 0,
-        linkedCompletedIssues,
-        roadmapDeliveryRate:
-          coveredCount > 0
-            ? Math.round((linkedCompletedIssues / coveredCount) * 10000) / 100
+        roadmapOnTimeRate:
+          totalLinkedKanban > 0
+            ? Math.round((coveredCount / totalLinkedKanban) * 10000) / 100
             : 0,
       });
     }
@@ -385,7 +387,15 @@ export class RoadmapService {
 
       // Date-window overlap filter:
       //   idea.targetDate >= windowStart  AND  idea.startDate <= windowEnd
-      if (idea.targetDate < windowStart || idea.startDate > windowEnd) continue;
+      //
+      // Polaris interval fields store dates as date-only values (midnight UTC).
+      // A sprint starting at e.g. 03:30 UTC on the same calendar day as an idea's
+      // targetDate would incorrectly miss the overlap check because midnight < 03:30.
+      // Extending targetDate to 23:59:59.999 UTC ensures a date-only targetDate
+      // covers the full calendar day it represents.
+      const ideaTargetEndOfDay = new Date(idea.targetDate.getTime());
+      ideaTargetEndOfDay.setUTCHours(23, 59, 59, 999);
+      if (ideaTargetEndOfDay < windowStart || idea.startDate > windowEnd) continue;
 
       for (const epicKey of idea.deliveryIssueKeys.filter(Boolean)) {
         const existing = result.get(epicKey);
@@ -641,17 +651,13 @@ export class RoadmapService {
       });
       const eligibleCoveredKeys = new Set(eligibleCoveredIssues.map((i) => i.key));
 
-      const completedKeys = new Set<string>(
-        issues
-          .filter((i) => doneStatusNames.includes(i.status))
-          .map((i) => i.key),
-      );
-
       const totalIssues = issues.length;
       const coveredCount = eligibleCoveredIssues.length;
-      const linkedCompletedIssues = [...completedKeys].filter((k) =>
-        eligibleCoveredKeys.has(k),
+      // Issues linked to any active idea but not covered (amber equivalent for Kanban weekly)
+      const linkedNotCoveredCountWeekly = issues.filter(
+        (i) => i.epicKey !== null && activeIdeas.has(i.epicKey) && !eligibleCoveredKeys.has(i.key),
       ).length;
+      const totalLinkedWeekly = coveredCount + linkedNotCoveredCountWeekly;
 
       results.push({
         sprintId: wKey,
@@ -665,10 +671,9 @@ export class RoadmapService {
           totalIssues > 0
             ? Math.round((coveredCount / totalIssues) * 10000) / 100
             : 0,
-        linkedCompletedIssues,
-        roadmapDeliveryRate:
-          coveredCount > 0
-            ? Math.round((linkedCompletedIssues / coveredCount) * 10000) / 100
+        roadmapOnTimeRate:
+          totalLinkedWeekly > 0
+            ? Math.round((coveredCount / totalLinkedWeekly) * 10000) / 100
             : 0,
       });
     }
@@ -680,103 +685,82 @@ export class RoadmapService {
     sprint: JiraSprint,
     sprintIssues: JiraIssue[],
     doneStatusNames: string[],
+    cancelledStatusNames: string[],
     allIdeas: JpdIdea[],
   ): Promise<RoadmapSprintAccuracy> {
+    // Exclude Epics, Sub-tasks, and cancelled issues from all coverage metrics.
+    // Cancelled issues are removed from both numerator and denominator so they
+    // do not inflate the amber count or drag down the coverage percentage.
     const filteredIssues = sprintIssues.filter(
-      (i) => isWorkItem(i.issueType),
+      (i) => isWorkItem(i.issueType) && !cancelledStatusNames.includes(i.status),
     );
 
     if (filteredIssues.length === 0) {
       return this.emptyAccuracy(sprint);
     }
 
-    const sprintStart = sprint.startDate ?? new Date(0);
-    const sprintEnd = sprint.endDate ?? new Date();
+    // Build epicKey → targetDate map (no date-window filter).
+    // Conflict resolution: keep the idea with the later targetDate.
+    const epicIdeaMap = this.buildEpicIdeaMap(allIdeas);
 
-    // Filter pre-loaded ideas for this sprint window (no DB round-trip per sprint)
-    const activeIdeas = this.filterIdeasForWindow(allIdeas, sprintStart, sprintEnd);
-
-    // Build completed set — check current status first, then changelogs for remainder.
-    // Also capture completion timestamps for issues found via changelog.
-    const completedKeys = new Set<string>();
-    const completionDates = new Map<string, Date>(); // issueKey → first done changedAt in sprint
-    const needsChangelogCheck: string[] = [];
-
-    for (const issue of filteredIssues) {
-      if (doneStatusNames.includes(issue.status)) {
-        // Already done; conservative: treat completionDate as null (in-flight for overlap)
-        completedKeys.add(issue.key);
-      } else {
-        needsChangelogCheck.push(issue.key);
-      }
-    }
-
-    // Only query changelogs for issues not already in done status
-    if (needsChangelogCheck.length > 0) {
-      const changelogs = await this.changelogRepo
-        .createQueryBuilder('cl')
-        .where('cl.issueKey IN (:...keys)', { keys: needsChangelogCheck })
-        .andWhere('cl.field = :field', { field: 'status' })
-        .andWhere('cl.changedAt >= :start', { start: sprintStart })
-        .andWhere('cl.changedAt <= :end', { end: sprintEnd })
-        .orderBy('cl.changedAt', 'ASC')
-        .getMany();
-
-      for (const cl of changelogs) {
-        if (cl.toValue !== null && doneStatusNames.includes(cl.toValue)) {
-          completedKeys.add(cl.issueKey);
-          if (!completionDates.has(cl.issueKey)) {
-            completionDates.set(cl.issueKey, cl.changedAt);
-          }
-        }
-      }
-    }
-
-    // Query activity-start timestamps: first status transition for each issue
+    // Query ALL done-status transitions for sprint issues — no date restriction
+    // and no needsChangelogCheck split.  This ensures issues that were already
+    // in Done status at sync time still get a reliable resolvedAt timestamp.
     const allFilteredKeys = filteredIssues.map((i) => i.key);
-    const activityStartChangelogs = await this.changelogRepo
+    const changelogs = await this.changelogRepo
       .createQueryBuilder('cl')
       .where('cl.issueKey IN (:...keys)', { keys: allFilteredKeys })
       .andWhere('cl.field = :field', { field: 'status' })
       .orderBy('cl.changedAt', 'ASC')
       .getMany();
 
-    const activityStartDates = new Map<string, Date>();
-    for (const cl of activityStartChangelogs) {
-      if (!activityStartDates.has(cl.issueKey)) {
-        // First status transition = activity start regardless of direction
-        activityStartDates.set(cl.issueKey, cl.changedAt);
+    // completionDates: issueKey → first done-transition timestamp (all-time)
+    const completionDates = new Map<string, Date>();
+    for (const cl of changelogs) {
+      if (cl.toValue !== null && doneStatusNames.includes(cl.toValue)) {
+        if (!completionDates.has(cl.issueKey)) {
+          completionDates.set(cl.issueKey, cl.changedAt);
+        }
       }
     }
 
-    // Classify covered issues with eligibility check
-    const eligibleCoveredIssues = filteredIssues.filter((i) => {
-      if (i.epicKey === null || !activeIdeas.has(i.epicKey)) return false;
-      const item = activeIdeas.get(i.epicKey)!;
-      const issueActivityStart = activityStartDates.get(i.key) ?? i.createdAt;
-      // Conservative: issues already in done status get null (treated as in-flight)
-      const issueActivityEnd = doneStatusNames.includes(i.status)
-        ? null
-        : (completionDates.get(i.key) ?? null);
-      return this.isIssueEligibleForRoadmapItem(issueActivityStart, issueActivityEnd, item);
-    });
-    const eligibleCoveredKeys = new Set(eligibleCoveredIssues.map((i) => i.key));
+    // Per-issue delivery classification:
+    //   in-scope (green)  = linked to an idea AND resolvedAt <= idea.targetDate (end-of-day)
+    //   linked   (amber)  = linked to an idea AND (not resolved OR resolved late)
+    //   none              = no roadmap link
+    const coveredIssues: JiraIssue[] = [];
+    const linkedNotCoveredIssues: JiraIssue[] = [];
+
+    for (const issue of filteredIssues) {
+      if (issue.epicKey === null) continue;
+      const idea = epicIdeaMap.get(issue.epicKey);
+      if (!idea) continue;
+
+      const targetEndOfDay = this.endOfDayUTC(idea.targetDate);
+      const resolvedAt = completionDates.get(issue.key) ?? null;
+      const deliveredOnTime = resolvedAt !== null && resolvedAt <= targetEndOfDay;
+
+      if (deliveredOnTime) {
+        coveredIssues.push(issue);
+      } else {
+        linkedNotCoveredIssues.push(issue);
+      }
+    }
 
     // Compute metrics
     const totalIssues = filteredIssues.length;
-    const coveredCount = eligibleCoveredIssues.length;
+    const coveredCount = coveredIssues.length;
     const uncoveredIssues = totalIssues - coveredCount;
     const roadmapCoverage =
       totalIssues > 0
         ? Math.round((coveredCount / totalIssues) * 10000) / 100
         : 0;
 
-    const linkedCompletedIssues = [...completedKeys].filter((k) =>
-      eligibleCoveredKeys.has(k),
-    ).length;
-    const roadmapDeliveryRate =
-      coveredCount > 0
-        ? Math.round((linkedCompletedIssues / coveredCount) * 10000) / 100
+    // roadmapOnTimeRate = green ÷ (green + amber)
+    const totalLinkedIssues = coveredCount + linkedNotCoveredIssues.length;
+    const roadmapOnTimeRate =
+      totalLinkedIssues > 0
+        ? Math.round((coveredCount / totalLinkedIssues) * 10000) / 100
         : 0;
 
     return {
@@ -788,8 +772,7 @@ export class RoadmapService {
       coveredIssues: coveredCount,
       uncoveredIssues,
       roadmapCoverage,
-      linkedCompletedIssues,
-      roadmapDeliveryRate,
+      roadmapOnTimeRate,
     };
   }
 
@@ -803,9 +786,40 @@ export class RoadmapService {
       coveredIssues: 0,
       uncoveredIssues: 0,
       roadmapCoverage: 0,
-      linkedCompletedIssues: 0,
-      roadmapDeliveryRate: 0,
+      roadmapOnTimeRate: 0,
     };
+  }
+
+  /**
+   * Build a map from epicKey → { targetDate } for all ideas that have a
+   * targetDate and at least one delivery epic key. No date-window filter.
+   * Conflict resolution: if multiple ideas link the same epic key, keep
+   * the one with the later targetDate (most recent delivery commitment).
+   */
+  private buildEpicIdeaMap(ideas: JpdIdea[]): Map<string, { targetDate: Date }> {
+    const result = new Map<string, { targetDate: Date }>();
+    for (const idea of ideas) {
+      if (!idea.deliveryIssueKeys || idea.targetDate === null) continue;
+      for (const epicKey of idea.deliveryIssueKeys.filter(Boolean)) {
+        const existing = result.get(epicKey);
+        if (!existing || idea.targetDate > existing.targetDate) {
+          result.set(epicKey, { targetDate: idea.targetDate });
+        }
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Extend a date to 23:59:59.999 UTC (end of calendar day).
+   * Polaris stores targetDate as a date-only value (midnight UTC); this
+   * ensures a completion timestamp at any point during the target day
+   * is considered on-time.
+   */
+  private endOfDayUTC(date: Date): Date {
+    const d = new Date(date.getTime());
+    d.setUTCHours(23, 59, 59, 999);
+    return d;
   }
 
   private quarterToDates(quarter: string): { startDate: Date; endDate: Date } {

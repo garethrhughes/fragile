@@ -28,6 +28,7 @@ export interface BoardConfig {
   backlogStatusIds: string[];
   dataStartDate: string | null;
   inProgressStatusNames: string[];
+  cancelledStatusNames: string[];
 }
 
 export interface SprintAccuracy {
@@ -384,8 +385,8 @@ export interface RoadmapSprintAccuracy {
   coveredIssues: number;
   uncoveredIssues: number;
   roadmapCoverage: number;
-  linkedCompletedIssues: number;
-  roadmapDeliveryRate: number;
+  /** On-time delivery rate: green ÷ (green + amber). 0 when no linked issues. */
+  roadmapOnTimeRate: number;
 }
 
 export function getRoadmapAccuracy(params: {
@@ -455,7 +456,7 @@ export interface SprintDetailIssue {
   currentStatus: string
   issueType: string
   addedMidSprint: boolean
-  roadmapLinked: boolean
+  roadmapStatus: 'in-scope' | 'linked' | 'none'
   isIncident: boolean
   isFailure: boolean
   completedInSprint: boolean

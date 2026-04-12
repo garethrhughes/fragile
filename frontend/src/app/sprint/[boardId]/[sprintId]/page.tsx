@@ -117,12 +117,14 @@ function buildColumns(): Column<SprintDetailIssue>[] {
         ),
     },
     {
-      key: 'roadmapLinked',
+      key: 'roadmapStatus',
       label: 'Roadmap',
       sortable: true,
       render: (value) =>
-        value ? (
+        value === 'in-scope' ? (
           <span className="font-semibold text-green-600">✓</span>
+        ) : value === 'linked' ? (
+          <span className="font-semibold text-amber-500">✓</span>
         ) : (
           <span className="text-muted">—</span>
         ),

@@ -444,16 +444,16 @@ export default function PlanningPage() {
   // ---------------------------------------------------------------------------
   // Roadmap accuracy summary stats
   // ---------------------------------------------------------------------------
-  const { roadmapAvgCoverage, roadmapAvgDelivery, roadmapHasDates } = useMemo(() => {
+  const { roadmapAvgCoverage, roadmapAvgOnTimeRate, roadmapHasDates } = useMemo(() => {
     if (roadmapData.length === 0) {
-      return { roadmapAvgCoverage: 0, roadmapAvgDelivery: 0, roadmapHasDates: false }
+      return { roadmapAvgCoverage: 0, roadmapAvgOnTimeRate: 0, roadmapHasDates: false }
     }
     const hasDates = roadmapData.some((r) => r.coveredIssues > 0)
     const totalCoverage = roadmapData.reduce((s, r) => s + r.roadmapCoverage, 0)
-    const totalDelivery = roadmapData.reduce((s, r) => s + r.roadmapDeliveryRate, 0)
+    const totalOnTime = roadmapData.reduce((s, r) => s + r.roadmapOnTimeRate, 0)
     return {
       roadmapAvgCoverage: totalCoverage / roadmapData.length,
-      roadmapAvgDelivery: totalDelivery / roadmapData.length,
+      roadmapAvgOnTimeRate: totalOnTime / roadmapData.length,
       roadmapHasDates: hasDates,
     }
   }, [roadmapData])
@@ -943,12 +943,12 @@ export default function PlanningPage() {
                 </p>
               </div>
               <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-muted">Avg Delivery Rate</p>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted">Avg On-Time Rate</p>
                 <p className="mt-1 text-2xl font-bold">
-                  {roadmapAvgDelivery.toFixed(1)}%
+                  {roadmapAvgOnTimeRate.toFixed(1)}%
                 </p>
                 <p className="mt-0.5 text-xs text-muted">
-                  of roadmap-covered issues completed
+                  of roadmap-linked issues delivered on time
                 </p>
               </div>
             </div>

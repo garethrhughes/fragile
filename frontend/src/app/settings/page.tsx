@@ -318,6 +318,11 @@ export default function SettingsPage() {
                 onChange={(v) => updateField('inProgressStatusNames', v)}
               />
               <CsvField
+                label="Cancelled Status Names"
+                value={config.cancelledStatusNames}
+                onChange={(v) => updateField('cancelledStatusNames', v)}
+              />
+              <CsvField
                 label="Failure Issue Types"
                 value={config.failureIssueTypes}
                 onChange={(v) => updateField('failureIssueTypes', v)}

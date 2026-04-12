@@ -12,3 +12,5 @@
 | [0008](0008-exclude-epics-from-metrics.md) | Exclude Epics and Sub-tasks from all metric calculations | Accepted | 2026-04-11 |
 | [0009](0009-remove-api-key-auth.md) | Remove API key authentication | Proposed | 2026-04-12 |
 | [0010](0010-roadmap-accuracy-date-filtering.md) | Roadmap Accuracy Date Filtering | Proposed | 2026-04-12 |
+| [0011](0011-back-button-and-navigation-state-persistence.md) | Back Button and Navigation State Persistence | Draft | 2026-04-12 |
+| [0012](0012-roadmap-coverage-semantics.md) | Roadmap Coverage Semantics: Per-Issue Delivery Against Target Date | Accepted | 2026-04-12 |

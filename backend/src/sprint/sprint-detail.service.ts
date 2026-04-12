@@ -50,11 +50,15 @@ export interface SprintDetailIssue {
   addedMidSprint: boolean;
 
   /**
-   * True if the issue's epicKey is a member of the coveredEpicKeys set
-   * (i.e. issue.epicKey ∈ any JpdIdea.deliveryIssueKeys, scoped to
-   * configured RoadmapConfig.jpdKey values).
+   * Roadmap link status for the issue:
+   *  - 'in-scope'  : issue's epic is linked to a JPD idea whose date window
+   *                  overlaps this sprint (green tick — counts toward coverage)
+   *  - 'linked'    : issue's epic is linked to a JPD idea, but no idea's date
+   *                  window overlaps this sprint (amber tick — on roadmap but
+   *                  not currently scheduled)
+   *  - 'none'      : no roadmap link (dash)
    */
-  roadmapLinked: boolean;
+  roadmapStatus: 'in-scope' | 'linked' | 'none';
 
   /**
    * True if the issue matches incidentIssueTypes OR incidentLabels
@@ -222,6 +226,7 @@ export class SprintDetailService {
     const failureLabels: string[] = boardConfig?.failureLabels ?? [];
     const incidentIssueTypes: string[] = boardConfig?.incidentIssueTypes ?? [];
     const incidentLabels: string[] = boardConfig?.incidentLabels ?? [];
+    const cancelledStatusNames: string[] = boardConfig?.cancelledStatusNames ?? ['Cancelled'];
 
     const boardConfigShape: SprintDetailBoardConfig = {
       doneStatusNames,
@@ -392,22 +397,30 @@ export class SprintDetailService {
     }
 
     // -----------------------------------------------------------------------
-    // Queries 6 & 7: Load coveredEpicKeys (RoadmapConfig-scoped)
-    // Replicates RoadmapService.loadCoveredEpicKeys()
+    // Queries 6 & 7: Load roadmap ideas (RoadmapConfig-scoped)
+    //
+    // Build epicKey → targetDate map with no date-window filter.
+    // Per-issue classification happens in the annotation loop below using
+    // doneTransition.changedAt vs idea.targetDate (end-of-day UTC).
     // -----------------------------------------------------------------------
     const roadmapConfigs = await this.roadmapConfigRepo.find();
-    let coveredEpicKeys = new Set<string>();
+    const epicIdeaMap = new Map<string, { targetDate: Date }>();
 
     if (roadmapConfigs.length > 0) {
       const jpdKeys = roadmapConfigs.map((c) => c.jpdKey);
       const jpdIdeas = await this.jpdIdeaRepo.find({
         where: { jpdKey: In(jpdKeys) },
       });
-      coveredEpicKeys = new Set<string>(
-        jpdIdeas
-          .flatMap((idea) => idea.deliveryIssueKeys ?? [])
-          .filter(Boolean),
-      );
+
+      for (const idea of jpdIdeas) {
+        if (!idea.deliveryIssueKeys || idea.targetDate === null) continue;
+        for (const epicKey of idea.deliveryIssueKeys.filter(Boolean)) {
+          const existing = epicIdeaMap.get(epicKey);
+          if (!existing || idea.targetDate > existing.targetDate) {
+            epicIdeaMap.set(epicKey, { targetDate: idea.targetDate });
+          }
+        }
+      }
     }
 
     // -----------------------------------------------------------------------
@@ -423,10 +436,6 @@ export class SprintDetailService {
 
       // addedMidSprint
       const addedMidSprint = addedKeys.has(issueKey);
-
-      // roadmapLinked
-      const roadmapLinked =
-        issue.epicKey !== null && coveredEpicKeys.has(issue.epicKey);
 
       // isIncident
       const isIncident =
@@ -478,6 +487,25 @@ export class SprintDetailService {
         ? doneTransition.changedAt.toISOString()
         : null;
 
+      // roadmapStatus: per-issue delivery against roadmap targetDate
+      //   in-scope (green)  = linked to idea AND completed on or before targetDate
+      //   linked   (amber)  = linked to idea AND (not completed OR completed late)
+      //   none              = no roadmap link, OR issue is cancelled
+      //
+      // Cancelled issues always get 'none' so they don't inflate the amber count
+      // and are excluded from coverage metrics in calculateSprintAccuracy.
+      let roadmapStatus: 'in-scope' | 'linked' | 'none' = 'none';
+      if (!cancelledStatusNames.includes(issue.status) && issue.epicKey !== null) {
+        const idea = epicIdeaMap.get(issue.epicKey);
+        if (idea) {
+          const targetEndOfDay = new Date(idea.targetDate.getTime());
+          targetEndOfDay.setUTCHours(23, 59, 59, 999);
+          const resolvedDate = doneTransition?.changedAt ?? null;
+          const deliveredOnTime = resolvedDate !== null && resolvedDate <= targetEndOfDay;
+          roadmapStatus = deliveredOnTime ? 'in-scope' : 'linked';
+        }
+      }
+
       let leadTimeDays: number | null = null;
       if (doneTransition) {
         const rawDays =
@@ -501,7 +529,7 @@ export class SprintDetailService {
         currentStatus: issue.status,
         issueType: issue.issueType,
         addedMidSprint,
-        roadmapLinked,
+        roadmapStatus,
         isIncident,
         isFailure,
         completedInSprint,
@@ -540,7 +568,7 @@ export class SprintDetailService {
       addedMidSprintCount: issues.filter((i) => i.addedMidSprint).length,
       removedCount: removedKeys.size,
       completedInSprintCount: issues.filter((i) => i.completedInSprint).length,
-      roadmapLinkedCount: issues.filter((i) => i.roadmapLinked).length,
+      roadmapLinkedCount: issues.filter((i) => i.roadmapStatus !== 'none').length,
       incidentCount: issues.filter((i) => i.isIncident).length,
       failureCount: issues.filter((i) => i.isFailure).length,
       medianLeadTimeDays,
