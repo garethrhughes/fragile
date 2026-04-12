@@ -39,12 +39,13 @@ describe('classifyLeadTime', () => {
     expect(classifyLeadTime(3)).toBe('high');
   });
 
-  it('returns medium for < 30 days', () => {
+  it('returns medium for <= 30 days', () => {
     expect(classifyLeadTime(15)).toBe('medium');
+    expect(classifyLeadTime(30)).toBe('medium');
   });
 
-  it('returns low for >= 30 days', () => {
-    expect(classifyLeadTime(30)).toBe('low');
+  it('returns low for > 30 days', () => {
+    expect(classifyLeadTime(31)).toBe('low');
     expect(classifyLeadTime(90)).toBe('low');
   });
 });
