@@ -1,8 +1,10 @@
-'use client';
+'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
-import { Loader2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+import Link from 'next/link'
+import { Loader2 } from 'lucide-react'
+import { useReplaceParams } from '@/hooks/use-page-params'
 import {
   ResponsiveContainer,
   LineChart,
@@ -11,17 +13,17 @@ import {
   YAxis,
   Tooltip,
   CartesianGrid,
-} from 'recharts';
-import type { ValueType, NameType } from 'recharts/types/component/DefaultTooltipContent';
+} from 'recharts'
+import type { ValueType, NameType } from 'recharts/types/component/DefaultTooltipContent'
 import {
   getRoadmapAccuracy,
   getRoadmapConfigs,
   type RoadmapSprintAccuracy,
-} from '@/lib/api';
-import { ALL_BOARDS } from '@/store/filter-store';
-import { BoardChip } from '@/components/ui/board-chip';
-import { DataTable, type Column } from '@/components/ui/data-table';
-import { EmptyState } from '@/components/ui/empty-state';
+} from '@/lib/api'
+import { ALL_BOARDS } from '@/store/filter-store'
+import { BoardChip } from '@/components/ui/board-chip'
+import { DataTable, type Column } from '@/components/ui/data-table'
+import { EmptyState } from '@/components/ui/empty-state'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -219,39 +221,45 @@ function TrendChart({ title, data, color, unit = '' }: TrendChartProps) {
 // ---------------------------------------------------------------------------
 
 export default function RoadmapPage() {
-  const [selectedBoard, setSelectedBoard] = useState<string>('ACC');
-  const [periodType, setPeriodType] = useState<'sprint' | 'quarter'>('sprint');
-  const [kanbanPeriod, setKanbanPeriod] = useState<'quarter' | 'week'>('week');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [rawData, setRawData] = useState<RoadmapSprintAccuracy[]>([]);
-  const [kanbanWeekData, setKanbanWeekData] = useState<RoadmapSprintAccuracy[]>([]);
-  const [hasConfigs, setHasConfigs] = useState<boolean | null>(null);
+  const searchParams = useSearchParams()
+  const replaceParams = useReplaceParams()
 
-  const isKanban = KANBAN_BOARDS.has(selectedBoard);
+  // Filter state lives in the URL — defaults applied when params are absent
+  const selectedBoard = searchParams.get('board') ?? 'ACC'
+  const periodType = (searchParams.get('mode') ?? 'sprint') as 'sprint' | 'quarter'
+  const kanbanPeriod = (searchParams.get('kanban') ?? 'week') as 'quarter' | 'week'
+
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [rawData, setRawData] = useState<RoadmapSprintAccuracy[]>([])
+  const [kanbanWeekData, setKanbanWeekData] = useState<RoadmapSprintAccuracy[]>([])
+  const [hasConfigs, setHasConfigs] = useState<boolean | null>(null)
+
+  const isKanban = KANBAN_BOARDS.has(selectedBoard)
 
   // Check if any roadmap configs exist on mount
   useEffect(() => {
     getRoadmapConfigs()
       .then((configs) => {
-        setHasConfigs(configs.length > 0);
+        setHasConfigs(configs.length > 0)
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : 'Failed to load roadmap configuration');
-        setHasConfigs(false);
-      });
-  }, []);
+        setError(err instanceof Error ? err.message : 'Failed to load roadmap configuration')
+        setHasConfigs(false)
+      })
+  }, [])
 
   const handleSelectBoard = useCallback((boardId: string) => {
-    setSelectedBoard(boardId);
-    setRawData([]);
-    setKanbanWeekData([]);
-    setError(null);
     // Kanban boards have no sprints — switch to quarter view automatically
     if (KANBAN_BOARDS.has(boardId)) {
-      setPeriodType('quarter');
+      replaceParams({ board: boardId, mode: 'quarter' })
+    } else {
+      replaceParams({ board: boardId })
     }
-  }, []);
+    setRawData([])
+    setKanbanWeekData([])
+    setError(null)
+  }, [replaceParams])
 
   // Fetch roadmap accuracy data whenever board or kanbanPeriod changes
   useEffect(() => {
@@ -605,7 +613,7 @@ export default function RoadmapPage() {
                 <div className="inline-flex rounded-lg border border-border">
                   <button
                     type="button"
-                    onClick={() => setKanbanPeriod('week')}
+                    onClick={() => replaceParams({ kanban: 'week' })}
                     className={`rounded-l-lg px-4 py-2 text-sm font-medium transition-colors ${
                       kanbanPeriod === 'week'
                         ? 'bg-blue-50 text-blue-700'
@@ -616,7 +624,7 @@ export default function RoadmapPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setKanbanPeriod('quarter')}
+                    onClick={() => replaceParams({ kanban: 'quarter' })}
                     className={`rounded-r-lg px-4 py-2 text-sm font-medium transition-colors ${
                       kanbanPeriod === 'quarter'
                         ? 'bg-blue-50 text-blue-700'
@@ -630,7 +638,7 @@ export default function RoadmapPage() {
                 <div className="inline-flex rounded-lg border border-border">
                   <button
                     type="button"
-                    onClick={() => setPeriodType('sprint')}
+                    onClick={() => replaceParams({ mode: 'sprint' })}
                     className={`rounded-l-lg px-4 py-2 text-sm font-medium transition-colors ${
                       periodType === 'sprint'
                         ? 'bg-blue-50 text-blue-700'
@@ -641,7 +649,7 @@ export default function RoadmapPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setPeriodType('quarter')}
+                    onClick={() => replaceParams({ mode: 'quarter' })}
                     className={`rounded-r-lg px-4 py-2 text-sm font-medium transition-colors ${
                       periodType === 'quarter'
                         ? 'bg-blue-50 text-blue-700'

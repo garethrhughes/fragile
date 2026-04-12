@@ -1,7 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { AlertTriangle, Loader2 } from 'lucide-react'
+import { useReplaceParams } from '@/hooks/use-page-params'
 import {
   getCycleTime,
   getCycleTimeTrend,
@@ -67,21 +69,26 @@ function pooledPercentiles(results: CycleTimeResult[]) {
 // ---------------------------------------------------------------------------
 
 export default function CycleTimePage() {
-  const [selectedBoard, setSelectedBoard] = useState<string>(ALL_BOARDS[0] ?? 'ACC')
-  const [selectedQuarter, setSelectedQuarter] = useState<string>('')
+  const searchParams = useSearchParams()
+  const replaceParams = useReplaceParams()
+
+  // Filter state lives in the URL — defaults applied when params are absent
+  const selectedBoard = searchParams.get('board') ?? (ALL_BOARDS[0] ?? 'ACC')
+  const selectedQuarter = searchParams.get('quarter') ?? ''
+  const issueTypeFilter = searchParams.get('type') ?? ''
+
   const [quarters, setQuarters] = useState<QuarterInfo[]>([])
-  const [issueTypeFilter, setIssueTypeFilter] = useState<string>('')
   const [pageState, setPageState] = useState<PageState>({ status: 'idle' })
 
-  // Load quarter list once on mount
+  // Load quarter list once on mount; auto-select first quarter if none in URL
   useEffect(() => {
     let cancelled = false
     getQuarters()
       .then((res) => {
         if (!cancelled) {
           setQuarters(res)
-          if (res.length > 0 && !selectedQuarter) {
-            setSelectedQuarter(res[0].quarter)
+          if (res.length > 0 && !searchParams.get('quarter')) {
+            replaceParams({ quarter: res[0].quarter })
           }
         }
       })
@@ -91,6 +98,7 @@ export default function CycleTimePage() {
     return () => {
       cancelled = true
     }
+  // replaceParams and searchParams intentionally omitted — runs once on mount
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -153,8 +161,8 @@ export default function CycleTimePage() {
   }, [allObservations])
 
   const handleBoardSelect = useCallback((boardId: string) => {
-    setSelectedBoard(boardId)
-  }, [])
+    replaceParams({ board: boardId })
+  }, [replaceParams])
 
   return (
     <div className="space-y-6">
@@ -191,7 +199,7 @@ export default function CycleTimePage() {
               <button
                 key={q.quarter}
                 type="button"
-                onClick={() => setSelectedQuarter(q.quarter)}
+                onClick={() => replaceParams({ quarter: q.quarter })}
                 className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
                   selectedQuarter === q.quarter
                     ? 'border-blue-300 bg-blue-50 text-blue-700'
@@ -211,7 +219,7 @@ export default function CycleTimePage() {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => setIssueTypeFilter('')}
+                onClick={() => replaceParams({ type: null })}
                 className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
                   issueTypeFilter === ''
                     ? 'border-blue-300 bg-blue-50 text-blue-700'
@@ -224,7 +232,7 @@ export default function CycleTimePage() {
                 <button
                   key={t}
                   type="button"
-                  onClick={() => setIssueTypeFilter(t)}
+                  onClick={() => replaceParams({ type: t })}
                   className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
                     issueTypeFilter === t
                       ? 'border-blue-300 bg-blue-50 text-blue-700'

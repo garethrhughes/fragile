@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
-import Link from 'next/link'
-import { Loader2, ChevronLeft, ExternalLink, AlertCircle } from 'lucide-react'
+import { Loader2, ExternalLink, AlertCircle } from 'lucide-react'
 import {
   getWeekDetail,
   type WeekDetailResponse,
@@ -12,6 +11,7 @@ import {
 } from '@/lib/api'
 import { DataTable, type Column } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
+import { BackButton } from '@/components/ui/back-button'
 
 // ---------------------------------------------------------------------------
 // Summary stat chip
@@ -228,16 +228,15 @@ function rowClassName(row: WeekDetailIssue): string {
 // Back navigation helpers
 // ---------------------------------------------------------------------------
 
-function getBackHref(from: string | null): string {
-  if (from === 'roadmap') return '/roadmap'
-  if (from === 'planning') return '/planning'
-  return '/planning'
-}
-
 function getBackLabel(from: string | null): string {
   if (from === 'roadmap') return '← Back to Roadmap'
   if (from === 'planning') return '← Planning'
   return '← Planning'
+}
+
+function getBackFallback(from: string | null): string {
+  if (from === 'roadmap') return '/roadmap'
+  return '/planning'
 }
 
 // ---------------------------------------------------------------------------
@@ -292,8 +291,8 @@ export default function WeekDetailPage() {
 
   const columns = useMemo(() => buildColumns(), [])
 
-  const backHref = getBackHref(from)
   const backLabel = getBackLabel(from)
+  const backFallback = getBackFallback(from)
 
   // ── Loading ──────────────────────────────────────────────────────────────
   if (loading) {
@@ -308,10 +307,7 @@ export default function WeekDetailPage() {
   if (notFound) {
     return (
       <div className="space-y-4">
-        <Link href={backHref} className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline">
-          <ChevronLeft className="h-4 w-4" />
-          {backLabel}
-        </Link>
+        <BackButton label={backLabel} fallbackHref={backFallback} />
         <EmptyState
           title="Week not found"
           message={`No data found for week "${week}" on board "${boardId}".`}
@@ -324,10 +320,7 @@ export default function WeekDetailPage() {
   if (error) {
     return (
       <div className="space-y-4">
-        <Link href={backHref} className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline">
-          <ChevronLeft className="h-4 w-4" />
-          {backLabel}
-        </Link>
+        <BackButton label={backLabel} fallbackHref={backFallback} />
         <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
           <AlertCircle className="h-5 w-5 flex-shrink-0" />
           {error}
@@ -340,10 +333,7 @@ export default function WeekDetailPage() {
   if (!data) {
     return (
       <div className="space-y-4">
-        <Link href={backHref} className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline">
-          <ChevronLeft className="h-4 w-4" />
-          {backLabel}
-        </Link>
+        <BackButton label={backLabel} fallbackHref={backFallback} />
         <EmptyState title="No data" message="No week data available." />
       </div>
     )
@@ -357,13 +347,7 @@ export default function WeekDetailPage() {
       {/* Header */}
       <div>
         <div className="mb-2">
-          <Link
-            href={backHref}
-            className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            {backLabel}
-          </Link>
+          <BackButton label={backLabel} fallbackHref={backFallback} />
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold">{week}</h1>

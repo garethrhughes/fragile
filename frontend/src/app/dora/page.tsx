@@ -1,7 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { AlertTriangle, Loader2 } from 'lucide-react'
+import { useReplaceParams } from '@/hooks/use-page-params'
 import {
   ResponsiveContainer,
   LineChart,
@@ -23,7 +25,7 @@ import {
   type TrendPoint,
   type BoardConfig,
 } from '@/lib/api'
-import { useFilterStore, ALL_BOARDS } from '@/store/filter-store'
+import { ALL_BOARDS } from '@/store/filter-store'
 import { OrgMetricCard } from '@/components/ui/org-metric-card'
 import { BoardBreakdownTable } from '@/components/ui/board-breakdown-table'
 import { BoardChip } from '@/components/ui/board-chip'
@@ -138,13 +140,15 @@ function TrendChart({ title, data, dataKey, unit, color }: TrendChartProps) {
 // ---------------------------------------------------------------------------
 
 export default function DoraPage() {
-  const {
-    selectedBoards,
-    periodType,
-    setSelectedBoards,
-    setPeriodType,
-    setAllBoards,
-  } = useFilterStore()
+  const searchParams = useSearchParams()
+  const replaceParams = useReplaceParams()
+
+  // Filter state lives in the URL — defaults applied when params are absent
+  const boardsParam = searchParams.get('boards')
+  const selectedBoards: string[] = boardsParam
+    ? boardsParam.split(',').filter(Boolean)
+    : ALL_BOARDS
+  const periodType = (searchParams.get('mode') ?? 'quarter') as 'sprint' | 'quarter'
 
   const [pageState, setPageState] = useState<PageState>({ status: 'idle' })
 
@@ -180,19 +184,18 @@ export default function DoraPage() {
   // Auto-reset to quarter when sprint mode becomes unavailable
   useEffect(() => {
     if (!sprintModeAvailable && periodType === 'sprint') {
-      setPeriodType('quarter')
+      replaceParams({ mode: 'quarter' })
     }
-  }, [sprintModeAvailable, periodType, setPeriodType])
+  }, [sprintModeAvailable, periodType, replaceParams])
 
   const toggleBoard = useCallback(
     (boardId: string) => {
-      setSelectedBoards(
-        selectedBoards.includes(boardId)
-          ? selectedBoards.filter((b) => b !== boardId)
-          : [...selectedBoards, boardId],
-      )
+      const next = selectedBoards.includes(boardId)
+        ? selectedBoards.filter((b) => b !== boardId)
+        : [...selectedBoards, boardId]
+      replaceParams({ boards: next.join(',') })
     },
-    [selectedBoards, setSelectedBoards],
+    [selectedBoards, replaceParams],
   )
 
   // Main data fetch — fires on filter change (2 calls in parallel)
@@ -284,7 +287,7 @@ export default function DoraPage() {
             <label className="text-sm font-medium text-muted">Boards</label>
             <button
               type="button"
-              onClick={setAllBoards}
+              onClick={() => replaceParams({ boards: ALL_BOARDS.join(',') })}
               className="text-xs text-blue-600 hover:underline"
             >
               Select all
@@ -317,7 +320,7 @@ export default function DoraPage() {
           <div className="inline-flex rounded-lg border border-border">
             <button
               type="button"
-              onClick={() => setPeriodType('quarter')}
+              onClick={() => replaceParams({ mode: 'quarter' })}
               className={`rounded-l-lg px-4 py-2 text-sm font-medium transition-colors ${
                 periodType === 'quarter'
                   ? 'bg-blue-50 text-blue-700'
@@ -329,7 +332,7 @@ export default function DoraPage() {
             <button
               type="button"
               onClick={() => {
-                if (sprintModeAvailable) setPeriodType('sprint')
+                if (sprintModeAvailable) replaceParams({ mode: 'sprint' })
               }}
               disabled={!sprintModeAvailable}
               title={
