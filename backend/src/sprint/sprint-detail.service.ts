@@ -51,12 +51,14 @@ export interface SprintDetailIssue {
 
   /**
    * Roadmap link status for the issue:
-   *  - 'in-scope'  : issue's epic is linked to a JPD idea whose date window
-   *                  overlaps this sprint (green tick — counts toward coverage)
-   *  - 'linked'    : issue's epic is linked to a JPD idea, but no idea's date
-   *                  window overlaps this sprint (amber tick — on roadmap but
-   *                  not currently scheduled)
-   *  - 'none'      : no roadmap link (dash)
+   *  - 'in-scope'  : issue's epic is linked to a JPD idea AND either:
+   *                    (a) completed on or before idea.targetDate, OR
+   *                    (b) in-flight (not done/cancelled) in an active sprint
+   *                        with idea.targetDate not yet lapsed (green tick)
+   *  - 'linked'    : issue's epic is linked to a JPD idea but neither (a) nor (b)
+   *                  applies (amber tick — on roadmap but overdue or not started in
+   *                  a closed sprint)
+   *  - 'none'      : no roadmap link, or issue is cancelled (dash)
    */
   roadmapStatus: 'in-scope' | 'linked' | 'none';
 
@@ -488,8 +490,11 @@ export class SprintDetailService {
         : null;
 
       // roadmapStatus: per-issue delivery against roadmap targetDate
-      //   in-scope (green)  = linked to idea AND completed on or before targetDate
-      //   linked   (amber)  = linked to idea AND (not completed OR completed late)
+      //
+      //   in-scope (green)  = linked to idea AND:
+      //                         (a) completed on or before targetDate, OR
+      //                         (b) in-flight in an active sprint with targetDate not yet lapsed
+      //   linked   (amber)  = linked to idea AND neither (a) nor (b)
       //   none              = no roadmap link, OR issue is cancelled
       //
       // Cancelled issues always get 'none' so they don't inflate the amber count
@@ -500,9 +505,22 @@ export class SprintDetailService {
         if (idea) {
           const targetEndOfDay = new Date(idea.targetDate.getTime());
           targetEndOfDay.setUTCHours(23, 59, 59, 999);
+
           const resolvedDate = doneTransition?.changedAt ?? null;
+
+          // Condition A: delivered on time
           const deliveredOnTime = resolvedDate !== null && resolvedDate <= targetEndOfDay;
-          roadmapStatus = deliveredOnTime ? 'in-scope' : 'linked';
+
+          // Condition B: in-flight and on track
+          const todayStart = new Date();
+          todayStart.setUTCHours(0, 0, 0, 0);
+          const isInFlight =
+            sprint.state === 'active' &&
+            idea.targetDate >= todayStart &&
+            !doneStatusNames.includes(issue.status) &&
+            !cancelledStatusNames.includes(issue.status);
+
+          roadmapStatus = deliveredOnTime || isInFlight ? 'in-scope' : 'linked';
         }
       }
 

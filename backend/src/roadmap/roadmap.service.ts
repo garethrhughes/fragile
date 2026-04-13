@@ -272,12 +272,15 @@ export class RoadmapService {
     const results: RoadmapSprintAccuracy[] = [];
     for (const sprint of sprints) {
       const sprintIssues = issueListBySprint.get(sprint.id) ?? [];
+      const inProgressStatusNames: string[] =
+        boardConfig?.inProgressStatusNames ?? ['In Progress'];
       const accuracy = await this.calculateSprintAccuracy(
         sprint,
         sprintIssues,
         doneStatusNames,
         cancelledStatusNames,
         allIdeasForSprints,
+        inProgressStatusNames,
       );
       results.push(accuracy);
     }
@@ -824,6 +827,7 @@ export class RoadmapService {
     doneStatusNames: string[],
     cancelledStatusNames: string[],
     allIdeas: JpdIdea[],
+    inProgressStatusNames: string[], // accepted for API clarity; not used in core predicate
   ): Promise<RoadmapSprintAccuracy> {
     // Exclude Epics, Sub-tasks, and cancelled issues from all coverage metrics.
     // Cancelled issues are removed from both numerator and denominator so they
@@ -866,11 +870,16 @@ export class RoadmapService {
     }
 
     // Per-issue delivery classification:
-    //   in-scope (green)  = linked to an idea AND resolvedAt <= idea.targetDate (end-of-day)
-    //   linked   (amber)  = linked to an idea AND (not resolved OR resolved late)
+    //   in-scope (green)  = linked to an idea AND:
+    //                         (a) resolvedAt <= idea.targetDate (end-of-day), OR
+    //                         (b) in-flight in active sprint with targetDate not yet lapsed
+    //   linked   (amber)  = linked to an idea AND neither (a) nor (b)
     //   none              = no roadmap link
     const coveredIssues: JiraIssue[] = [];
     const linkedNotCoveredIssues: JiraIssue[] = [];
+
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0); // start of today UTC
 
     for (const issue of filteredIssues) {
       if (issue.epicKey === null) continue;
@@ -879,9 +888,18 @@ export class RoadmapService {
 
       const targetEndOfDay = this.endOfDayUTC(idea.targetDate);
       const resolvedAt = completionDates.get(issue.key) ?? null;
+
+      // Condition A: delivered on time
       const deliveredOnTime = resolvedAt !== null && resolvedAt <= targetEndOfDay;
 
-      if (deliveredOnTime) {
+      // Condition B: in-flight and on track
+      const isInFlight =
+        sprint.state === 'active' &&
+        idea.targetDate >= today &&
+        !doneStatusNames.includes(issue.status) &&
+        !cancelledStatusNames.includes(issue.status);
+
+      if (deliveredOnTime || isInFlight) {
         coveredIssues.push(issue);
       } else {
         linkedNotCoveredIssues.push(issue);

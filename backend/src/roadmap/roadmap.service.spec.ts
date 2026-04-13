@@ -636,6 +636,115 @@ describe('RoadmapService', () => {
   });
 
   // -------------------------------------------------------------------------
+  // getAccuracy — in-flight Condition B (proposal 0020)
+  // -------------------------------------------------------------------------
+
+  describe('getAccuracy (scrum, Condition B — in-flight coverage)', () => {
+    function makeInFlightSetup(overrides: {
+      sprintState: 'active' | 'closed';
+      issueStatus: string;
+      targetDate: Date;
+    }) {
+      const sprint = makeSprint({
+        id: 'sprint-1',
+        name: 'Sprint 1',
+        state: overrides.sprintState,
+        startDate: new Date('2026-01-01T00:00:00Z'),
+        endDate: new Date('2026-01-14T23:59:59Z'),
+      });
+
+      if (overrides.sprintState === 'active') {
+        sprintRepo.find
+          .mockResolvedValueOnce([sprint]) // active
+          .mockResolvedValueOnce([]);      // closed
+      } else {
+        sprintRepo.find
+          .mockResolvedValueOnce([])       // active (none)
+          .mockResolvedValueOnce([sprint]); // closed
+      }
+
+      const issue = makeIssue({
+        key: 'ACC-1',
+        sprintId: 'sprint-1',
+        status: overrides.issueStatus,
+        epicKey: 'EPIC-1',
+      });
+      issueRepo.find.mockResolvedValue([issue]);
+
+      const idea = {
+        key: 'JPD-1',
+        summary: 'Feature A',
+        status: 'In Progress',
+        jpdKey: 'ROADMAP',
+        deliveryIssueKeys: ['EPIC-1'],
+        startDate: new Date('2026-01-01T00:00:00Z'),
+        targetDate: overrides.targetDate,
+        syncedAt: new Date(),
+      } as unknown as import('../database/entities/index.js').JpdIdea;
+
+      roadmapConfigRepo.find.mockResolvedValue([
+        { id: 1, jpdKey: 'ROADMAP' } as unknown as import('../database/entities/index.js').RoadmapConfig,
+      ]);
+      jpdIdeaRepo.find.mockResolvedValue([idea]);
+
+      // Sprint field changelogs: empty (issue assigned at creation)
+      // Status changelogs: empty (no done transition)
+      let qbCallCount = 0;
+      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
+        qbCallCount++;
+        return {
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          orderBy: jest.fn().mockReturnThis(),
+          getMany: jest.fn().mockResolvedValue([]),
+          getRawMany: jest.fn().mockResolvedValue([]),
+        };
+      });
+    }
+
+    it('counts in-flight issue as covered when active sprint and targetDate is in the future', async () => {
+      // targetDate well in the future (year 2099 ensures test is always future-dated)
+      makeInFlightSetup({
+        sprintState: 'active',
+        issueStatus: 'In Progress',
+        targetDate: new Date('2099-12-31T00:00:00Z'),
+      });
+
+      const result = await service.getAccuracy('ACC');
+      expect(result).toHaveLength(1);
+      expect(result[0].coveredIssues).toBe(1);
+      expect(result[0].roadmapCoverage).toBe(100);
+    });
+
+    it('counts in-flight issue as NOT covered when active sprint but targetDate has lapsed', async () => {
+      // targetDate in the past
+      makeInFlightSetup({
+        sprintState: 'active',
+        issueStatus: 'In Progress',
+        targetDate: new Date('2020-01-01T00:00:00Z'),
+      });
+
+      const result = await service.getAccuracy('ACC');
+      expect(result).toHaveLength(1);
+      expect(result[0].coveredIssues).toBe(0);
+    });
+
+    it('counts in-flight issue as NOT covered in a closed sprint even with future targetDate', async () => {
+      // Condition B requires sprint.state === 'active'
+      makeInFlightSetup({
+        sprintState: 'closed',
+        issueStatus: 'In Progress',
+        targetDate: new Date('2099-12-31T00:00:00Z'),
+      });
+
+      const result = await service.getAccuracy('ACC');
+      expect(result).toHaveLength(1);
+      expect(result[0].coveredIssues).toBe(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // getAccuracy — Kanban accuracy (getKanbanAccuracy)
   // -------------------------------------------------------------------------
 

@@ -20,3 +20,5 @@
 | [0016](0016-ui-driven-board-management.md) | UI-Driven Board Management: Remove `JIRA_BOARD_IDS` and Replace with CRUD API + Settings UI | Accepted | 2026-04-12 |
 | [0017](0017-metric-calculation-audit.md) | Metric Calculation Audit | Informational | 2026-04-12 |
 | [0018](0018-metric-calculation-fixes.md) | Metric Calculation Fixes (P1 + P2) | Draft | 2026-04-12 |
+| [0019](0019-aws-hosting-low-cost.md) | AWS Hosting (Minimum Cost) | Proposed | 2026-04-13 |
+| [0020](0020-in-flight-roadmap-coverage.md) | In-Flight Roadmap Coverage: Count Active-Sprint Issues as Covered | Draft | 2026-04-13 |

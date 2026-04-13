@@ -14,7 +14,7 @@ import {
   Tooltip,
   CartesianGrid,
 } from 'recharts'
-import type { ValueType, NameType } from 'recharts/types/component/DefaultTooltipContent'
+import type { ValueType, NameType } from 'recharts'
 import {
   getRoadmapAccuracy,
   getRoadmapConfigs,
