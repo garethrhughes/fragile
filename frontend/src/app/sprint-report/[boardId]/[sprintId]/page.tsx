@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
-import Link from 'next/link'
-import { Loader2, AlertCircle, RefreshCw, ArrowLeft } from 'lucide-react'
+import { Loader2, AlertCircle, RefreshCw } from 'lucide-react'
+import { BackButton } from '@/components/ui/back-button'
 import {
   ResponsiveContainer,
   LineChart,
@@ -330,13 +330,7 @@ export default function SprintReportPage() {
   if (pageState.status === 'error') {
     return (
       <div className="space-y-4">
-        <Link
-          href={`/sprint/${boardId}/${sprintId}`}
-          className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Sprint
-        </Link>
+        <BackButton label="Back to Sprint" fallbackHref={`/sprint/${boardId}/${sprintId}`} />
         <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
           <AlertCircle className="h-5 w-5 flex-shrink-0" />
           {pageState.message}
@@ -370,13 +364,7 @@ export default function SprintReportPage() {
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div>
         <div className="mb-3">
-          <Link
-            href={`/sprint/${boardId}/${sprintId}`}
-            className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to Sprint
-          </Link>
+          <BackButton label="Back to Sprint" fallbackHref={`/sprint/${boardId}/${sprintId}`} />
         </div>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
