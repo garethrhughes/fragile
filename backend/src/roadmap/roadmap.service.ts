@@ -208,6 +208,20 @@ export class RoadmapService {
         }
       }
 
+      // Fallback: if the issue's current sprintId points to a target sprint but
+      // no changelog mentions that sprint by name (e.g. Jira carried the issue
+      // forward when the sprint was started without emitting a Sprint-field
+      // changelog entry), include it directly.  This mirrors the pattern in
+      // sprint-detail.service.ts lines 294-298.
+      if (issue.sprintId !== null && sprintSet.has(issue.sprintId)) {
+        const targetSprint = sprints.find((s) => s.id === issue.sprintId);
+        if (targetSprint && !sprintNamesToCheck.has(targetSprint.name)) {
+          issuesBySprint.get(targetSprint.id)!.add(issue.key);
+          // Still replay changelogs for other target sprints this issue may
+          // have appeared in — do NOT continue; fall through.
+        }
+      }
+
       // For each referenced target sprint, replay the changelog to determine
       // whether the issue was a member at any point during that sprint window
       for (const sprintName of sprintNamesToCheck) {

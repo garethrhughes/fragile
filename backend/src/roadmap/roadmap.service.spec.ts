@@ -198,6 +198,49 @@ describe('RoadmapService', () => {
       expect(result[0].totalIssues).toBe(1);
     });
 
+    it('assigns issue to sprint via sprintId when it has changelogs for other sprints only (carry-forward)', async () => {
+      // Reproduces the ACC sprint 2 bug: Jira carries issues forward from sprint
+      // 1 into sprint 2 but only emits a changelog entry like
+      //   fromValue: "Sprint 1"  toValue: "Sprint 1, Ready to estimate 2"
+      // with no entry that mentions "Sprint 2" at all.  The issue's sprintId
+      // column correctly points to sprint-2, so it should appear in sprint-2's
+      // count despite having no "Sprint 2" changelog entry.
+      const sprint1 = makeSprint({ id: 'sprint-1', name: 'Sprint 1', state: 'closed',
+        startDate: new Date('2026-01-01T00:00:00Z'), endDate: new Date('2026-01-14T23:59:59Z') });
+      const sprint2 = makeSprint({ id: 'sprint-2', name: 'Sprint 2', state: 'active',
+        startDate: new Date('2026-01-15T00:00:00Z'), endDate: new Date('2026-01-28T23:59:59Z') });
+
+      sprintRepo.find
+        .mockResolvedValueOnce([sprint2])   // active sprints
+        .mockResolvedValueOnce([sprint1]);  // closed sprints
+
+      // Issue currently in sprint-2 but its only changelog is sprint-1 related
+      const issue = makeIssue({
+        key: 'ACC-1', sprintId: 'sprint-2', status: 'In Progress',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      });
+      issueRepo.find.mockResolvedValue([issue]);
+
+      // Changelog only mentions Sprint 1, not Sprint 2 (carry-forward scenario)
+      const carryForwardChangelog = {
+        issueKey: 'ACC-1',
+        field: 'Sprint',
+        fromValue: 'Sprint 1',
+        toValue: 'Sprint 1, Ready to estimate 2',
+        changedAt: new Date('2026-01-15T03:35:00Z'),
+      };
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(
+        buildQb([carryForwardChangelog]),
+      );
+      roadmapConfigRepo.find.mockResolvedValue([]);
+      jpdIdeaRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb([]));
+
+      const result = await service.getAccuracy('ACC');
+      const sprint2Result = result.find((r) => r.sprintId === 'sprint-2');
+      expect(sprint2Result).toBeDefined();
+      expect(sprint2Result!.totalIssues).toBe(1);
+    });
+
     it('excludes cancelled issues from totals (default "Cancelled")', async () => {
       const sprint = makeSprint({ id: 'sprint-1' });
       sprintRepo.find
