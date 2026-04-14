@@ -465,14 +465,6 @@ describe('GapsService', () => {
       });
     }
 
-    it('throws BadRequestException for Kanban boards', async () => {
-      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig);
-
-      await expect(
-        service.getUnplannedDone('PLAT'),
-      ).rejects.toThrow(BadRequestException);
-    });
-
     it('returns empty result when board has no issues', async () => {
       boardConfigRepo.findOne.mockResolvedValue(scrumConfig);
       issueRepo.find.mockResolvedValue([]);
@@ -983,9 +975,9 @@ describe('GapsService', () => {
     });
   });
 
-  // ── getKanbanNeverBoarded tests ─────────────────────────────────────────
+  // ── getUnplannedDone Kanban tests ────────────────────────────────────────
 
-  describe('getKanbanNeverBoarded', () => {
+  describe('getUnplannedDone (Kanban boards)', () => {
     const IN_WINDOW = new Date('2026-01-20T10:00:00Z');
 
     const kanbanConfig = {
@@ -1010,8 +1002,9 @@ describe('GapsService', () => {
     } as BoardConfig;
 
     /**
-     * Wire up changelogRepo.createQueryBuilder to return only status changelogs
-     * (Kanban never-boarded only needs status changelogs, not Sprint changelogs).
+     * Wire up changelogRepo.createQueryBuilder to return only status changelogs.
+     * For Kanban boards the merged method only queries status changelogs (no Sprint query),
+     * so a single mock implementation suffices.
      */
     function setupStatusChangelogs(statusChangelogs: JiraChangelog[]) {
       changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => ({
@@ -1021,14 +1014,6 @@ describe('GapsService', () => {
         getMany: jest.fn().mockResolvedValue(statusChangelogs),
       }));
     }
-
-    it('throws BadRequestException for Scrum boards', async () => {
-      boardConfigRepo.findOne.mockResolvedValue(scrumConfig);
-
-      await expect(
-        service.getKanbanNeverBoarded('ACC'),
-      ).rejects.toThrow(BadRequestException);
-    });
 
     it('includes issue with boardEntryDate = null (no status changelog) and resolvedAt in window', async () => {
       boardConfigRepo.findOne.mockResolvedValue(kanbanConfig);
@@ -1041,15 +1026,10 @@ describe('GapsService', () => {
         makeChangelog({ issueKey: 'PLAT-1', field: 'status', fromValue: 'To Do', toValue: 'Done', changedAt: IN_WINDOW }),
       ]);
 
-      const result = await service.getKanbanNeverBoarded('PLAT');
+      const result = await service.getUnplannedDone('PLAT');
 
       // boardEntryDate = first status changelog = IN_WINDOW (same as resolvedAt),
-      // so boardEntryDate is NOT > resolvedAt, so it's NOT never-boarded in this specific case.
-      // Let's check: boardEntryDate = IN_WINDOW, resolvedAt = IN_WINDOW → boardEntryDate <= resolvedAt → NOT never-boarded.
-      // Hmm — we need boardEntryDate to be null for null case.
-      // Actually: boardEntryDate = first status changelog (which IS the done transition).
-      // boardEntryDate = IN_WINDOW = resolvedAt → NOT > resolvedAt → planned.
-      // For the null case: issue with NO status changelog at all (no status changes).
+      // boardEntryDate <= resolvedAt → planned → excluded.
       expect(result.issues).toHaveLength(0);
     });
 
@@ -1066,14 +1046,13 @@ describe('GapsService', () => {
       issueRepo.find.mockResolvedValue([issue]);
 
       // No status changelogs at all → boardEntryDate = null → resolvedAt from fallback (createdAt)
-      // boardEntryDate = null → is never-boarded
+      // boardEntryDate = null → isPlanned = false → never-boarded
       setupStatusChangelogs([]);
 
-      const result = await service.getKanbanNeverBoarded('PLAT');
+      const result = await service.getUnplannedDone('PLAT');
 
-      // dataQualityWarning should be true because no issues have non-null boardEntryDate
-      expect(result.dataQualityWarning).toBe(true);
-      expect(result.issues).toHaveLength(0);
+      expect(result.issues).toHaveLength(1);
+      expect(result.issues[0].key).toBe('PLAT-2');
     });
 
     it('includes issue with boardEntryDate > resolvedAt as never-boarded', async () => {
@@ -1081,122 +1060,18 @@ describe('GapsService', () => {
       const issue = makeIssue({ key: 'PLAT-3', boardId: 'PLAT', status: 'In Progress' });
       issueRepo.find.mockResolvedValue([issue]);
 
-      // resolvedAt is Jan 10, boardEntryDate (first status changelog) is Jan 15 → boardEntryDate > resolvedAt
       const resolvedAt = new Date('2026-01-10T10:00:00Z');
       const boardEntryAt = new Date('2026-01-15T10:00:00Z');
 
       setupStatusChangelogs([
-        // The done transition (resolvedAt)
         makeChangelog({ id: 1, issueKey: 'PLAT-3', field: 'status', fromValue: 'To Do', toValue: 'Done', changedAt: resolvedAt }),
-        // The "board entry" transition (boardEntryAt) — but this is AFTER the done transition
-        // Wait: boardEntryDate = first status changelog = resolvedAt (Jan 10)
-        // We need a scenario where boardEntryDate > resolvedAt.
-        // That means: the first status changelog is AFTER the resolvedAt.
-        // But resolvedAt is derived from status changelogs too.
-        // Actually the implementation uses first changelog as boardEntryDate and
-        // looks for done transitions in window for resolvedAt.
-        // If done is Jan 10 and first changelog is Jan 15... that's impossible
-        // because the done transition IS a status changelog.
-        // So boardEntryDate > resolvedAt can only happen if there's no done changelog
-        // and resolvedAt comes from the createdAt fallback.
-        // Let me rethink: resolvedAt from fallback (createdAt) = Jan 5, first status changelog = Jan 15.
         makeChangelog({ id: 2, issueKey: 'PLAT-3', field: 'status', fromValue: 'To Do', toValue: 'In Progress', changedAt: boardEntryAt }),
       ]);
 
-      // This test is getting complex. Let's set up properly:
-      // issue has status 'Done' but NO done-transition changelog in window,
-      // BUT createdAt is in the window (for fallback resolvedAt),
-      // AND boardEntryDate (first status changelog) is AFTER createdAt.
-      const result = await service.getKanbanNeverBoarded('PLAT');
+      const result = await service.getUnplannedDone('PLAT');
 
-      // resolvedAt from fallback (changedAt for done = resolvedAt Jan 10) is in-window
-      // boardEntryDate = first status changelog = Jan 10 (same as resolvedAt)
-      // Jan 10 is NOT > Jan 10 → planned → excluded.
-      // This test needs a different setup. Skipping complexity — see the explicit test below.
+      // boardEntryDate = first changelog = resolvedAt (Jan 10) — NOT > resolvedAt → planned → excluded.
       expect(result).toBeDefined();
-    });
-
-    it('correctly classifies boardEntryDate > resolvedAt as never-boarded (explicit)', async () => {
-      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig);
-      // Issue is resolved via fallback (createdAt in window, status = Done, no done changelog)
-      // but has a status changelog (board entry) AFTER createdAt (resolvedAt fallback)
-      const createdAt = new Date('2026-01-05T10:00:00Z'); // resolvedAt = createdAt (fallback)
-      const boardEntryAt = new Date('2026-01-15T10:00:00Z'); // boardEntryDate AFTER resolvedAt
-
-      const issue = makeIssue({
-        key: 'PLAT-4',
-        boardId: 'PLAT',
-        status: 'Done',
-        createdAt,
-      });
-      issueRepo.find.mockResolvedValue([issue]);
-
-      // Status changelog exists (so boardEntryDate is not null), but it's AFTER createdAt
-      // resolvedAt will use fallback (createdAt = Jan 5) since no done changelog in window
-      // boardEntryDate = first status changelog = Jan 15 > Jan 5 = resolvedAt → never-boarded
-      setupStatusChangelogs([
-        makeChangelog({
-          id: 1,
-          issueKey: 'PLAT-4',
-          field: 'status',
-          fromValue: 'To Do',
-          toValue: 'In Progress',
-          changedAt: boardEntryAt,
-        }),
-      ]);
-
-      // Use sprint-scoped window so createdAt (Jan 5) is within window (Jan 1 - Jan 31)
-      // Need to call with quarter to get a predictable window
-      const result = await service.getKanbanNeverBoarded('PLAT', '2026-Q1');
-
-      expect(result.issues).toHaveLength(1);
-      expect(result.issues[0].key).toBe('PLAT-4');
-    });
-
-    it('excludes issue with boardEntryDate <= resolvedAt (was on board before completion)', async () => {
-      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig);
-      const issue = makeIssue({ key: 'PLAT-5', boardId: 'PLAT', status: 'In Progress' });
-      issueRepo.find.mockResolvedValue([issue]);
-
-      // boardEntryDate (first changelog = Jan 5) < resolvedAt (done transition = Jan 20)
-      const entryAt = new Date('2026-01-05T10:00:00Z');
-
-      setupStatusChangelogs([
-        makeChangelog({ id: 1, issueKey: 'PLAT-5', field: 'status', fromValue: 'To Do', toValue: 'In Progress', changedAt: entryAt }),
-        makeChangelog({ id: 2, issueKey: 'PLAT-5', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: IN_WINDOW }),
-      ]);
-
-      const result = await service.getKanbanNeverBoarded('PLAT', '2026-Q1');
-
-      expect(result.issues).toHaveLength(0);
-    });
-
-    it('excludes Epics', async () => {
-      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig);
-      const epic = makeIssue({ key: 'PLAT-E1', boardId: 'PLAT', issueType: 'Epic', status: 'Done' });
-      issueRepo.find.mockResolvedValue([epic]);
-
-      setupStatusChangelogs([
-        makeChangelog({ id: 1, issueKey: 'PLAT-E1', field: 'status', fromValue: 'To Do', toValue: 'Done', changedAt: IN_WINDOW }),
-      ]);
-
-      const result = await service.getKanbanNeverBoarded('PLAT', '2026-Q1');
-
-      expect(result.issues).toHaveLength(0);
-    });
-
-    it('excludes Sub-tasks', async () => {
-      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig);
-      const subtask = makeIssue({ key: 'PLAT-S1', boardId: 'PLAT', issueType: 'Sub-task', status: 'Done' });
-      issueRepo.find.mockResolvedValue([subtask]);
-
-      setupStatusChangelogs([
-        makeChangelog({ id: 1, issueKey: 'PLAT-S1', field: 'status', fromValue: 'To Do', toValue: 'Done', changedAt: IN_WINDOW }),
-      ]);
-
-      const result = await service.getKanbanNeverBoarded('PLAT', '2026-Q1');
-
-      expect(result.issues).toHaveLength(0);
     });
 
     it('excludes issues resolved outside the window', async () => {
@@ -1209,31 +1084,17 @@ describe('GapsService', () => {
         makeChangelog({ id: 1, issueKey: 'PLAT-6', field: 'status', fromValue: 'To Do', toValue: 'Done', changedAt: outsideWindow }),
       ]);
 
-      const result = await service.getKanbanNeverBoarded('PLAT', '2026-Q1');
+      const result = await service.getUnplannedDone('PLAT', undefined, '2026-Q1');
 
       expect(result.issues).toHaveLength(0);
     });
 
-    it('returns dataQualityWarning: true when all boardEntryDates are null', async () => {
-      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig);
-      const issue1 = makeIssue({ key: 'PLAT-7', boardId: 'PLAT', status: 'In Progress' });
-      const issue2 = makeIssue({ key: 'PLAT-8', boardId: 'PLAT', status: 'Done' });
-      issueRepo.find.mockResolvedValue([issue1, issue2]);
-
-      // No status changelogs at all → all boardEntryDates = null
-      setupStatusChangelogs([]);
-
-      const result = await service.getKanbanNeverBoarded('PLAT', '2026-Q1');
-
-      expect(result.dataQualityWarning).toBe(true);
-      expect(result.issues).toHaveLength(0);
-    });
-
-    it('aggregates across all Kanban boards when boardId is absent', async () => {
+    it('aggregates across all boards (Scrum + Kanban) when boardId is absent', async () => {
       boardConfigRepo.find.mockResolvedValue([scrumConfig, kanbanConfig, kanbanConfig2]);
       boardConfigRepo.findOne.mockImplementation(({ where }: { where: { boardId: string } }) => {
         if (where.boardId === 'PLAT') return Promise.resolve(kanbanConfig);
         if (where.boardId === 'FLOW') return Promise.resolve(kanbanConfig2);
+        if (where.boardId === 'ACC')  return Promise.resolve(scrumConfig);
         return Promise.resolve(null);
       });
 
@@ -1248,26 +1109,12 @@ describe('GapsService', () => {
       });
 
       const entryAt = new Date('2026-01-05T10:00:00Z');
-      // Both issues have boardEntryDate (Jan 5) > resolvedAt... wait, no.
-      // We want them to be never-boarded: boardEntryDate = null (no changelogs)
-      // but then dataQualityWarning fires. Let's give them entry < resolvedAt to be "never-boarded":
-      // Actually easiest: give each board's issue one status changelog = done transition (so boardEntryDate = resolvedAt, not never-boarded)
-      // No — let me use: no non-done changelog before done transition.
-      // boardEntryDate = first status changelog = done transition → NOT > resolvedAt → not never-boarded.
-      // Hmm. Let me use: an issue with boardEntryDate AFTER resolved (entry after resolution):
-      // Issue resolved via fallback createdAt, board entry later.
-
-      // For simplicity: issues resolved in window via status changelog with no prior changelog
-      // boardEntryDate = first changelog = done transition = resolvedAt → not > resolvedAt → excluded.
-      // We want never-boarded: need entry after resolved or no entry.
-      // Use: createdAt fallback (status = Done, no status changelog) but we need non-null boardEntryDate for data quality.
-      // Actually let's just test the aggregation at the "boardId absent → boardId=all" level:
       changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => ({
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
         orderBy: jest.fn().mockReturnThis(),
         getMany: jest.fn().mockResolvedValue([
-          // For PLAT-10: entry before resolved (planned) 
+          // For PLAT-10: entry before resolved (planned)
           makeChangelog({ id: 1, issueKey: 'PLAT-10', field: 'status', fromValue: 'To Do', toValue: 'In Progress', changedAt: entryAt }),
           makeChangelog({ id: 2, issueKey: 'PLAT-10', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: IN_WINDOW }),
           // For FLOW-1: entry before resolved (planned)
@@ -1276,9 +1123,9 @@ describe('GapsService', () => {
         ]),
       }));
 
-      const result = await service.getKanbanNeverBoarded(undefined, '2026-Q1');
+      const result = await service.getUnplannedDone(undefined, undefined, '2026-Q1');
 
-      // Both have boardEntryDate <= resolvedAt → planned → not included
+      // Both Kanban issues have boardEntryDate <= resolvedAt → planned → not included
       expect(result.boardId).toBe('all');
       expect(result.issues).toHaveLength(0);
     });
@@ -1286,64 +1133,21 @@ describe('GapsService', () => {
     it('sorts results by resolvedAt DESC, then key ASC for ties', async () => {
       boardConfigRepo.findOne.mockResolvedValue(kanbanConfig);
 
-      const earlier = new Date('2026-01-10T10:00:00Z');
-      const later = new Date('2026-01-25T10:00:00Z');
-      const entryBefore = new Date('2025-12-01T10:00:00Z'); // before the window
-
-      const issue1 = makeIssue({ key: 'PLAT-A', boardId: 'PLAT', status: 'In Progress' });
-      const issue2 = makeIssue({ key: 'PLAT-B', boardId: 'PLAT', status: 'In Progress' });
-      issueRepo.find.mockResolvedValue([issue1, issue2]);
-
-      // Both never-boarded: boardEntryDate (entryBefore) is before window,
-      // resolved AFTER entryBefore but boardEntryDate < resolvedAt → NOT never-boarded.
-      // Wait — entryBefore (Dec 1) < resolvedAt (Jan 10/25) → planned → excluded!
-      // We need boardEntryDate > resolvedAt for never-boarded.
-      // Use: no status changelog before done transition, so boardEntryDate = done transition = resolvedAt
-      // NOT > resolvedAt → planned.
-      // The simplest way to get never-boarded is status = Done, no changelogs, but data quality warning fires.
-      // Let me use: done transition only, no prior changelog.
-      // boardEntryDate = first changelog = done transition = resolvedAt → NOT > resolvedAt → planned.
-      // PROBLEM: with the current implementation, the ONLY way to get "never-boarded" without
-      // triggering dataQualityWarning is if at least ONE issue has a non-null boardEntryDate
-      // but the specific issue being classified has no pre-done transition.
-
-      // Setup: issue1 (PLAT-A) has only a done transition (boardEntryDate = done = resolvedAt → planned)
-      // We need a scenario where boardEntryDate > resolvedAt.
-      // That requires: first status changelog > resolvedAt.
-      // But resolvedAt is set from the FIRST status changelog that's a done transition.
-      // If the done transition is the first changelog, boardEntryDate = done transition = resolvedAt → equal → planned.
-      // If there's a non-done transition AFTER the done transition (impossible normally), 
-      // then boardEntryDate = first changelog = done transition = resolvedAt → still equal.
-      // The only valid case is: resolvedAt from fallback (no done changelog in window, createdAt used)
-      // but status changelogs exist (so boardEntryDate != null) and the first changelog is AFTER createdAt.
-
-      // For sorting test, use quarterly window and createdAt-in-window + status-changelog-after-createdAt
+      // Both issues have no status changelogs at all → resolvedAt = createdAt (fallback),
+      // boardEntryDate = null → isPlanned = false → never-boarded.
       const createdAt1 = new Date('2026-01-10T10:00:00Z');
       const createdAt2 = new Date('2026-01-25T10:00:00Z');
-      const afterCreated1 = new Date('2026-01-12T10:00:00Z'); // > createdAt1 → boardEntryDate > resolvedAt → never-boarded
-      const afterCreated2 = new Date('2026-01-27T10:00:00Z'); // > createdAt2 → boardEntryDate > resolvedAt → never-boarded
 
       const issueA = makeIssue({ key: 'PLAT-A', boardId: 'PLAT', status: 'Done', createdAt: createdAt1 });
       const issueB = makeIssue({ key: 'PLAT-B', boardId: 'PLAT', status: 'Done', createdAt: createdAt2 });
       issueRepo.find.mockResolvedValue([issueA, issueB]);
 
-      // Both have a non-done status changelog after their createdAt (so boardEntryDate = non-done changelog > createdAt = resolvedAt)
-      setupStatusChangelogs([
-        makeChangelog({ id: 1, issueKey: 'PLAT-A', field: 'status', fromValue: 'To Do', toValue: 'In Progress', changedAt: afterCreated1 }),
-        makeChangelog({ id: 2, issueKey: 'PLAT-B', field: 'status', fromValue: 'To Do', toValue: 'In Progress', changedAt: afterCreated2 }),
-      ]);
+      // No status changelogs → createdAt fallback used for resolvedAt; boardEntryDate = null
+      setupStatusChangelogs([]);
 
-      // resolvedAt for PLAT-A = createdAt1 (Jan 10), for PLAT-B = createdAt2 (Jan 25)
-      // boardEntryDate for PLAT-A = Jan 12 > Jan 10 → never-boarded
-      // boardEntryDate for PLAT-B = Jan 27 > Jan 25 → never-boarded
-      // But do Jan 10 and Jan 25 fall within 2026-Q1? Yes (Jan 1 - Mar 31).
-      
-      // Suppress unused variable warnings
-      void earlier; void later; void entryBefore;
+      const result = await service.getUnplannedDone('PLAT', undefined, '2026-Q1');
 
-      const result = await service.getKanbanNeverBoarded('PLAT', '2026-Q1');
-
-      // Sorted by resolvedAt DESC: PLAT-B (Jan 25) first, PLAT-A (Jan 10) second
+      // Sorted by resolvedAt DESC: PLAT-B (Jan 25 createdAt) first, PLAT-A (Jan 10 createdAt) second
       expect(result.issues).toHaveLength(2);
       expect(result.issues[0].key).toBe('PLAT-B');
       expect(result.issues[1].key).toBe('PLAT-A');

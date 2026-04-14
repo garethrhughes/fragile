@@ -55,7 +55,6 @@ export interface UnplannedDoneResponse {
   window: { start: string; end: string };
   issues: UnplannedDoneIssue[];
   summary: UnplannedDoneSummary;
-  dataQualityWarning?: boolean;
 }
 
 @Injectable()
@@ -165,9 +164,10 @@ export class GapsService {
   }
 
   /**
-   * Aggregate unplanned done tickets across all configured Scrum boards.
-   * Kanban boards are silently skipped (they have no sprint membership data).
-   * sprintId is not supported in all-boards mode — use quarter or last-90-days.
+   * Aggregate never-boarded completions across all configured boards.
+   * Scrum boards use sprint-membership classification; Kanban boards use
+   * board-entry-date classification. sprintId is not supported in all-boards
+   * mode — use quarter or last-90-days.
    */
   private async getUnplannedDoneAllBoards(
     quarter?: string,
@@ -187,17 +187,17 @@ export class GapsService {
       windowStart.setDate(windowStart.getDate() - 90);
     }
 
-    // Load all board configs; skip Kanban boards
+    // Load all board configs — include every board type
     const allConfigs = await this.boardConfigRepo.find();
-    const scrumConfigs = allConfigs.filter((c) => c.boardType !== 'kanban');
 
-    if (scrumConfigs.length === 0) {
+    if (allConfigs.length === 0) {
       return this.buildResponse('all', windowStart, windowEnd, []);
     }
 
-    // Collect results from each Scrum board in parallel
+    // Collect results from each board in parallel; each board uses the correct
+    // algorithm automatically (Scrum = sprint-membership, Kanban = board-entry-date)
     const perBoardResults = await Promise.all(
-      scrumConfigs.map((cfg) =>
+      allConfigs.map((cfg) =>
         this.getUnplannedDoneSingleBoard(cfg.boardId, undefined, quarter).then(
           (r) => r.issues,
         ),
@@ -223,13 +223,9 @@ export class GapsService {
     sprintId?: string,
     quarter?: string,
   ): Promise<UnplannedDoneResponse> {
-    // Step 1: Load BoardConfig — throw for Kanban boards
+    // Step 1: Load BoardConfig — determine board type and done status names
     const config = await this.boardConfigRepo.findOne({ where: { boardId } });
-    if (config?.boardType === 'kanban') {
-      throw new BadRequestException(
-        'Unplanned done report is not available for Kanban boards',
-      );
-    }
+    const isKanban = config?.boardType === 'kanban';
     const doneStatusNames: string[] = config?.doneStatusNames ?? [
       'Done',
       'Closed',
@@ -237,10 +233,11 @@ export class GapsService {
     ];
 
     // Step 2: Determine date window
+    // sprintId is only meaningful for Scrum boards; ignore it for Kanban.
     let windowStart: Date;
     let windowEnd: Date;
 
-    if (sprintId) {
+    if (sprintId && !isKanban) {
       const sprint = await this.sprintRepo.findOne({
         where: { id: sprintId, boardId },
       });
@@ -281,15 +278,7 @@ export class GapsService {
       .orderBy('cl.changedAt', 'ASC')
       .getMany();
 
-    // Step 5: Bulk-load Sprint-field changelogs for all issues
-    const sprintChangelogs = await this.changelogRepo
-      .createQueryBuilder('cl')
-      .where('cl.issueKey IN (:...keys)', { keys: allKeys })
-      .andWhere('cl.field = :field', { field: 'Sprint' })
-      .orderBy('cl.changedAt', 'ASC')
-      .getMany();
-
-    // Group changelogs by issue key for O(1) lookups
+    // Group by issue key for O(1) lookups
     const statusLogsByIssue = new Map<string, JiraChangelog[]>();
     for (const cl of statusChangelogs) {
       const list = statusLogsByIssue.get(cl.issueKey) ?? [];
@@ -297,15 +286,39 @@ export class GapsService {
       statusLogsByIssue.set(cl.issueKey, list);
     }
 
-    const sprintLogsByIssue = new Map<string, JiraChangelog[]>();
-    for (const cl of sprintChangelogs) {
-      const list = sprintLogsByIssue.get(cl.issueKey) ?? [];
-      list.push(cl);
-      sprintLogsByIssue.set(cl.issueKey, list);
+    // Step 5 (Scrum only): Bulk-load Sprint-field changelogs
+    let sprintLogsByIssue = new Map<string, JiraChangelog[]>();
+    if (!isKanban) {
+      const sprintChangelogs = await this.changelogRepo
+        .createQueryBuilder('cl')
+        .where('cl.issueKey IN (:...keys)', { keys: allKeys })
+        .andWhere('cl.field = :field', { field: 'Sprint' })
+        .orderBy('cl.changedAt', 'ASC')
+        .getMany();
+
+      for (const cl of sprintChangelogs) {
+        const list = sprintLogsByIssue.get(cl.issueKey) ?? [];
+        list.push(cl);
+        sprintLogsByIssue.set(cl.issueKey, list);
+      }
+    }
+
+    // Step 5 (Kanban only): Compute boardEntryDate per issue.
+    // boardEntryDate = timestamp of first status changelog (first time the issue
+    // moved through any workflow state). null means it never entered the board flow.
+    const boardEntryDateByKey = new Map<string, Date | null>();
+    if (isKanban) {
+      for (const issue of allIssues) {
+        const logs = statusLogsByIssue.get(issue.key);
+        boardEntryDateByKey.set(
+          issue.key,
+          logs && logs.length > 0 ? logs[0].changedAt : null,
+        );
+      }
     }
 
     const jiraBase = this.jiraBaseUrl;
-    const unplannedIssues: UnplannedDoneIssue[] = [];
+    const resultIssues: UnplannedDoneIssue[] = [];
 
     // Step 6: Classify each issue
     for (const issue of allIssues) {
@@ -346,47 +359,50 @@ export class GapsService {
         }
       }
 
-      // Step 6b: Replay Sprint-field changelogs up to resolvedAt
-      const sprintLogs = sprintLogsByIssue.get(issue.key) ?? [];
-      let inSprint = false;
+      // Step 6b: Determine whether the issue was "planned" at resolution time.
+      // The definition of "planned" differs by board type:
+      //   Scrum  — the issue was a member of a sprint when it was resolved
+      //   Kanban — the issue had entered the board's workflow before it was resolved
+      let isPlanned: boolean;
 
-      for (const cl of sprintLogs) {
-        if (cl.changedAt > resolvedAt) break;
+      if (isKanban) {
+        // Kanban: planned = boardEntryDate exists AND is before resolvedAt
+        const boardEntryDate = boardEntryDateByKey.get(issue.key) ?? null;
+        isPlanned = boardEntryDate !== null && boardEntryDate <= resolvedAt;
+      } else {
+        // Scrum: replay Sprint-field changelogs up to resolvedAt
+        const sprintLogs = sprintLogsByIssue.get(issue.key) ?? [];
+        let inSprint = false;
 
-        // Presence-only check — we care whether the issue was in *any* sprint,
-        // not a specific one. No need for the exact-name sprintValueContains()
-        // helper used elsewhere (which guards against "Sprint 1" matching
-        // "Sprint 10"). A non-empty toValue means the issue entered some sprint;
-        // an empty toValue after a non-empty fromValue means it left all sprints.
-        if (cl.toValue !== null && cl.toValue.trim() !== '') {
+        for (const cl of sprintLogs) {
+          if (cl.changedAt > resolvedAt) break;
+
+          // Presence-only check — non-empty toValue = entered a sprint;
+          // empty toValue after non-empty fromValue = removed from all sprints.
+          if (cl.toValue !== null && cl.toValue.trim() !== '') {
+            inSprint = true;
+          }
+          if (
+            (cl.fromValue !== null && cl.fromValue.trim() !== '') &&
+            (cl.toValue === null || cl.toValue.trim() === '')
+          ) {
+            inSprint = false;
+          }
+        }
+
+        // Snapshot fallback: Jira doesn't record a Sprint changelog for issues
+        // placed into a sprint at creation time. If there are no Sprint changelogs
+        // but the snapshot sprintId is non-null, the issue was in a sprint at creation.
+        if (sprintLogs.length === 0 && issue.sprintId !== null) {
           inSprint = true;
         }
-        if (
-          (cl.fromValue !== null && cl.fromValue.trim() !== '') &&
-          (cl.toValue === null || cl.toValue.trim() === '')
-        ) {
-          inSprint = false;
-        }
+
+        isPlanned = inSprint;
       }
 
-      // Step 6c: Fall back to snapshot sprintId for issues created directly
-      // into a sprint via the Jira UI. Jira only records a Sprint changelog
-      // when an issue *moves between* sprint states; an issue placed into a
-      // sprint at creation has no Sprint changelog at all. If there are no
-      // sprint changelogs and the snapshot sprintId is non-null the issue was
-      // in a sprint at creation and should be treated as planned.
-      // (Mirrors the wasInSprintAtDate fallback in sprint-detail.service.ts.)
-      if (sprintLogs.length === 0 && issue.sprintId !== null) {
-        inSprint = true;
-      }
+      if (isPlanned) continue;
 
-      // Step 6d: Skip if in sprint at resolution time (planned completion)
-      if (inSprint) continue;
-
-      // Step 6d: Classify as unplanned done
-      // resolvedStatus is always non-null here: the continue guards above
-      // ensure we only reach this point when resolvedStatus was assigned.
-      unplannedIssues.push({
+      resultIssues.push({
         key: issue.key,
         summary: issue.summary,
         issueType: issue.issueType,
@@ -402,210 +418,14 @@ export class GapsService {
       });
     }
 
-    // Step 8: Sort by resolvedAt DESC, then key ASC for ties
-    unplannedIssues.sort((a, b) => {
+    // Sort by resolvedAt DESC, then key ASC for ties
+    resultIssues.sort((a, b) => {
       const timeDiff = new Date(b.resolvedAt).getTime() - new Date(a.resolvedAt).getTime();
       if (timeDiff !== 0) return timeDiff;
       return a.key.localeCompare(b.key);
     });
 
-    return this.buildResponse(boardId, windowStart, windowEnd, unplannedIssues);
-  }
-
-  async getKanbanNeverBoarded(
-    boardId: string | undefined,
-    quarter?: string,
-    _last90?: boolean,
-  ): Promise<UnplannedDoneResponse> {
-    const isAllBoards = !boardId || boardId === 'all';
-
-    // Determine date window
-    let windowStart: Date;
-    let windowEnd: Date;
-
-    if (quarter) {
-      const { startDate, endDate } = quarterToDates(quarter);
-      windowStart = startDate;
-      windowEnd = endDate;
-    } else {
-      // Default: last 90 days (also used when last90 = true)
-      windowEnd = new Date();
-      windowStart = new Date();
-      windowStart.setDate(windowStart.getDate() - 90);
-    }
-
-    if (isAllBoards) {
-      // Aggregate across all Kanban boards
-      const allConfigs = await this.boardConfigRepo.find();
-      const kanbanConfigs = allConfigs.filter((c) => c.boardType === 'kanban');
-
-      if (kanbanConfigs.length === 0) {
-        return this.buildResponse('all', windowStart, windowEnd, []);
-      }
-
-      const perBoardResults = await Promise.all(
-        kanbanConfigs.map((cfg) =>
-          this.getKanbanNeverBoardedSingleBoard(cfg.boardId, windowStart, windowEnd).then(
-            (r) => r,
-          ),
-        ),
-      );
-
-      // If any board has a real result (not a data quality warning), merge them
-      const merged: UnplannedDoneIssue[] = ([] as UnplannedDoneIssue[]).concat(
-        ...perBoardResults.map((r) => r.issues),
-      );
-      merged.sort((a, b) => {
-        const timeDiff =
-          new Date(b.resolvedAt).getTime() - new Date(a.resolvedAt).getTime();
-        if (timeDiff !== 0) return timeDiff;
-        return a.key.localeCompare(b.key);
-      });
-
-      return this.buildResponse('all', windowStart, windowEnd, merged);
-    }
-
-    // Single board mode
-    const config = await this.boardConfigRepo.findOne({ where: { boardId } });
-    if (config?.boardType !== 'kanban') {
-      throw new BadRequestException('Not available for Scrum boards');
-    }
-
-    return this.getKanbanNeverBoardedSingleBoard(boardId, windowStart, windowEnd);
-  }
-
-  private async getKanbanNeverBoardedSingleBoard(
-    boardId: string,
-    windowStart: Date,
-    windowEnd: Date,
-  ): Promise<UnplannedDoneResponse> {
-    const config = await this.boardConfigRepo.findOne({ where: { boardId } });
-    const doneStatusNames: string[] = config?.doneStatusNames ?? [
-      'Done',
-      'Closed',
-      'Released',
-    ];
-
-    // Load all work-item issues for this board
-    const allIssues = (
-      await this.issueRepo.find({ where: { boardId } })
-    ).filter((i) => isWorkItem(i.issueType));
-
-    if (allIssues.length === 0) {
-      return this.buildResponse(boardId, windowStart, windowEnd, []);
-    }
-
-    const allKeys = allIssues.map((i) => i.key);
-
-    // Bulk-load status changelogs for all issues
-    const statusChangelogs = await this.changelogRepo
-      .createQueryBuilder('cl')
-      .where('cl.issueKey IN (:...keys)', { keys: allKeys })
-      .andWhere('cl.field = :field', { field: 'status' })
-      .orderBy('cl.changedAt', 'ASC')
-      .getMany();
-
-    // Group changelogs by issue key
-    const statusLogsByIssue = new Map<string, JiraChangelog[]>();
-    for (const cl of statusChangelogs) {
-      const list = statusLogsByIssue.get(cl.issueKey) ?? [];
-      list.push(cl);
-      statusLogsByIssue.set(cl.issueKey, list);
-    }
-
-    // Compute boardEntryDate per issue:
-    // The board entry date is the timestamp of the first status transition
-    // out of a backlog/To Do state (i.e. first status changelog entry).
-    // If there are no status changelogs for an issue, boardEntryDate is null
-    // (the issue never moved through any status — never entered the board flow).
-    const boardEntryDateByKey = new Map<string, Date | null>();
-    for (const issue of allIssues) {
-      const logs = statusLogsByIssue.get(issue.key);
-      if (!logs || logs.length === 0) {
-        boardEntryDateByKey.set(issue.key, null);
-      } else {
-        // First status changelog = first time the issue's status changed = board entry
-        boardEntryDateByKey.set(issue.key, logs[0].changedAt);
-      }
-    }
-
-    // Data quality check: if NO issues on this board have a non-null boardEntryDate,
-    // the board has not been synced properly yet — return a data quality warning.
-    const hasAnyEntry = Array.from(boardEntryDateByKey.values()).some((d) => d !== null);
-    if (!hasAnyEntry) {
-      const empty = this.buildResponse(boardId, windowStart, windowEnd, []);
-      return { ...empty, dataQualityWarning: true };
-    }
-
-    const jiraBase = this.jiraBaseUrl;
-    const neverBoardedIssues: UnplannedDoneIssue[] = [];
-
-    for (const issue of allIssues) {
-      // Find resolvedAt: first status changelog where toValue ∈ doneStatusNames
-      // AND changedAt is within [windowStart, windowEnd]
-      const statusLogs = statusLogsByIssue.get(issue.key) ?? [];
-      let resolvedAt: Date | null = null;
-      let resolvedStatus: string | null = null;
-
-      for (const cl of statusLogs) {
-        if (
-          cl.toValue !== null &&
-          doneStatusNames.includes(cl.toValue) &&
-          cl.changedAt >= windowStart &&
-          cl.changedAt <= windowEnd
-        ) {
-          resolvedAt = cl.changedAt;
-          resolvedStatus = cl.toValue;
-          break;
-        }
-      }
-
-      // Fallback: no status changelog, current status is done, createdAt in window
-      if (resolvedAt === null) {
-        if (
-          doneStatusNames.includes(issue.status) &&
-          issue.createdAt >= windowStart &&
-          issue.createdAt <= windowEnd
-        ) {
-          resolvedAt = issue.createdAt;
-          resolvedStatus = issue.status;
-        } else {
-          continue; // no resolution within window
-        }
-      }
-
-      // Check boardEntryDate relative to resolvedAt:
-      // never-boarded = boardEntryDate is null OR boardEntryDate > resolvedAt
-      const boardEntryDate = boardEntryDateByKey.get(issue.key) ?? null;
-      const isNeverBoarded =
-        boardEntryDate === null || boardEntryDate > resolvedAt;
-
-      if (!isNeverBoarded) continue;
-
-      neverBoardedIssues.push({
-        key: issue.key,
-        summary: issue.summary,
-        issueType: issue.issueType,
-        boardId: issue.boardId,
-        resolvedAt: resolvedAt.toISOString(),
-        resolvedStatus: resolvedStatus as string,
-        points: issue.points,
-        epicKey: issue.epicKey,
-        priority: issue.priority,
-        assignee: issue.assignee,
-        labels: issue.labels,
-        jiraUrl: jiraBase ? `${jiraBase}/browse/${issue.key}` : '',
-      });
-    }
-
-    // Sort by resolvedAt DESC, then key ASC
-    neverBoardedIssues.sort((a, b) => {
-      const timeDiff = new Date(b.resolvedAt).getTime() - new Date(a.resolvedAt).getTime();
-      if (timeDiff !== 0) return timeDiff;
-      return a.key.localeCompare(b.key);
-    });
-
-    return this.buildResponse(boardId, windowStart, windowEnd, neverBoardedIssues);
+    return this.buildResponse(boardId, windowStart, windowEnd, resultIssues);
   }
 
   private buildResponse(

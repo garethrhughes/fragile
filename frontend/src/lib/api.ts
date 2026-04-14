@@ -849,26 +849,6 @@ export function getUnplannedDone(
   )
 }
 
-// ---- Kanban Never-Boarded types and endpoint -----------------------------
-
-export interface KanbanNeverBoardedParams {
-  boardId?: string
-  quarter?: string
-  last90?: boolean
-}
-
-export function getKanbanNeverBoarded(
-  params: KanbanNeverBoardedParams,
-): Promise<UnplannedDoneResponse> {
-  return apiFetch(
-    `/api/gaps/kanban-never-boarded${toQueryString({
-      boardId: params.boardId,
-      quarter: params.quarter,
-      last90: params.last90 !== undefined ? String(params.last90) : undefined,
-    })}`,
-  )
-}
-
 // ---- App config endpoint -------------------------------------------------
 
 export interface AppConfig {

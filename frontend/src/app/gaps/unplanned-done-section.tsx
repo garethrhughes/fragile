@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight, ExternalLink, Loader2 } from 'lucide-react'
 import {
   getUnplannedDone,
-  ApiError,
   type UnplannedDoneIssue,
   type UnplannedDoneResponse,
 } from '@/lib/api'
@@ -183,10 +182,6 @@ export function UnplannedDoneSection() {
   const allBoards = useBoardsStore((s) => s.allBoards)
   const kanbanBoardIds = useBoardsStore((s) => s.kanbanBoardIds)
 
-  // Derive whether the currently selected board is Kanban
-  const isKanban =
-    selectedBoard !== ALL_BOARDS && kanbanBoardIds.has(selectedBoard)
-
   // Period selector state
   const [periodMode, setPeriodMode] = useState<PeriodMode>('last90')
   const [selectedSprint, setSelectedSprint] = useState<string | null>(null)
@@ -207,11 +202,9 @@ export function UnplannedDoneSection() {
   }, [selectedBoard])
 
   // Derive the effective params for the API call.
-  // "All Boards" mode: omit boardId so the backend aggregates all Scrum boards.
+  // "All Boards" mode: omit boardId so the backend aggregates all boards.
   // Sprint mode is only available for single Scrum boards.
   const fetchParams = useMemo(() => {
-    if (isKanban) return null
-
     const boardIdParam =
       selectedBoard === ALL_BOARDS ? undefined : selectedBoard
 
@@ -225,7 +218,7 @@ export function UnplannedDoneSection() {
       return { boardId: boardIdParam }
     }
     return null
-  }, [selectedBoard, isKanban, periodMode, selectedSprint, selectedQuarter])
+  }, [selectedBoard, periodMode, selectedSprint, selectedQuarter])
 
   // Fetch when params become available / change
   useEffect(() => {
@@ -244,13 +237,7 @@ export function UnplannedDoneSection() {
       })
       .catch((err: unknown) => {
         if (cancelled) return
-        if (err instanceof ApiError && err.status === 400) {
-          // 400 means Kanban — should be prevented by isKanban guard above,
-          // but handle defensively.
-          setError('Not available for Kanban boards.')
-        } else {
-          setError(err instanceof Error ? err.message : 'Failed to load unplanned done data')
-        }
+        setError(err instanceof Error ? err.message : 'Failed to load unplanned done data')
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -275,7 +262,8 @@ export function UnplannedDoneSection() {
   const issueCount = data?.summary.total ?? 0
 
   // Sprint mode is only available when a single Scrum board is selected
-  const sprintModeAvailable = selectedBoard !== ALL_BOARDS && !isKanban
+  const sprintModeAvailable =
+    selectedBoard !== ALL_BOARDS && !kanbanBoardIds.has(selectedBoard)
 
   return (
     <div className="rounded-xl border border-border bg-card">
@@ -402,32 +390,22 @@ export function UnplannedDoneSection() {
             )}
           </div>
 
-          {/* Kanban not-available message */}
-          {isKanban && (
-            <div className="px-5 pb-5">
-              <p className="text-sm text-muted">
-                Not available for Kanban boards. This report requires sprint membership
-                data, which is only available for Scrum boards.
-              </p>
-            </div>
-          )}
-
           {/* Loading */}
-          {!isKanban && loading && (
+          {loading && (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-muted" />
             </div>
           )}
 
           {/* Error */}
-          {!isKanban && !loading && error && (
+          {!loading && error && (
             <div className="mx-5 mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
               {error}
             </div>
           )}
 
           {/* Results */}
-          {!isKanban && !loading && !error && data && (
+          {!loading && !error && data && (
             <div className="space-y-4 pb-4">
               {/* Summary bar */}
               <div className="grid grid-cols-2 gap-3 px-5 sm:flex sm:flex-wrap">
