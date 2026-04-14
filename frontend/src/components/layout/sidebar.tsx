@@ -17,8 +17,8 @@ const MAIN_NAV_ITEMS: NavItem[] = [
   { label: 'DORA', href: '/dora', icon: <BarChart3 className="h-5 w-5" /> },
   { label: 'Cycle Time', href: '/cycle-time', icon: <Timer className="h-5 w-5" /> },
   { label: 'Planning', href: '/planning', icon: <Target className="h-5 w-5" /> },
-  { label: 'Gaps', href: '/gaps', icon: <AlertCircle className="h-5 w-5" /> },
   { label: 'Roadmap', href: '/roadmap', icon: <Map className="h-5 w-5" /> },
+  { label: 'Gaps', href: '/gaps', icon: <AlertCircle className="h-5 w-5" /> },
 ]
 
 const SETTINGS_ITEM: NavItem = {
