@@ -24,7 +24,10 @@ const FIXTURE_BOARDS = [
   { boardId: 'PLAT', boardType: 'kanban', doneStatusNames: [], failureIssueTypes: [], failureLinkTypes: [], failureLabels: [], incidentIssueTypes: [], recoveryStatusNames: [], incidentLabels: [], backlogStatusIds: [], dataStartDate: null, inProgressStatusNames: [], cancelledStatusNames: [] },
 ]
 
-const FIXTURE_BOARD_IDS = FIXTURE_BOARDS.map((b) => b.boardId)
+/** Sorted A→Z — mirrors the order the store produces after fetchBoards(). */
+const FIXTURE_BOARD_IDS = [...FIXTURE_BOARDS.map((b) => b.boardId)].sort((a, b) =>
+  a.localeCompare(b),
+)
 
 // ---------------------------------------------------------------------------
 // Filter Store

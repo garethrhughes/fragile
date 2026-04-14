@@ -27,7 +27,7 @@ export const useBoardsStore = create<BoardsState>((set, get) => ({
     try {
       const boards: BoardConfig[] = await getBoards()
       set({
-        allBoards: boards.map((b) => b.boardId),
+        allBoards: boards.map((b) => b.boardId).sort((a, b) => a.localeCompare(b)),
         kanbanBoardIds: new Set(
           boards.filter((b) => b.boardType === 'kanban').map((b) => b.boardId),
         ),
