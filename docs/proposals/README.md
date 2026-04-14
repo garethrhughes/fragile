@@ -28,3 +28,4 @@
 | [0024](0024-unplanned-done-tickets-report.md) | Unplanned Done Tickets Report | Accepted | 2026-04-14 |
 | [0025](0025-unplanned-done-in-sprint-reports.md) | Never-Boarded Tickets in Sprint Reports and Kanban Equivalents | Proposed | 2026-04-14 |
 | [0026](0026-metric-fixes-validation-report.md) | Metric Calculation Fixes: Post-Implementation Validation Report | Informational | 2026-04-14 |
+| [0027](0027-aws-terraform-infrastructure.md) | AWS Terraform Infrastructure | Draft | 2026-04-14 |

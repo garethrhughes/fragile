@@ -1,0 +1,65 @@
+# Copy this file to terraform.tfvars and fill in all values before running
+# terraform plan / terraform apply.
+#
+# IMPORTANT: terraform.tfvars (with real values) is listed in .gitignore.
+# Never commit a file with real domain names, account IDs, or other
+# environment-specific values to version control.
+
+# ── Required (no defaults) ─────────────────────────────────────────────────
+
+# Your root domain name. A Route 53 hosted zone for this domain must already
+# exist in the target AWS account. Terraform will look it up via a data source
+# and will NOT create a new zone.
+#   Example: domain_name = "example.com"
+domain_name = "example.com"
+
+# ── Optional (sensible defaults provided) ──────────────────────────────────
+
+# AWS region. Default: ap-southeast-2 (Sydney)
+# aws_region = "ap-southeast-2"
+
+# Environment label used in resource names and tags. Default: prod
+# environment = "prod"
+
+# Subdomain for the frontend. Resolves to <frontend_subdomain>.<domain_name>.
+# Default: dashboard  →  dashboard.example.com
+# frontend_subdomain = "dashboard"
+
+# Subdomain for the backend API. Resolves to <backend_subdomain>.<domain_name>.
+# Default: api  →  api.example.com
+# backend_subdomain = "api"
+
+# ECR image tags. Updated automatically by CI on each push to main.
+# Set manually here only for one-off deploys of a specific image.
+# Default: latest
+# backend_image_tag  = "latest"
+# frontend_image_tag = "latest"
+
+# ── Post-deploy manual steps ───────────────────────────────────────────────
+#
+# After `terraform apply` completes, you must set the following secret values
+# in AWS Secrets Manager (Terraform creates the secret shells but does NOT
+# store the actual values in state):
+#
+#   Secret name: fragile/prod/db-password
+#     Set this to the actual database password you want RDS to use.
+#     Use: aws secretsmanager put-secret-value \
+#            --secret-id fragile/prod/db-password \
+#            --secret-string "your-strong-password-here"
+#
+#   Secret name: fragile/prod/jira-api-token
+#     Set this to your Jira API token (from https://id.atlassian.com/manage-profile/security/api-tokens).
+#     Use: aws secretsmanager put-secret-value \
+#            --secret-id fragile/prod/jira-api-token \
+#            --secret-string "your-jira-api-token"
+#
+# And the following SSM parameters (Terraform creates them with placeholder values):
+#
+#   /fragile/prod/jira-base-url   — e.g. https://your-org.atlassian.net
+#   /fragile/prod/jira-email      — e.g. your-jira-user@example.com
+#   /fragile/prod/frontend-url    — e.g. https://dashboard.example.com
+#   /fragile/prod/app-timezone    — e.g. Australia/Sydney (already defaulted)
+#
+# Use the AWS Console (Systems Manager → Parameter Store) or:
+#   aws ssm put-parameter --name /fragile/prod/jira-base-url \
+#     --value "https://your-org.atlassian.net" --type String --overwrite

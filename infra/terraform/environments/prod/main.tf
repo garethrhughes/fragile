@@ -1,0 +1,122 @@
+# ============================================================
+# Fragile — Production environment
+# ============================================================
+# This file composes all child modules into the production
+# deployment. Run from this directory:
+#
+#   terraform init
+#   terraform plan -var-file="terraform.tfvars"
+#   terraform apply -var-file="terraform.tfvars"
+# ============================================================
+
+terraform {
+  required_version = ">= 1.7"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.50"
+    }
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+
+  default_tags {
+    tags = {
+      Project     = "fragile"
+      Environment = var.environment
+      ManagedBy   = "terraform"
+    }
+  }
+}
+
+# ── ECR ────────────────────────────────────────────────────
+module "ecr" {
+  source      = "../../modules/ecr"
+  environment = var.environment
+}
+
+# ── IAM ────────────────────────────────────────────────────
+module "iam" {
+  source      = "../../modules/iam"
+  environment = var.environment
+
+  backend_ecr_arn  = module.ecr.backend_repository_arn
+  frontend_ecr_arn = module.ecr.frontend_repository_arn
+
+  db_password_secret_arn   = module.secrets.db_password_secret_arn
+  jira_api_token_secret_arn = module.secrets.jira_api_token_secret_arn
+
+  ssm_parameter_path_prefix = "/fragile/${var.environment}/"
+}
+
+# ── Network ────────────────────────────────────────────────
+module "network" {
+  source      = "../../modules/network"
+  environment = var.environment
+  aws_region  = var.aws_region
+}
+
+# ── Secrets Manager + SSM Parameters ──────────────────────
+module "secrets" {
+  source      = "../../modules/secrets"
+  environment = var.environment
+  aws_region  = var.aws_region
+}
+
+# ── RDS ────────────────────────────────────────────────────
+module "rds" {
+  source      = "../../modules/rds"
+  environment = var.environment
+
+  subnet_ids          = module.network.private_subnet_ids
+  rds_security_group_id = module.network.rds_security_group_id
+
+  db_password_secret_arn = module.secrets.db_password_secret_arn
+}
+
+# ── App Runner ─────────────────────────────────────────────
+module "apprunner" {
+  source      = "../../modules/apprunner"
+  environment = var.environment
+
+  backend_image_uri  = "${module.ecr.backend_repository_url}:${var.backend_image_tag}"
+  frontend_image_uri = "${module.ecr.frontend_repository_url}:${var.frontend_image_tag}"
+
+  backend_execution_role_arn  = module.iam.apprunner_build_role_arn
+  frontend_execution_role_arn = module.iam.apprunner_build_role_arn
+  backend_instance_role_arn   = module.iam.backend_task_role_arn
+  frontend_instance_role_arn  = module.iam.frontend_task_role_arn
+
+  vpc_connector_arn = module.network.vpc_connector_arn
+
+  rds_endpoint = module.rds.db_endpoint
+
+  db_password_secret_arn    = module.secrets.db_password_secret_arn
+  jira_api_token_secret_arn = module.secrets.jira_api_token_secret_arn
+
+  jira_base_url_param_arn   = module.secrets.jira_base_url_param_arn
+  jira_user_email_param_arn = module.secrets.jira_user_email_param_arn
+  frontend_url_param_arn    = module.secrets.frontend_url_param_arn
+  timezone_param_arn        = module.secrets.timezone_param_arn
+
+  backend_url  = "https://${var.backend_subdomain}.${var.domain_name}"
+  frontend_url = "https://${var.frontend_subdomain}.${var.domain_name}"
+}
+
+# ── DNS ────────────────────────────────────────────────────
+module "dns" {
+  source      = "../../modules/dns"
+  environment = var.environment
+
+  domain_name        = var.domain_name
+  frontend_subdomain = var.frontend_subdomain
+  backend_subdomain  = var.backend_subdomain
+
+  backend_service_url           = module.apprunner.backend_service_url
+  frontend_service_url          = module.apprunner.frontend_service_url
+  backend_apprunner_service_arn = module.apprunner.backend_service_arn
+  frontend_apprunner_service_arn = module.apprunner.frontend_service_arn
+}

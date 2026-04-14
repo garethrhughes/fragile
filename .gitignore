@@ -38,3 +38,10 @@ coverage/
 backend/config/boards.yaml
 backend/config/roadmap.yaml
 
+# Terraform — real tfvars files contain domain names and may contain secrets.
+# Only terraform.tfvars.example (template) is committed.
+infra/terraform/**/*.tfvars
+# Terraform working directories (created by terraform init)
+infra/terraform/**/.terraform/
+infra/terraform/**/.terraform.lock.hcl
+
