@@ -143,12 +143,15 @@ docker run -d \
   postgres:16-alpine
 ```
 
-Or use the provided Docker Compose file (database name defaults to `ai_starter` — edit
-`docker-compose.yml` and `backend/.env` if you want to rename it):
+Or use the provided Docker Compose file:
 
 ```bash
 docker compose up -d
 ```
+
+> **Note:** `docker-compose.yml` defaults to the database name `ai_starter`. If you want to use
+> a different name (e.g. `fragile`), edit both `docker-compose.yml` (the `POSTGRES_DB`
+> environment variable) and `DB_DATABASE` in `backend/.env` to match.
 
 ### 3. Configure the backend
 
@@ -156,13 +159,12 @@ docker compose up -d
 cp backend/.env.example backend/.env
 ```
 
-Edit `backend/.env` and fill in your Jira credentials and board project keys:
+Edit `backend/.env` and fill in your Jira credentials:
 
 ```dotenv
 JIRA_BASE_URL=https://yourorg.atlassian.net
 JIRA_USER_EMAIL=you@yourorg.com
 JIRA_API_TOKEN=your_jira_api_token
-JIRA_BOARD_IDS=PROJ1,PROJ2,PROJ3
 DB_HOST=localhost
 DB_PORT=5432
 DB_USERNAME=postgres
@@ -170,7 +172,118 @@ DB_PASSWORD=postgres
 DB_DATABASE=fragile
 PORT=3001
 FRONTEND_URL=http://localhost:3000
+TIMEZONE=UTC
 ```
+
+> **Note:** `JIRA_BOARD_IDS` has been removed from the `.env` file. Boards are now registered
+> through the Settings UI or via `backend/config/boards.yaml` (see
+> [YAML Configuration](#yaml-configuration) below).
+
+### 3a. Configure boards and roadmaps via YAML (recommended)
+
+Fragile can pre-populate its board and roadmap configuration from two YAML files that live in
+`backend/config/`. This is the recommended setup path — it is faster than configuring everything
+through the Settings UI and can be committed to version control.
+
+Copy the annotated example files:
+
+```bash
+cp backend/config/boards.example.yaml backend/config/boards.yaml
+cp backend/config/roadmap.example.yaml backend/config/roadmap.yaml
+```
+
+These files are in `.gitignore` by default (they contain deployment-specific values). The
+`*.example.yaml` templates are tracked in git and serve as the canonical field reference.
+
+Both files are read by `YamlConfigService` on every application startup. Values in the YAML
+files **overwrite** matching database rows on each restart. Boards or roadmaps in the database
+that are absent from the YAML files are left untouched. This means partial YAML is safe — you
+only need to list the boards you want to seed or override.
+
+**`backend/config/boards.yaml`**
+
+```yaml
+boards:
+  # Scrum board
+  - boardId: ACC            # Jira project key — must be unique, normalised to UPPERCASE
+    boardType: scrum        # "scrum" or "kanban"
+    doneStatusNames:
+      - Done
+      - Released
+    inProgressStatusNames:
+      - In Progress
+      - In Review
+    cancelledStatusNames:
+      - Cancelled
+      - "Won't Do"
+    failureIssueTypes:      # Issue types that count toward Change Failure Rate
+      - Bug
+      - Incident
+    failureLinkTypes:       # Link type names that flag a failure relationship
+      - "is caused by"
+      - "caused by"
+    failureLabels:          # Issue labels that mark a deployment failure
+      - regression
+      - hotfix
+    incidentIssueTypes:     # Issue types used for MTTR calculation
+      - Bug
+      - Incident
+    recoveryStatusNames:    # Status names that mark incident resolution (MTTR end)
+      - Done
+      - Resolved
+    incidentLabels: []      # Additional labels for incident detection
+    incidentPriorities:
+      - Critical
+    backlogStatusIds: []    # Status IDs representing pre-board backlog (Kanban only)
+    dataStartDate: null     # ISO date or null — lower bound for Kanban flow metrics
+
+  # Kanban board — note backlogStatusIds and dataStartDate
+  - boardId: PLAT
+    boardType: kanban
+    doneStatusNames:
+      - Done
+      - Released
+    inProgressStatusNames:
+      - In Progress
+    cancelledStatusNames:
+      - Cancelled
+    failureIssueTypes:
+      - Bug
+    failureLinkTypes:
+      - "is caused by"
+    failureLabels:
+      - regression
+    incidentIssueTypes:
+      - Bug
+    recoveryStatusNames:
+      - Done
+    incidentLabels: []
+    incidentPriorities:
+      - Critical
+    backlogStatusIds:
+      - "10303"             # Jira status ID for the backlog column — issues here are excluded
+    dataStartDate: "2024-01-01"   # Exclude issues that entered the board before this date
+```
+
+**`backend/config/roadmap.yaml`**
+
+```yaml
+roadmaps:
+  - jpdKey: DISC                          # Jira Product Discovery project key
+    description: "Discovery roadmap"       # Optional human-readable label
+    startDateFieldId: "customfield_10015"  # Custom field ID for the idea start date
+    targetDateFieldId: "customfield_10021" # Custom field ID for the idea target/end date
+
+  - jpdKey: STRAT
+    description: "Strategic initiatives"
+    startDateFieldId: null    # null = field not mapped; ideas excluded from coverage
+    targetDateFieldId: null
+```
+
+To find the custom field IDs for JPD date fields, see [Configuring JPD date fields](#configuring-jpd-date-fields).
+
+If either YAML file is absent at startup, the application starts normally and all configuration
+falls back to the Settings UI — no error is raised and no migration is required.
 
 ### 4. Configure the frontend
 
@@ -263,14 +376,19 @@ minute or two depending on the number of issues and boards. Subsequent syncs are
 | `JIRA_BASE_URL` | Yes | — | Jira Cloud base URL, e.g. `https://yourorg.atlassian.net` |
 | `JIRA_USER_EMAIL` | Yes | — | Email address associated with the Jira API token |
 | `JIRA_API_TOKEN` | Yes | — | Jira API token (see [Jira Setup](#jira-setup)) |
-| `JIRA_BOARD_IDS` | Yes | — | Comma-separated Jira project keys, e.g. `ACC,BPT,SPS` |
 | `DB_HOST` | No | `localhost` | PostgreSQL host |
 | `DB_PORT` | No | `5432` | PostgreSQL port |
 | `DB_USERNAME` | No | `postgres` | PostgreSQL username |
 | `DB_PASSWORD` | No | `postgres` | PostgreSQL password |
-| `DB_DATABASE` | No | `fragile` | PostgreSQL database name |
+| `DB_DATABASE` | No | `ai_starter` | PostgreSQL database name (must match `docker-compose.yml`) |
 | `PORT` | No | `3001` | Port the NestJS server listens on |
 | `FRONTEND_URL` | No | `http://localhost:3000` | Allowed CORS origin for the frontend |
+| `TIMEZONE` | No | `UTC` | IANA timezone string used for quarter/week boundary calculations, e.g. `America/New_York` |
+| `BOARD_CONFIG_FILE` | No | `config/boards.yaml` | Override path to the boards YAML file (absolute or relative to `backend/`) |
+| `ROADMAP_CONFIG_FILE` | No | `config/roadmap.yaml` | Override path to the roadmap YAML file (absolute or relative to `backend/`) |
+
+> **Removed:** `JIRA_BOARD_IDS` is no longer used. Boards are registered through the Settings UI
+> or via `backend/config/boards.yaml`.
 
 ### Frontend (`frontend/.env`)
 
@@ -305,8 +423,9 @@ A read-only service account is recommended for production deployments.
 Project keys are the uppercase prefix before issue numbers (e.g. `ACC` in `ACC-123`). They
 appear in the URL when you open a Jira project: `https://yourorg.atlassian.net/jira/software/projects/ACC/boards`.
 
-Set `JIRA_BOARD_IDS` to a comma-separated list of the project keys you want to track,
-for example `ACC,BPT,SPS,OCS,DATA,PLAT`.
+Add an entry for each project key you want to track in `backend/config/boards.yaml` under the
+`boards` list (see [YAML Configuration](#yaml-configuration)). Alternatively, boards can be
+added through the Settings UI after the application is running.
 
 ### Board type detection
 
@@ -348,11 +467,17 @@ link types themselves.
 
 ## Configuration Guide
 
-All configuration is managed through the **Settings** page at `/settings`.
+Configuration can be managed in two ways:
+
+- **Settings UI** — navigate to `/settings` in the browser. Changes are persisted to PostgreSQL
+  immediately and take effect on the next data request without a restart.
+- **YAML files** — edit `backend/config/boards.yaml` and `backend/config/roadmap.yaml` before
+  starting the backend. Values in YAML overwrite the database on every startup. See
+  [YAML Configuration](#yaml-configuration) for the full workflow.
 
 ### Board configuration
 
-Each board listed in `JIRA_BOARD_IDS` has an editable configuration block. The fields are:
+Each board has an editable configuration block. The fields are:
 
 | Field | Description | Default |
 |---|---|---|
@@ -383,6 +508,189 @@ configuration entry. The fields are:
 
 ---
 
+## YAML Configuration
+
+Fragile's `YamlConfigService` reads two YAML files from `backend/config/` on every application
+startup and upserts their contents into the `board_configs` and `roadmap_configs` database tables.
+This provides a version-controllable, declarative alternative to configuring everything through
+the Settings UI.
+
+### How it works
+
+- **YAML wins on conflict** — any field present in the YAML file overwrites the corresponding
+  database row on restart.
+- **Absent entries are untouched** — boards or roadmaps in the database but not listed in the
+  YAML file are left unchanged.
+- **Partial entries are safe** — if a field is omitted from a YAML entry (not `null`, but
+  entirely absent), the existing database value for that field is preserved.
+- **Startup validation** — both files are parsed and validated with Zod at startup. Invalid YAML
+  causes the application to refuse to start, printing a clear error listing every offending field.
+- **Optional** — if either file is missing the application starts normally, logs a warning, and
+  falls back entirely to the Settings UI. No error is raised.
+
+### File locations
+
+| File | Default path | Purpose |
+|---|---|---|
+| `boards.yaml` | `backend/config/boards.yaml` | Board metric rules (one entry per Jira project) |
+| `roadmap.yaml` | `backend/config/roadmap.yaml` | JPD project date-field mappings |
+| `boards.example.yaml` | `backend/config/boards.example.yaml` | Annotated template — tracked in git |
+| `roadmap.example.yaml` | `backend/config/roadmap.example.yaml` | Annotated template — tracked in git |
+
+Both live files (`boards.yaml` and `roadmap.yaml`) are excluded from git via `.gitignore` because
+they contain deployment-specific values. The `*.example.yaml` files serve as the canonical field
+reference and are always tracked.
+
+Override the default paths using environment variables in `backend/.env`:
+
+```dotenv
+BOARD_CONFIG_FILE=/absolute/path/to/boards.yaml
+ROADMAP_CONFIG_FILE=/absolute/path/to/roadmap.yaml
+```
+
+### `backend/config/boards.yaml` — field reference
+
+```yaml
+boards:
+  - boardId: ACC                 # (required) Jira project key. Normalised to UPPERCASE.
+                                  #   Must be unique within the file.
+    boardType: scrum              # (required) "scrum" or "kanban"
+                                  #   Scrum boards support sprint-based Planning metrics.
+                                  #   Kanban boards use changelog-derived board-entry dates.
+
+    doneStatusNames:              # (optional) Status names that count as "deployed / complete"
+      - Done                      #   for Deployment Frequency and Lead Time.
+      - Closed                    #   Default: ["Done", "Closed", "Released"]
+      - Released
+
+    inProgressStatusNames:        # (optional) First transition into one of these statuses
+      - In Progress               #   marks the cycle-time start event.
+      - In Review                 #   Default: ["In Progress"]
+
+    cancelledStatusNames:         # (optional) Issues in these statuses are excluded from
+      - Cancelled                 #   roadmap coverage calculations.
+      - "Won't Do"                #   Default: ["Cancelled", "Won't Do"]
+
+    failureIssueTypes:            # (optional) Issue types counted toward Change Failure Rate.
+      - Bug                       #   Default: ["Bug", "Incident"]
+      - Incident
+
+    failureLinkTypes:             # (optional) Link type names indicating a failure
+      - "is caused by"            #   relationship between issues (CFR signal).
+      - "caused by"               #   Default: ["is caused by", "caused by"]
+
+    failureLabels:                # (optional) Jira labels that flag a deployment failure.
+      - regression                #   Default: ["regression", "incident", "hotfix"]
+      - incident
+      - hotfix
+
+    incidentIssueTypes:           # (optional) Issue types counted as production incidents
+      - Bug                       #   for MTTR calculation.
+      - Incident                  #   Default: ["Bug", "Incident"]
+
+    recoveryStatusNames:          # (optional) Transitioning to one of these statuses ends
+      - Done                      #   the MTTR clock (incident resolved).
+      - Resolved                  #   Default: ["Done", "Resolved"]
+
+    incidentLabels: []            # (optional) Additional labels for incident identification.
+                                  #   Default: []
+
+    incidentPriorities:           # (optional) Priorities that qualify an issue as an incident.
+      - Critical                  #   Default: ["Critical"]
+
+    backlogStatusIds:             # (optional, Kanban only) Jira status IDs (not names) that
+      - "10303"                   #   represent the pre-board backlog state. Issues whose
+                                  #   current statusId is in this list are excluded from
+                                  #   flow metrics. When empty, a changelog heuristic is used.
+                                  #   Default: []
+
+    dataStartDate: "2024-01-01"   # (optional, Kanban only) ISO date (YYYY-MM-DD) or null.
+                                  #   Hard lower bound — issues whose board-entry date is
+                                  #   before this date are excluded from flow metrics.
+                                  #   Prevents old backlog items inflating period counts.
+                                  #   Default: null
+```
+
+### `backend/config/roadmap.yaml` — field reference
+
+```yaml
+roadmaps:
+  - jpdKey: DISC                          # (required) Jira Product Discovery project key.
+                                           #   Must be unique within the file.
+
+    description: "Discovery roadmap"       # (optional) Human-readable label shown in the
+                                           #   Settings UI. Default: null
+
+    startDateFieldId: "customfield_10015"  # (optional) Jira custom field ID that stores the
+                                           #   idea start date (type: jira.polaris:interval).
+                                           #   null means the field is unmapped; ideas without
+                                           #   a start date are excluded from coverage.
+                                           #   Default: null
+
+    targetDateFieldId: "customfield_10021" # (optional) Jira custom field ID that stores the
+                                           #   idea target / delivery date.
+                                           #   Same discovery method as startDateFieldId.
+                                           #   Default: null
+```
+
+To find your tenant's custom field IDs, see [Configuring JPD date fields](#configuring-jpd-date-fields).
+
+### Setup order of operations
+
+1. Copy both example files:
+
+   ```bash
+   cp backend/config/boards.example.yaml backend/config/boards.yaml
+   cp backend/config/roadmap.example.yaml backend/config/roadmap.yaml
+   ```
+
+2. Edit `backend/config/boards.yaml` — add one entry per board, set `boardType`, and adjust
+   status and metric rules to match your Jira workflow.
+
+3. Edit `backend/config/roadmap.yaml` — add one entry per JPD project, filling in the
+   `customfield_xxxxx` IDs for `startDateFieldId` and `targetDateFieldId`.
+
+4. Start the backend (`make dev-api`). Watch the startup logs for confirmation:
+   ```
+   [YamlConfigService] YAML config: 6 board config(s) applied from boards.yaml
+   [YamlConfigService] YAML config: 2 roadmap config(s) applied from roadmap.yaml
+   ```
+
+5. Trigger a sync from the Settings UI to populate issue data for the configured boards.
+
+6. Fine-tune individual board settings through the Settings UI at any time. Changes made in
+   the UI persist to the database. On the next restart, only fields explicitly present in the
+   YAML file will overwrite those values — omitted fields are always preserved.
+
+### `docker-compose.yml`
+
+The included `docker-compose.yml` starts a PostgreSQL 16 container. Edit it if you need to
+change the database name, port, or credentials:
+
+```yaml
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-starter-db
+    restart: unless-stopped
+    ports:
+      - "5432:5432"      # host:container — change the left side if port 5432 is taken
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ai_starter   # Change this AND DB_DATABASE in backend/.env to match
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+```
+
+If you rename `POSTGRES_DB`, update `DB_DATABASE` in `backend/.env` to the same value before
+running migrations.
+
+---
+
 ## Architecture
 
 ### Project structure
@@ -390,6 +698,11 @@ configuration entry. The fields are:
 ```
 fragile/
 ├── backend/                    # NestJS 11 API server (port 3001)
+│   ├── config/                 # YAML configuration files (not committed)
+│   │   ├── boards.example.yaml # Annotated board config template (tracked in git)
+│   │   ├── boards.yaml         # Live board metric rules — created from example
+│   │   ├── roadmap.example.yaml# Annotated roadmap config template (tracked in git)
+│   │   └── roadmap.yaml        # Live JPD date-field mappings — created from example
 │   ├── src/
 │   │   ├── boards/             # Board config CRUD (controller + service)
 │   │   ├── database/
@@ -404,6 +717,7 @@ fragile/
 │   │   ├── sprint/             # Sprint detail view service
 │   │   ├── sync/               # Jira sync orchestration service + controller
 │   │   ├── week/               # Week detail view service
+│   │   ├── yaml-config/        # YamlConfigService — reads boards.yaml + roadmap.yaml at startup
 │   │   ├── app.module.ts
 │   │   ├── data-source.ts      # TypeORM DataSource (used by migration CLI)
 │   │   └── main.ts
