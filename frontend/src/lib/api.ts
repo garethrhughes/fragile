@@ -905,7 +905,9 @@ export interface SprintReportResponse {
   trend: SprintReportTrendPoint[]
   generatedAt: string
   dataAsOf: string
-  unplannedDone: {
+  // Optional: absent in reports cached before this field was introduced.
+  // The sprint report page guards this field with a truthiness check.
+  unplannedDone?: {
     total: number
     totalPoints: number
     byIssueType: Record<string, number>

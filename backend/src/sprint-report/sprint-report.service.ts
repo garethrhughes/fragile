@@ -41,7 +41,9 @@ export interface SprintReportResponse {
   trend: SprintReportTrendPoint[];
   generatedAt: string;
   dataAsOf: string;
-  unplannedDone: {
+  // Optional: absent in reports cached before this field was introduced.
+  // generateReport() transparently regenerates old blobs on first access.
+  unplannedDone?: {
     total: number;
     totalPoints: number;
     byIssueType: Record<string, number>;
@@ -286,6 +288,11 @@ export class SprintReportService {
       if (!sprint || sprint.state !== 'closed') return;
 
       const existing = await this.reportRepo.findOne({ where: { boardId, sprintId } });
+      // Only generate new reports — do NOT regenerate existing ones here.
+      // Reports cached before the unplannedDone field was introduced will be
+      // lazily regenerated the next time a user opens that report page
+      // (generateReport detects the missing field and falls through the cache).
+      // Regenerating here would cause a thundering-herd on every sync cycle.
       if (existing) return;
 
       await this.generateReport(boardId, sprintId);
