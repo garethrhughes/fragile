@@ -118,6 +118,26 @@ describe('JiraClientService', () => {
         expect.anything(),
       );
     });
+
+    it('includes story point custom fields in the fields param', async () => {
+      // Regression test: ACC-44 appeared in "no estimate" because story point
+      // fields were missing from the API request, so they were never returned
+      // by Jira and always stored as null. Verify the URL includes all three
+      // story-point field names so the Jira API returns them.
+      const payload = { issues: [], total: 0 };
+      globalFetch.mockImplementation(async () => ({
+        status: 200,
+        ok: true,
+        json: async () => payload,
+      }));
+
+      await service.getSprintIssues('42', '7');
+
+      const calledUrl: string = globalFetch.mock.calls[0][0] as string;
+      expect(calledUrl).toContain('story_points');
+      expect(calledUrl).toContain('customfield_10016');
+      expect(calledUrl).toContain('customfield_10028');
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -193,6 +213,24 @@ describe('JiraClientService', () => {
         expect.stringContaining('nextPageToken=token-abc'),
         expect.anything(),
       );
+    });
+
+    it('includes story point custom fields in the fields param', async () => {
+      // Regression test: Kanban issues also had story points missing because
+      // searchIssues (used for Kanban sync) lacked the custom field names.
+      const payload = { issues: [], total: 0 };
+      globalFetch.mockImplementation(async () => ({
+        status: 200,
+        ok: true,
+        json: async () => payload,
+      }));
+
+      await service.searchIssues('project = ACC');
+
+      const calledUrl: string = globalFetch.mock.calls[0][0] as string;
+      expect(calledUrl).toContain('story_points');
+      expect(calledUrl).toContain('customfield_10016');
+      expect(calledUrl).toContain('customfield_10028');
     });
   });
 
