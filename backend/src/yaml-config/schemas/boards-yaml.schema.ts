@@ -1,5 +1,29 @@
 import { z } from 'zod';
 
+/**
+ * Optional tenant-level Jira field configuration.
+ * All fields have defaults that match the previously hardcoded values, so
+ * omitting this stanza entirely leaves behaviour unchanged.
+ */
+export const JiraStanzaSchema = z.object({
+  /** Custom field IDs to probe for story points, tried in priority order. */
+  storyPointsFieldIds: z.array(z.string().min(1)).optional(),
+
+  /**
+   * Custom field ID for the legacy Epic Link field.
+   * Set to null to disable the legacy fallback entirely (next-gen projects only).
+   */
+  epicLinkFieldId: z.string().min(1).nullable().optional(),
+
+  /** Inward link type name substrings for JPD delivery links. */
+  jpdDeliveryLinkInward: z.array(z.string().min(1)).optional(),
+
+  /** Outward link type name substrings for JPD delivery links. */
+  jpdDeliveryLinkOutward: z.array(z.string().min(1)).optional(),
+});
+
+export type JiraStanza = z.infer<typeof JiraStanzaSchema>;
+
 const BoardYamlSchema = z.object({
   boardId: z.string().min(1).toUpperCase(),
   // boardType is optional — omitting it leaves the existing DB value untouched.
@@ -30,6 +54,7 @@ const BoardYamlSchema = z.object({
 export const BoardsYamlFileSchema = z
   .object({
     boards: z.array(BoardYamlSchema),
+    jira: JiraStanzaSchema.optional(),
   })
   .superRefine((data, ctx) => {
     const seen = new Set<string>();

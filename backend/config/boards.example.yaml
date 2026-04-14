@@ -3,9 +3,11 @@
 # Annotated template for boards.yaml.
 # Copy this file to boards.yaml and edit the boards list to match your deployment.
 #
-# YAML structure: a top-level `boards` list where each entry defines one Jira board.
+# YAML structure: a top-level `boards` list where each entry defines one Jira board,
+# and an optional top-level `jira:` stanza that controls which Jira custom field IDs
+# are used for story points and JPD delivery links.
 #
-# Field reference:
+# Field reference — boards list:
 #
 #   boardId (required)
 #     The Jira project key for this board (e.g. ACC, PLAT).
@@ -65,6 +67,36 @@
 #     ISO date string (YYYY-MM-DD) or null. Hard lower bound for Kanban flow
 #     metrics — issues whose board-entry date is before this date are excluded.
 #     Null means no lower bound. Default: null
+#
+# Field reference — jira: stanza (optional, top-level):
+#
+#   storyPointsFieldIds (optional)
+#     List of Jira custom field IDs to try when reading story point estimates
+#     from issues. The first non-null value found is used. Jira tenants use
+#     different field IDs depending on how story points were configured.
+#     To find your IDs, fetch any issue via the Jira API and look for fields
+#     whose value is a number and whose key looks like "customfield_XXXXX".
+#     Common IDs: customfield_10016 (next-gen), customfield_10028 (team-managed),
+#     story_points (classic). Default: ["customfield_10016", "customfield_10028",
+#     "story_points"]
+#
+#   epicLinkFieldId (optional)
+#     Custom field ID used to store the parent Epic key on issues that pre-date
+#     Jira's native parent field (older "Epic Link" field type). Set to null to
+#     disable Epic Link field reading and rely solely on the parent field.
+#     Default: "customfield_10014"
+#
+#   jpdDeliveryLinkInward (optional)
+#     The inward link type name used by Jira Product Discovery delivery links.
+#     This is the text that appears on an issue when it is the target of a
+#     delivery relationship (e.g. "is delivered by"). Used when syncing JPD ideas
+#     to identify which delivery epics are linked to each idea.
+#     Default: "is delivered by"
+#
+#   jpdDeliveryLinkOutward (optional)
+#     The outward link type name for JPD delivery links (e.g. "delivers").
+#     Used symmetrically with jpdDeliveryLinkInward.
+#     Default: "delivers"
 
 boards:
   # --- Scrum board example ---
@@ -130,3 +162,26 @@ boards:
       - "10303"
     # Only include issues that entered the board from 2024 onwards
     dataStartDate: "2024-01-01"
+
+# --- Optional: Jira custom field IDs ---
+# Uncomment and edit this stanza to override the default Jira field mappings.
+# All fields are optional; omit any field to keep its current database value.
+# Only the fields listed here will be written to the database on startup.
+#
+# jira:
+#   # Story point field IDs — list all variants used in your Jira instance.
+#   # Fragile tries each in order and uses the first non-null value.
+#   storyPointsFieldIds:
+#     - customfield_10016   # next-gen / team-managed story points
+#     - customfield_10028   # classic board story points
+#     - story_points        # some older configurations
+#
+#   # Epic Link custom field — used for pre-parent-field epic relationships.
+#   # Set to null to disable and rely solely on the native parent field.
+#   epicLinkFieldId: customfield_10014
+#
+#   # JPD delivery link type names — must match exactly what Jira shows on
+#   # the issue link panel. Check by opening any delivery-linked issue.
+#   jpdDeliveryLinkInward: "is delivered by"
+#   jpdDeliveryLinkOutward: "delivers"
+
