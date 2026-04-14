@@ -9,6 +9,7 @@ import { DataTable, type Column } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { NoBoardsConfigured } from '@/components/ui/no-boards-configured'
 import { UnplannedDoneSection } from './unplanned-done-section'
+import { KanbanNeverBoardedSection } from './kanban-never-boarded-section'
 
 // ---------------------------------------------------------------------------
 // Collapsible section
@@ -262,6 +263,7 @@ export default function GapsPage() {
       )}
 
       <UnplannedDoneSection />
+      <KanbanNeverBoardedSection />
     </div>
   )
 }

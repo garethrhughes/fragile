@@ -16,25 +16,6 @@ function mockConfigService(): jest.Mocked<ConfigService> {
   } as unknown as jest.Mocked<ConfigService>;
 }
 
-function mockFetch(
-  responses: Array<{ status: number; ok: boolean; json?: object; text?: string; headers?: Record<string, string> }>,
-): jest.Mock {
-  let callCount = 0;
-  return jest.fn().mockImplementation(async () => {
-    const resp = responses[callCount] ?? responses[responses.length - 1];
-    callCount++;
-    return {
-      status: resp.status,
-      ok: resp.ok,
-      json: async () => resp.json ?? {},
-      text: async () => resp.text ?? '',
-      headers: {
-        get: (name: string) => resp.headers?.[name.toLowerCase()] ?? null,
-      },
-    };
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

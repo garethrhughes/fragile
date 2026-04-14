@@ -414,9 +414,7 @@ describe('PlanningService', () => {
           priority: null, points: null, statusId: null } as unknown as JiraIssue,
       ]);
 
-      let qbCallCount = 0;
       changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-        qbCallCount++;
         const qb = {
           where: jest.fn().mockReturnThis(),
           andWhere: jest.fn().mockReturnThis(),

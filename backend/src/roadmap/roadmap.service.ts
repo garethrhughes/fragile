@@ -243,7 +243,7 @@ export class RoadmapService {
         const effectiveStart = new Date(sprintStart.getTime() + ROADMAP_GRACE_PERIOD_MS);
 
         // Determine state at sprint start
-        let inSprintAtStart = wasInSprintByName(logs, sprintName, sprintStart);
+        const inSprintAtStart = wasInSprintByName(logs, sprintName, sprintStart);
         let inSprintAtEnd = inSprintAtStart;
 
         for (const cl of logs) {
@@ -844,7 +844,7 @@ export class RoadmapService {
     doneStatusNames: string[],
     cancelledStatusNames: string[],
     allIdeas: JpdIdea[],
-    inProgressStatusNames: string[], // accepted for API clarity; not used in core predicate
+    _inProgressStatusNames: string[], // accepted for API clarity; not used in core predicate
   ): Promise<RoadmapSprintAccuracy> {
     // Exclude Epics, Sub-tasks, and cancelled issues from all coverage metrics.
     // Cancelled issues are removed from both numerator and denominator so they

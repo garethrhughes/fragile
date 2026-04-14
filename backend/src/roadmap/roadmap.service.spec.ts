@@ -732,18 +732,14 @@ describe('RoadmapService', () => {
 
       // Sprint field changelogs: empty (issue assigned at creation)
       // Status changelogs: empty (no done transition)
-      let qbCallCount = 0;
-      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-        qbCallCount++;
-        return {
-          where: jest.fn().mockReturnThis(),
-          andWhere: jest.fn().mockReturnThis(),
-          select: jest.fn().mockReturnThis(),
-          orderBy: jest.fn().mockReturnThis(),
-          getMany: jest.fn().mockResolvedValue([]),
-          getRawMany: jest.fn().mockResolvedValue([]),
-        };
-      });
+      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => ({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([]),
+        getRawMany: jest.fn().mockResolvedValue([]),
+      }));
     }
 
     it('counts in-flight issue as covered when active sprint and targetDate is in the future', async () => {

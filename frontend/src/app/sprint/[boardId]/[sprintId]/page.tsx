@@ -1,13 +1,16 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { Loader2, ExternalLink, AlertCircle, BarChart2 } from 'lucide-react'
+import { Loader2, ExternalLink, AlertCircle, BarChart2, ChevronDown, ChevronRight } from 'lucide-react'
 import {
   getSprintDetail,
+  getUnplannedDone,
   type SprintDetailResponse,
   type SprintDetailIssue,
+  type UnplannedDoneIssue,
+  type UnplannedDoneResponse,
   ApiError,
 } from '@/lib/api'
 import { DataTable, type Column } from '@/components/ui/data-table'
@@ -40,6 +43,270 @@ function StatChip({ label, value, highlight = 'none' }: StatChipProps) {
     >
       <span className="text-xl font-bold">{value}</span>
       <span className="mt-0.5 text-xs text-muted">{label}</span>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Table columns
+// ---------------------------------------------------------------------------
+
+function buildNeverBoardedColumns(boardId: string, sprintId: string): Column<UnplannedDoneIssue>[] {
+  // boardId and sprintId unused in render but kept as context for future use
+  void boardId; void sprintId
+  return [
+    {
+      key: 'key',
+      label: 'Issue',
+      sortable: true,
+      render: (value, row) => {
+        const key = String(value)
+        if (row.jiraUrl) {
+          return (
+            <a
+              href={row.jiraUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 font-mono text-blue-600 hover:underline"
+            >
+              {key}
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          )
+        }
+        return <span className="font-mono">{key}</span>
+      },
+    },
+    {
+      key: 'summary',
+      label: 'Summary',
+      sortable: true,
+      render: (value) => {
+        const text = String(value)
+        const truncated = text.length > 60 ? text.slice(0, 60) + '…' : text
+        return (
+          <span title={text} className="block max-w-xs truncate">
+            {truncated}
+          </span>
+        )
+      },
+    },
+    {
+      key: 'issueType',
+      label: 'Type',
+      sortable: true,
+    },
+    {
+      key: 'resolvedStatus',
+      label: 'Resolved Status',
+      sortable: true,
+      render: (value) => (
+        <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">
+          {String(value)}
+        </span>
+      ),
+    },
+    {
+      key: 'resolvedAt',
+      label: 'Resolved',
+      sortable: true,
+      render: (value) => (
+        <span className="whitespace-nowrap text-sm">{formatDate(String(value))}</span>
+      ),
+    },
+    {
+      key: 'points',
+      label: 'Points',
+      sortable: true,
+      render: (value) =>
+        value !== null && value !== undefined ? (
+          <span>{String(value)}</span>
+        ) : (
+          <span className="text-muted">—</span>
+        ),
+    },
+    {
+      key: 'epicKey',
+      label: 'Epic',
+      sortable: true,
+      render: (value) =>
+        value ? (
+          <span className="font-mono text-sm">{String(value)}</span>
+        ) : (
+          <span className="text-muted">—</span>
+        ),
+    },
+    {
+      key: 'priority',
+      label: 'Priority',
+      sortable: true,
+      render: (value) =>
+        value ? (
+          <span className="text-sm">{String(value)}</span>
+        ) : (
+          <span className="text-muted">—</span>
+        ),
+    },
+    {
+      key: 'assignee',
+      label: 'Assignee',
+      sortable: true,
+      render: (value) =>
+        value ? (
+          <span className="text-sm">{String(value)}</span>
+        ) : (
+          <span className="text-muted">—</span>
+        ),
+    },
+  ]
+}
+
+// ---------------------------------------------------------------------------
+// NeverBoardedSection — lazy-loaded collapsible, only for closed sprints
+// ---------------------------------------------------------------------------
+
+interface NeverBoardedSectionProps {
+  boardId: string
+  sprintId: string
+}
+
+function NeverBoardedSection({ boardId, sprintId }: NeverBoardedSectionProps) {
+  const [open, setOpen] = useState(false)
+  const [fetched, setFetched] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [data, setData] = useState<UnplannedDoneResponse | null>(null)
+
+  const columns = useMemo(() => buildNeverBoardedColumns(boardId, sprintId), [boardId, sprintId])
+
+  const doFetch = useCallback(() => {
+    if (fetched) return // cache: don't re-fetch on subsequent expands
+
+    setLoading(true)
+    setError(null)
+
+    getUnplannedDone({ boardId, sprintId })
+      .then((res) => {
+        setData(res)
+        setFetched(true)
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : 'Could not load never-boarded completions.')
+      })
+      .finally(() => {
+        setLoading(false)
+      })
+  }, [boardId, sprintId, fetched])
+
+  const handleToggle = useCallback(() => {
+    const nowOpen = !open
+    setOpen(nowOpen)
+    if (nowOpen && !fetched) {
+      doFetch()
+    }
+  }, [open, fetched, doFetch])
+
+  const handleRetry = useCallback(() => {
+    setFetched(false)
+    setError(null)
+    doFetch()
+  }, [doFetch])
+
+  const issueCount = data?.summary.total ?? 0
+
+  const typeBreakdownChips = useMemo<{ label: string; value: number }[]>(() => {
+    if (!data) return []
+    return Object.entries(data.summary.byIssueType)
+      .sort((a, b) => b[1] - a[1])
+      .map(([type, count]) => ({ label: type, value: count }))
+  }, [data])
+
+  return (
+    <div className="rounded-xl border border-border bg-card">
+      {/* Collapsible header — red left-border accent to signal these are concerning items */}
+      <button
+        type="button"
+        onClick={handleToggle}
+        className="flex w-full items-center justify-between border-l-4 border-red-400 px-5 py-4 text-left"
+      >
+        <div className="flex items-center gap-3">
+          {open ? (
+            <ChevronDown className="h-4 w-4 text-muted" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-muted" />
+          )}
+          <span className="text-base font-semibold text-foreground">
+            Never-Boarded Completions
+          </span>
+          {data !== null && (
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
+              {issueCount}
+            </span>
+          )}
+        </div>
+      </button>
+
+      {open && (
+        <div className="border-t border-border">
+          {/* Loading spinner */}
+          {loading && (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-muted" />
+            </div>
+          )}
+
+          {/* Error with retry */}
+          {!loading && error && (
+            <div className="mx-5 my-4 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+              <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+              <div className="flex-1">
+                <span>{error}</span>
+                <button
+                  type="button"
+                  onClick={handleRetry}
+                  className="ml-2 underline hover:no-underline"
+                >
+                  Retry
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Results */}
+          {!loading && !error && data && (
+            <div className="space-y-4 pb-4">
+              {data.issues.length === 0 ? (
+                <div className="px-5 py-4 text-sm text-muted">
+                  No never-boarded completions for this sprint.
+                </div>
+              ) : (
+                <>
+                  {/* Summary bar */}
+                  <div className="grid grid-cols-2 gap-3 px-5 pt-4 sm:flex sm:flex-wrap">
+                    <StatChip label="Never-boarded" value={issueCount} />
+                    <StatChip
+                      label="Points"
+                      value={data.summary.totalPoints > 0 ? data.summary.totalPoints : '—'}
+                    />
+                    {typeBreakdownChips.map(({ label, value }) => (
+                      <StatChip key={label} label={label} value={value} />
+                    ))}
+                  </div>
+
+                  {/* Issues table — bg-red-50 rows */}
+                  <div className="px-5">
+                    <DataTable<UnplannedDoneIssue>
+                      columns={columns}
+                      data={data.issues}
+                      rowClassName={() => 'bg-red-50'}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -424,6 +691,11 @@ export default function SprintDetailPage() {
           data={data.issues}
           rowClassName={rowClassName}
         />
+      )}
+
+      {/* Never-Boarded Completions — only shown for closed sprints */}
+      {data.state === 'closed' && (
+        <NeverBoardedSection boardId={boardId} sprintId={sprintId} />
       )}
     </div>
   )

@@ -28,7 +28,7 @@ describe('quarterToDates', () => {
   });
 
   it('handles Q4 → Q1 year boundary: start of next quarter is Jan 1 next year', () => {
-    const { startDate, endDate } = quarterToDates('2025-Q4', 'UTC');
+    const { endDate } = quarterToDates('2025-Q4', 'UTC');
     const nextStart = new Date(endDate.getTime() + 1);
     expect(nextStart.toISOString()).toBe('2026-01-01T00:00:00.000Z');
   });

@@ -1,15 +1,14 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, ExternalLink, Loader2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, ExternalLink, Loader2, Info } from 'lucide-react'
 import {
-  getUnplannedDone,
+  getKanbanNeverBoarded,
   ApiError,
   type UnplannedDoneIssue,
   type UnplannedDoneResponse,
 } from '@/lib/api'
 import { useBoardsStore } from '@/store/boards-store'
-import { SprintSelect } from '@/components/ui/sprint-select'
 import { QuarterSelect } from '@/components/ui/quarter-select'
 import { DataTable, type Column } from '@/components/ui/data-table'
 
@@ -17,10 +16,7 @@ import { DataTable, type Column } from '@/components/ui/data-table'
 // Types
 // ---------------------------------------------------------------------------
 
-type PeriodMode = 'last90' | 'sprint' | 'quarter'
-
-/** Sentinel value used in state to represent the "all boards" selection. */
-const ALL_BOARDS = '__all__'
+type PeriodMode = 'last90' | 'quarter'
 
 // ---------------------------------------------------------------------------
 // StatChip — mirrors the sprint-detail page pattern exactly
@@ -174,58 +170,60 @@ function buildColumns(): Column<UnplannedDoneIssue>[] {
 // Component
 // ---------------------------------------------------------------------------
 
-export function UnplannedDoneSection() {
+export function KanbanNeverBoardedSection() {
   const [open, setOpen] = useState(false)
-
-  // Board selector — defaults to "All Boards"
-  const [selectedBoard, setSelectedBoard] = useState<string>(ALL_BOARDS)
 
   const allBoards = useBoardsStore((s) => s.allBoards)
   const kanbanBoardIds = useBoardsStore((s) => s.kanbanBoardIds)
 
-  // Derive whether the currently selected board is Kanban
-  const isKanban =
-    selectedBoard !== ALL_BOARDS && kanbanBoardIds.has(selectedBoard)
+  // Derive only Kanban boards
+  const kanbanBoards = useMemo(
+    () => allBoards.filter((id) => kanbanBoardIds.has(id)),
+    [allBoards, kanbanBoardIds],
+  )
 
-  // Period selector state
+  // Board selector — auto-select the first Kanban board if available
+  const [selectedBoard, setSelectedBoard] = useState<string | null>(null)
+
+  // Auto-select the first Kanban board when boards are loaded
+  useEffect(() => {
+    if (selectedBoard === null && kanbanBoards.length > 0) {
+      setSelectedBoard(kanbanBoards[0])
+    }
+  }, [kanbanBoards, selectedBoard])
+
+  // Period selector state — no Sprint option for Kanban
   const [periodMode, setPeriodMode] = useState<PeriodMode>('last90')
-  const [selectedSprint, setSelectedSprint] = useState<string | null>(null)
   const [selectedQuarter, setSelectedQuarter] = useState<string | null>(null)
+
+  // Reset period + data when board changes
+  useEffect(() => {
+    setPeriodMode('last90')
+    setSelectedQuarter(null)
+    setData(null)
+    setError(null)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBoard])
 
   // Fetch state
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<UnplannedDoneResponse | null>(null)
 
-  // Reset period + data when board changes
-  useEffect(() => {
-    setPeriodMode('last90')
-    setSelectedSprint(null)
-    setSelectedQuarter(null)
-    setData(null)
-    setError(null)
-  }, [selectedBoard])
-
-  // Derive the effective params for the API call.
-  // "All Boards" mode: omit boardId so the backend aggregates all Scrum boards.
-  // Sprint mode is only available for single Scrum boards.
+  // Derive the effective params for the API call
   const fetchParams = useMemo(() => {
-    if (isKanban) return null
+    if (!selectedBoard) return null
 
-    const boardIdParam =
-      selectedBoard === ALL_BOARDS ? undefined : selectedBoard
+    const boardIdParam = selectedBoard
 
-    if (periodMode === 'sprint' && selectedSprint && selectedBoard !== ALL_BOARDS) {
-      return { boardId: boardIdParam, sprintId: selectedSprint }
-    }
     if (periodMode === 'quarter' && selectedQuarter) {
       return { boardId: boardIdParam, quarter: selectedQuarter }
     }
     if (periodMode === 'last90') {
-      return { boardId: boardIdParam }
+      return { boardId: boardIdParam, last90: true as const }
     }
     return null
-  }, [selectedBoard, isKanban, periodMode, selectedSprint, selectedQuarter])
+  }, [selectedBoard, periodMode, selectedQuarter])
 
   // Fetch when params become available / change
   useEffect(() => {
@@ -238,18 +236,16 @@ export function UnplannedDoneSection() {
     setLoading(true)
     setError(null)
 
-    getUnplannedDone(fetchParams)
+    getKanbanNeverBoarded(fetchParams)
       .then((res) => {
         if (!cancelled) setData(res)
       })
       .catch((err: unknown) => {
         if (cancelled) return
         if (err instanceof ApiError && err.status === 400) {
-          // 400 means Kanban — should be prevented by isKanban guard above,
-          // but handle defensively.
-          setError('Not available for Kanban boards.')
+          setError('Not available for Scrum boards.')
         } else {
-          setError(err instanceof Error ? err.message : 'Failed to load unplanned done data')
+          setError(err instanceof Error ? err.message : 'Failed to load Kanban never-boarded data')
         }
       })
       .finally(() => {
@@ -274,9 +270,6 @@ export function UnplannedDoneSection() {
   // Count shown in the section header badge
   const issueCount = data?.summary.total ?? 0
 
-  // Sprint mode is only available when a single Scrum board is selected
-  const sprintModeAvailable = selectedBoard !== ALL_BOARDS && !isKanban
-
   return (
     <div className="rounded-xl border border-border bg-card">
       {/* Collapsible header */}
@@ -292,7 +285,7 @@ export function UnplannedDoneSection() {
             <ChevronRight className="h-4 w-4 text-muted" />
           )}
           <span className="text-base font-semibold text-foreground">
-            Never-Boarded Completions
+            Kanban Never-Boarded Completions
           </span>
           {data && (
             <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
@@ -305,41 +298,32 @@ export function UnplannedDoneSection() {
       {open && (
         <div className="border-t border-border">
           <div className="space-y-3 px-5 py-4">
-            {/* Board selector */}
+            {/* Board selector — Kanban boards only */}
             <div>
               <label className="mb-2 block text-sm font-medium text-muted">Board</label>
-              <div className="flex flex-wrap gap-2">
-                {/* All Boards option */}
-                <button
-                  type="button"
-                  onClick={() => setSelectedBoard(ALL_BOARDS)}
-                  className={`rounded-full border px-3 py-1 text-sm font-medium transition-colors ${
-                    selectedBoard === ALL_BOARDS
-                      ? 'border-blue-500 bg-blue-50 text-blue-700'
-                      : 'border-border text-muted hover:bg-gray-50'
-                  }`}
-                >
-                  All Boards
-                </button>
-                {/* Individual board buttons — Kanban boards shown but period limited */}
-                {allBoards.map((boardId) => (
-                  <button
-                    key={boardId}
-                    type="button"
-                    onClick={() => setSelectedBoard(boardId)}
-                    className={`rounded-full border px-3 py-1 text-sm font-medium transition-colors ${
-                      selectedBoard === boardId
-                        ? 'border-blue-500 bg-blue-50 text-blue-700'
-                        : 'border-border text-muted hover:bg-gray-50'
-                    }`}
-                  >
-                    {boardId}
-                  </button>
-                ))}
-              </div>
+              {kanbanBoards.length === 0 ? (
+                <p className="text-sm text-muted">No Kanban boards configured.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {kanbanBoards.map((boardId) => (
+                    <button
+                      key={boardId}
+                      type="button"
+                      onClick={() => setSelectedBoard(boardId)}
+                      className={`rounded-full border px-3 py-1 text-sm font-medium transition-colors ${
+                        selectedBoard === boardId
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-border text-muted hover:bg-gray-50'
+                      }`}
+                    >
+                      {boardId}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {/* Period mode tabs */}
+            {/* Period mode tabs — no Sprint option */}
             <div>
               <label className="mb-2 block text-sm font-medium text-muted">Period</label>
               <div className="inline-flex rounded-lg border border-border">
@@ -356,18 +340,6 @@ export function UnplannedDoneSection() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPeriodMode('sprint')}
-                  disabled={!sprintModeAvailable}
-                  className={`px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                    periodMode === 'sprint'
-                      ? 'bg-blue-50 text-blue-700'
-                      : 'text-muted hover:bg-gray-50'
-                  }`}
-                >
-                  Sprint
-                </button>
-                <button
-                  type="button"
                   onClick={() => setPeriodMode('quarter')}
                   className={`rounded-r-lg px-4 py-2 text-sm font-medium transition-colors ${
                     periodMode === 'quarter'
@@ -380,17 +352,6 @@ export function UnplannedDoneSection() {
               </div>
             </div>
 
-            {/* Sprint selector — only when a single Scrum board is selected */}
-            {periodMode === 'sprint' && sprintModeAvailable && (
-              <div className="max-w-xs">
-                <SprintSelect
-                  boardId={selectedBoard}
-                  value={selectedSprint}
-                  onChange={setSelectedSprint}
-                />
-              </div>
-            )}
-
             {/* Quarter selector */}
             {periodMode === 'quarter' && (
               <div className="max-w-xs">
@@ -402,38 +363,45 @@ export function UnplannedDoneSection() {
             )}
           </div>
 
-          {/* Kanban not-available message */}
-          {isKanban && (
+          {/* No board selected prompt */}
+          {!selectedBoard && kanbanBoards.length > 0 && (
             <div className="px-5 pb-5">
               <p className="text-sm text-muted">
-                Not available for Kanban boards. This report requires sprint membership
-                data, which is only available for Scrum boards.
+                Select a board to view never-boarded completions.
               </p>
             </div>
           )}
 
+          {/* Data quality warning */}
+          {!loading && !error && data?.dataQualityWarning && (
+            <div className="mx-5 mb-5 flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+              <Info className="mt-0.5 h-4 w-4 flex-shrink-0" />
+              Board entry dates are not yet available for this board — run a sync and try again.
+            </div>
+          )}
+
           {/* Loading */}
-          {!isKanban && loading && (
+          {selectedBoard && loading && (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-muted" />
             </div>
           )}
 
           {/* Error */}
-          {!isKanban && !loading && error && (
+          {selectedBoard && !loading && error && (
             <div className="mx-5 mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
               {error}
             </div>
           )}
 
           {/* Results */}
-          {!isKanban && !loading && !error && data && (
+          {selectedBoard && !loading && !error && data && !data.dataQualityWarning && (
             <div className="space-y-4 pb-4">
               {/* Summary bar */}
               <div className="grid grid-cols-2 gap-3 px-5 sm:flex sm:flex-wrap">
-                <StatChip label="Unplanned tickets" value={data.summary.total} />
+                <StatChip label="Never-boarded tickets" value={data.summary.total} />
                 <StatChip
-                  label="Unplanned points"
+                  label="Total points"
                   value={data.summary.totalPoints > 0 ? data.summary.totalPoints : '—'}
                 />
                 {typeBreakdownChips.map(({ label, value }) => (
@@ -444,7 +412,7 @@ export function UnplannedDoneSection() {
               {/* Issues table */}
               {data.issues.length === 0 ? (
                 <div className="px-5 pb-2 text-sm text-muted">
-                  No unplanned done tickets found for the selected period.
+                  No never-boarded completions found for the selected period.
                 </div>
               ) : (
                 <div className="px-5">

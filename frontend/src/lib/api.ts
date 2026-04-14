@@ -827,6 +827,7 @@ export interface UnplannedDoneResponse {
   window: { start: string; end: string }
   issues: UnplannedDoneIssue[]
   summary: UnplannedDoneSummary
+  dataQualityWarning?: boolean
 }
 
 export interface UnplannedDoneParams {
@@ -844,6 +845,26 @@ export function getUnplannedDone(
       boardId: params.boardId,
       sprintId: params.sprintId,
       quarter: params.quarter,
+    })}`,
+  )
+}
+
+// ---- Kanban Never-Boarded types and endpoint -----------------------------
+
+export interface KanbanNeverBoardedParams {
+  boardId?: string
+  quarter?: string
+  last90?: boolean
+}
+
+export function getKanbanNeverBoarded(
+  params: KanbanNeverBoardedParams,
+): Promise<UnplannedDoneResponse> {
+  return apiFetch(
+    `/api/gaps/kanban-never-boarded${toQueryString({
+      boardId: params.boardId,
+      quarter: params.quarter,
+      last90: params.last90 !== undefined ? String(params.last90) : undefined,
     })}`,
   )
 }

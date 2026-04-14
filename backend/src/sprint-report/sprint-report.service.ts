@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Not, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { SprintReport, JiraSprint, SyncLog } from '../database/entities/index.js';
 import { SprintDetailService } from '../sprint/sprint-detail.service.js';
 import { PlanningService } from '../planning/planning.service.js';

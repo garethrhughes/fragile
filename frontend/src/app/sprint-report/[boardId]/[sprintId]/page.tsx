@@ -417,7 +417,7 @@ function buildUnplannedColumns(): Column<UnplannedDoneIssue>[] {
 // ---------------------------------------------------------------------------
 
 interface UnplannedDoneSectionProps {
-  unplannedDone: SprintReportResponse['unplannedDone']
+  unplannedDone: NonNullable<SprintReportResponse['unplannedDone']>
 }
 
 function UnplannedDoneSection({ unplannedDone }: UnplannedDoneSectionProps) {
@@ -448,7 +448,7 @@ function UnplannedDoneSection({ unplannedDone }: UnplannedDoneSectionProps) {
             <ChevronRight className="h-4 w-4 text-muted" />
           )}
           <span className="text-base font-semibold text-foreground">
-            Unplanned Done Tickets ({unplannedDone.total})
+            Never-Boarded Completions ({unplannedDone.total})
           </span>
         </div>
       </button>
@@ -650,10 +650,10 @@ export default function SprintReportPage() {
         </div>
       </section>
 
-      {/* ── Unplanned Done Tickets ──────────────────────────────────── */}
+      {/* ── Never-Boarded Completions ──────────────────────────────────── */}
       {data.unplannedDone && (
         <section>
-          <h2 className="mb-4 text-base font-semibold text-foreground">Unplanned Work</h2>
+          <h2 className="mb-4 text-base font-semibold text-foreground">Never-Boarded Completions</h2>
           <UnplannedDoneSection unplannedDone={data.unplannedDone} />
         </section>
       )}

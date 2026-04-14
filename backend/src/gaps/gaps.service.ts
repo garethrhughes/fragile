@@ -55,6 +55,7 @@ export interface UnplannedDoneResponse {
   window: { start: string; end: string };
   issues: UnplannedDoneIssue[];
   summary: UnplannedDoneSummary;
+  dataQualityWarning?: boolean;
 }
 
 @Injectable()
@@ -405,6 +406,202 @@ export class GapsService {
     });
 
     return this.buildResponse(boardId, windowStart, windowEnd, unplannedIssues);
+  }
+
+  async getKanbanNeverBoarded(
+    boardId: string | undefined,
+    quarter?: string,
+    _last90?: boolean,
+  ): Promise<UnplannedDoneResponse> {
+    const isAllBoards = !boardId || boardId === 'all';
+
+    // Determine date window
+    let windowStart: Date;
+    let windowEnd: Date;
+
+    if (quarter) {
+      const { startDate, endDate } = quarterToDates(quarter);
+      windowStart = startDate;
+      windowEnd = endDate;
+    } else {
+      // Default: last 90 days (also used when last90 = true)
+      windowEnd = new Date();
+      windowStart = new Date();
+      windowStart.setDate(windowStart.getDate() - 90);
+    }
+
+    if (isAllBoards) {
+      // Aggregate across all Kanban boards
+      const allConfigs = await this.boardConfigRepo.find();
+      const kanbanConfigs = allConfigs.filter((c) => c.boardType === 'kanban');
+
+      if (kanbanConfigs.length === 0) {
+        return this.buildResponse('all', windowStart, windowEnd, []);
+      }
+
+      const perBoardResults = await Promise.all(
+        kanbanConfigs.map((cfg) =>
+          this.getKanbanNeverBoardedSingleBoard(cfg.boardId, windowStart, windowEnd).then(
+            (r) => r,
+          ),
+        ),
+      );
+
+      // If any board has a real result (not a data quality warning), merge them
+      const merged: UnplannedDoneIssue[] = ([] as UnplannedDoneIssue[]).concat(
+        ...perBoardResults.map((r) => r.issues),
+      );
+      merged.sort((a, b) => {
+        const timeDiff =
+          new Date(b.resolvedAt).getTime() - new Date(a.resolvedAt).getTime();
+        if (timeDiff !== 0) return timeDiff;
+        return a.key.localeCompare(b.key);
+      });
+
+      return this.buildResponse('all', windowStart, windowEnd, merged);
+    }
+
+    // Single board mode
+    const config = await this.boardConfigRepo.findOne({ where: { boardId } });
+    if (config?.boardType !== 'kanban') {
+      throw new BadRequestException('Not available for Scrum boards');
+    }
+
+    return this.getKanbanNeverBoardedSingleBoard(boardId, windowStart, windowEnd);
+  }
+
+  private async getKanbanNeverBoardedSingleBoard(
+    boardId: string,
+    windowStart: Date,
+    windowEnd: Date,
+  ): Promise<UnplannedDoneResponse> {
+    const config = await this.boardConfigRepo.findOne({ where: { boardId } });
+    const doneStatusNames: string[] = config?.doneStatusNames ?? [
+      'Done',
+      'Closed',
+      'Released',
+    ];
+
+    // Load all work-item issues for this board
+    const allIssues = (
+      await this.issueRepo.find({ where: { boardId } })
+    ).filter((i) => isWorkItem(i.issueType));
+
+    if (allIssues.length === 0) {
+      return this.buildResponse(boardId, windowStart, windowEnd, []);
+    }
+
+    const allKeys = allIssues.map((i) => i.key);
+
+    // Bulk-load status changelogs for all issues
+    const statusChangelogs = await this.changelogRepo
+      .createQueryBuilder('cl')
+      .where('cl.issueKey IN (:...keys)', { keys: allKeys })
+      .andWhere('cl.field = :field', { field: 'status' })
+      .orderBy('cl.changedAt', 'ASC')
+      .getMany();
+
+    // Group changelogs by issue key
+    const statusLogsByIssue = new Map<string, JiraChangelog[]>();
+    for (const cl of statusChangelogs) {
+      const list = statusLogsByIssue.get(cl.issueKey) ?? [];
+      list.push(cl);
+      statusLogsByIssue.set(cl.issueKey, list);
+    }
+
+    // Compute boardEntryDate per issue:
+    // The board entry date is the timestamp of the first status transition
+    // out of a backlog/To Do state (i.e. first status changelog entry).
+    // If there are no status changelogs for an issue, boardEntryDate is null
+    // (the issue never moved through any status — never entered the board flow).
+    const boardEntryDateByKey = new Map<string, Date | null>();
+    for (const issue of allIssues) {
+      const logs = statusLogsByIssue.get(issue.key);
+      if (!logs || logs.length === 0) {
+        boardEntryDateByKey.set(issue.key, null);
+      } else {
+        // First status changelog = first time the issue's status changed = board entry
+        boardEntryDateByKey.set(issue.key, logs[0].changedAt);
+      }
+    }
+
+    // Data quality check: if NO issues on this board have a non-null boardEntryDate,
+    // the board has not been synced properly yet — return a data quality warning.
+    const hasAnyEntry = Array.from(boardEntryDateByKey.values()).some((d) => d !== null);
+    if (!hasAnyEntry) {
+      const empty = this.buildResponse(boardId, windowStart, windowEnd, []);
+      return { ...empty, dataQualityWarning: true };
+    }
+
+    const jiraBase = this.jiraBaseUrl;
+    const neverBoardedIssues: UnplannedDoneIssue[] = [];
+
+    for (const issue of allIssues) {
+      // Find resolvedAt: first status changelog where toValue ∈ doneStatusNames
+      // AND changedAt is within [windowStart, windowEnd]
+      const statusLogs = statusLogsByIssue.get(issue.key) ?? [];
+      let resolvedAt: Date | null = null;
+      let resolvedStatus: string | null = null;
+
+      for (const cl of statusLogs) {
+        if (
+          cl.toValue !== null &&
+          doneStatusNames.includes(cl.toValue) &&
+          cl.changedAt >= windowStart &&
+          cl.changedAt <= windowEnd
+        ) {
+          resolvedAt = cl.changedAt;
+          resolvedStatus = cl.toValue;
+          break;
+        }
+      }
+
+      // Fallback: no status changelog, current status is done, createdAt in window
+      if (resolvedAt === null) {
+        if (
+          doneStatusNames.includes(issue.status) &&
+          issue.createdAt >= windowStart &&
+          issue.createdAt <= windowEnd
+        ) {
+          resolvedAt = issue.createdAt;
+          resolvedStatus = issue.status;
+        } else {
+          continue; // no resolution within window
+        }
+      }
+
+      // Check boardEntryDate relative to resolvedAt:
+      // never-boarded = boardEntryDate is null OR boardEntryDate > resolvedAt
+      const boardEntryDate = boardEntryDateByKey.get(issue.key) ?? null;
+      const isNeverBoarded =
+        boardEntryDate === null || boardEntryDate > resolvedAt;
+
+      if (!isNeverBoarded) continue;
+
+      neverBoardedIssues.push({
+        key: issue.key,
+        summary: issue.summary,
+        issueType: issue.issueType,
+        boardId: issue.boardId,
+        resolvedAt: resolvedAt.toISOString(),
+        resolvedStatus: resolvedStatus as string,
+        points: issue.points,
+        epicKey: issue.epicKey,
+        priority: issue.priority,
+        assignee: issue.assignee,
+        labels: issue.labels,
+        jiraUrl: jiraBase ? `${jiraBase}/browse/${issue.key}` : '',
+      });
+    }
+
+    // Sort by resolvedAt DESC, then key ASC
+    neverBoardedIssues.sort((a, b) => {
+      const timeDiff = new Date(b.resolvedAt).getTime() - new Date(a.resolvedAt).getTime();
+      if (timeDiff !== 0) return timeDiff;
+      return a.key.localeCompare(b.key);
+    });
+
+    return this.buildResponse(boardId, windowStart, windowEnd, neverBoardedIssues);
   }
 
   private buildResponse(
