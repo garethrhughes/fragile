@@ -6,6 +6,7 @@ import { SprintDetailService } from '../sprint/sprint-detail.service.js';
 import { PlanningService } from '../planning/planning.service.js';
 import { RoadmapService } from '../roadmap/roadmap.service.js';
 import { MetricsService } from '../metrics/metrics.service.js';
+import { GapsService, UnplannedDoneIssue } from '../gaps/gaps.service.js';
 import { ScoringService, ScoringInput, SprintDimensionScores } from './scoring.service.js';
 import { RecommendationService, SprintRecommendation, RecommendationContext } from './recommendation.service.js';
 import {
@@ -40,6 +41,12 @@ export interface SprintReportResponse {
   trend: SprintReportTrendPoint[];
   generatedAt: string;
   dataAsOf: string;
+  unplannedDone: {
+    total: number;
+    totalPoints: number;
+    byIssueType: Record<string, number>;
+    issues: UnplannedDoneIssue[];
+  };
 }
 
 export interface SprintReportSummary {
@@ -72,6 +79,7 @@ export class SprintReportService {
     private readonly planningService: PlanningService,
     private readonly roadmapService: RoadmapService,
     private readonly metricsService: MetricsService,
+    private readonly gapsService: GapsService,
     private readonly scoringService: ScoringService,
     private readonly recommendationService: RecommendationService,
   ) {}
@@ -93,15 +101,23 @@ export class SprintReportService {
     }
 
     // Step 3: Return cached report if not forcing refresh
+    // If the cached payload is missing unplannedDone (older cache), treat as a
+    // cache miss so we regenerate and pick up the new field.
     if (!forceRefresh) {
       const existing = await this.reportRepo.findOne({ where: { boardId, sprintId } });
       if (existing) {
-        return existing.payload as SprintReportResponse;
+        const payload = existing.payload as SprintReportResponse;
+        if (payload.unplannedDone !== undefined) {
+          return payload;
+        }
+        this.logger.log(
+          `Cache hit for ${boardId}/${sprintId} is missing unplannedDone — regenerating`,
+        );
       }
     }
 
     // Step 4: Load data in parallel
-    const [detail, planningResults, roadmapResults, doraResults, priorReports] =
+    const [detail, planningResults, roadmapResults, doraResults, unplannedDoneResult, priorReports] =
       await Promise.all([
         this.sprintDetailService.getDetail(boardId, sprintId),
         this.planningService.getAccuracy(boardId, sprintId).catch((err: unknown) => {
@@ -122,6 +138,12 @@ export class SprintReportService {
           );
           return [];
         }),
+        this.gapsService.getUnplannedDone(boardId, sprintId).catch((err: unknown) => {
+          this.logger.warn(
+            `GapsService.getUnplannedDone failed for ${boardId}/${sprintId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return null;
+        }),
         this.reportRepo
           .createQueryBuilder('r')
           .where('r.boardId = :boardId', { boardId })
@@ -134,6 +156,16 @@ export class SprintReportService {
     const planning = planningResults[0] ?? null;
     const roadmap = roadmapResults[0] ?? null;
     const dora = doraResults[0] ?? null;
+
+    // Unplanned done — normalise null fallback to an empty result set
+    const unplannedDone = unplannedDoneResult
+      ? {
+          total: unplannedDoneResult.summary.total,
+          totalPoints: unplannedDoneResult.summary.totalPoints,
+          byIssueType: unplannedDoneResult.summary.byIssueType,
+          issues: unplannedDoneResult.issues,
+        }
+      : { total: 0, totalPoints: 0, byIssueType: {}, issues: [] };
 
     // Step 5: Assemble ScoringInput
     const summary = detail.summary;
@@ -229,6 +261,7 @@ export class SprintReportService {
       trend: trendPoints,
       generatedAt: new Date().toISOString(),
       dataAsOf,
+      unplannedDone,
     };
 
     // Step 10: Upsert to DB

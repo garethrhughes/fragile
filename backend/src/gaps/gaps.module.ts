@@ -15,5 +15,6 @@ import { GapsService } from './gaps.service.js';
   ],
   controllers: [GapsController],
   providers: [GapsService],
+  exports: [GapsService],
 })
 export class GapsModule {}

@@ -905,6 +905,12 @@ export interface SprintReportResponse {
   trend: SprintReportTrendPoint[]
   generatedAt: string
   dataAsOf: string
+  unplannedDone: {
+    total: number
+    totalPoints: number
+    byIssueType: Record<string, number>
+    issues: UnplannedDoneIssue[]
+  }
 }
 
 export interface SprintReportSummary {

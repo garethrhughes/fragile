@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams } from 'next/navigation'
-import { Loader2, AlertCircle, RefreshCw } from 'lucide-react'
+import { Loader2, AlertCircle, RefreshCw, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
 import { BackButton } from '@/components/ui/back-button'
 import {
   ResponsiveContainer,
@@ -24,8 +24,10 @@ import {
   type SprintDimensionScore,
   type SprintRecommendation,
   type DoraBand,
+  type UnplannedDoneIssue,
 } from '@/lib/api'
 import { BandBadge } from '@/components/ui/band-badge'
+import { DataTable, type Column } from '@/components/ui/data-table'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -271,6 +273,222 @@ function RecommendationsList({ recommendations }: RecommendationsListProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers (shared across sprint report sections)
+// ---------------------------------------------------------------------------
+
+/** Format an ISO date string as "dd Mon yyyy" */
+function formatResolvedDate(iso: string): string {
+  const d = new Date(iso)
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+// ---------------------------------------------------------------------------
+// StatChip — inline summary chip (mirrors unplanned-done-section.tsx)
+// ---------------------------------------------------------------------------
+
+interface StatChipProps {
+  label: string
+  value: string | number
+}
+
+function StatChip({ label, value }: StatChipProps) {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-card px-4 py-3 text-center">
+      <span className="text-xl font-bold">{value}</span>
+      <span className="mt-0.5 text-xs text-muted">{label}</span>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Column definitions for UnplannedDoneIssue table
+// ---------------------------------------------------------------------------
+
+function buildUnplannedColumns(): Column<UnplannedDoneIssue>[] {
+  return [
+    {
+      key: 'key',
+      label: 'Issue',
+      sortable: true,
+      render: (value, row) => {
+        const key = String(value)
+        if (row.jiraUrl) {
+          return (
+            <a
+              href={row.jiraUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 font-mono text-sm font-medium text-blue-600 hover:underline"
+            >
+              {key}
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          )
+        }
+        return <span className="font-mono text-sm">{key}</span>
+      },
+    },
+    {
+      key: 'summary',
+      label: 'Summary',
+      sortable: true,
+      render: (value) => {
+        const text = String(value)
+        const truncated = text.length > 60 ? text.slice(0, 60) + '…' : text
+        return (
+          <span title={text} className="block max-w-xs truncate text-sm">
+            {truncated}
+          </span>
+        )
+      },
+    },
+    {
+      key: 'issueType',
+      label: 'Type',
+      sortable: true,
+    },
+    {
+      key: 'resolvedStatus',
+      label: 'Resolved Status',
+      sortable: true,
+      render: (value) => (
+        <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">
+          {String(value)}
+        </span>
+      ),
+    },
+    {
+      key: 'resolvedAt',
+      label: 'Resolved',
+      sortable: true,
+      render: (value) => (
+        <span className="whitespace-nowrap text-sm">{formatResolvedDate(String(value))}</span>
+      ),
+    },
+    {
+      key: 'points',
+      label: 'Points',
+      sortable: true,
+      render: (value) =>
+        value !== null && value !== undefined ? (
+          <span>{String(value)}</span>
+        ) : (
+          <span className="text-muted">—</span>
+        ),
+    },
+    {
+      key: 'epicKey',
+      label: 'Epic',
+      sortable: true,
+      render: (value) =>
+        value ? (
+          <span className="font-mono text-sm">{String(value)}</span>
+        ) : (
+          <span className="text-muted">—</span>
+        ),
+    },
+    {
+      key: 'priority',
+      label: 'Priority',
+      sortable: true,
+      render: (value) =>
+        value ? (
+          <span className="text-sm">{String(value)}</span>
+        ) : (
+          <span className="text-muted">—</span>
+        ),
+    },
+    {
+      key: 'assignee',
+      label: 'Assignee',
+      sortable: true,
+      render: (value) =>
+        value ? (
+          <span className="text-sm">{String(value)}</span>
+        ) : (
+          <span className="text-muted">—</span>
+        ),
+    },
+  ]
+}
+
+// ---------------------------------------------------------------------------
+// UnplannedDoneSection — inline collapsible section for the sprint report
+// ---------------------------------------------------------------------------
+
+interface UnplannedDoneSectionProps {
+  unplannedDone: SprintReportResponse['unplannedDone']
+}
+
+function UnplannedDoneSection({ unplannedDone }: UnplannedDoneSectionProps) {
+  const [open, setOpen] = useState(false)
+
+  const typeBreakdownChips = useMemo<{ label: string; value: number }[]>(
+    () =>
+      Object.entries(unplannedDone.byIssueType)
+        .sort((a, b) => b[1] - a[1])
+        .map(([type, count]) => ({ label: type, value: count })),
+    [unplannedDone.byIssueType],
+  )
+
+  const columns = useMemo(() => buildUnplannedColumns(), [])
+
+  return (
+    <div className="rounded-xl border border-border bg-card">
+      {/* Collapsible header */}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-5 py-4 text-left"
+      >
+        <div className="flex items-center gap-3">
+          {open ? (
+            <ChevronDown className="h-4 w-4 text-muted" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-muted" />
+          )}
+          <span className="text-base font-semibold text-foreground">
+            Unplanned Done Tickets ({unplannedDone.total})
+          </span>
+        </div>
+      </button>
+
+      {open && (
+        <div className="border-t border-border">
+          {unplannedDone.total === 0 ? (
+            <div className="px-5 py-4 text-sm text-muted">
+              No unplanned completions for this sprint.
+            </div>
+          ) : (
+            <div className="space-y-4 pb-4">
+              {/* Summary stat chips */}
+              <div className="grid grid-cols-2 gap-3 px-5 pt-4 sm:flex sm:flex-wrap">
+                <StatChip label="Unplanned tickets" value={unplannedDone.total} />
+                <StatChip
+                  label="Unplanned points"
+                  value={unplannedDone.totalPoints > 0 ? unplannedDone.totalPoints : '—'}
+                />
+                {typeBreakdownChips.map(({ label, value }) => (
+                  <StatChip key={label} label={label} value={value} />
+                ))}
+              </div>
+
+              {/* Issues table */}
+              <div className="px-5">
+                <DataTable<UnplannedDoneIssue>
+                  columns={columns}
+                  data={unplannedDone.issues}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -431,6 +649,14 @@ export default function SprintReportPage() {
           <RecommendationsList recommendations={data.recommendations} />
         </div>
       </section>
+
+      {/* ── Unplanned Done Tickets ──────────────────────────────────── */}
+      {data.unplannedDone && (
+        <section>
+          <h2 className="mb-4 text-base font-semibold text-foreground">Unplanned Work</h2>
+          <UnplannedDoneSection unplannedDone={data.unplannedDone} />
+        </section>
+      )}
 
       {/* ── Footer ────────────────────────────────────────────────────── */}
       <p className="text-xs text-muted">Data as of: {formatDateTime(data.dataAsOf)}</p>

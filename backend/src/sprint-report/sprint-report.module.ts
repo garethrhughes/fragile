@@ -5,6 +5,7 @@ import { SprintModule } from '../sprint/sprint.module.js';
 import { PlanningModule } from '../planning/planning.module.js';
 import { RoadmapModule } from '../roadmap/roadmap.module.js';
 import { MetricsModule } from '../metrics/metrics.module.js';
+import { GapsModule } from '../gaps/gaps.module.js';
 import { SprintReportController } from './sprint-report.controller.js';
 import { SprintReportService } from './sprint-report.service.js';
 import { ScoringService } from './scoring.service.js';
@@ -17,6 +18,7 @@ import { RecommendationService } from './recommendation.service.js';
     PlanningModule,
     forwardRef(() => RoadmapModule),
     MetricsModule,
+    GapsModule,
   ],
   controllers: [SprintReportController],
   providers: [SprintReportService, ScoringService, RecommendationService],
