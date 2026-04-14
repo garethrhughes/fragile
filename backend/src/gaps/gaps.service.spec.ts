@@ -618,6 +618,38 @@ describe('GapsService', () => {
       expect(result.issues[0].resolvedAt).toBe(createdAt.toISOString());
     });
 
+    it('does NOT use createdAt fallback when status changelogs exist but fall outside the window (regression: SPS-454)', async () => {
+      // Issue created in Q1, but Done transition happened in Q2 (after window end).
+      // The fallback must not fire just because createdAt is in-window and current status is Done.
+      boardConfigRepo.findOne.mockResolvedValue(scrumConfig);
+
+      const q1Start = new Date('2026-01-01T00:00:00Z');
+      const q1End   = new Date('2026-03-31T23:59:59Z');
+      const sprint  = { id: 'sprint-q1', boardId: 'ACC', startDate: q1Start, endDate: q1End } as JiraSprint;
+      sprintRepo.findOne.mockResolvedValue(sprint);
+
+      // Issue was created in Q1 but completed in Q2
+      const issue = makeIssue({
+        key: 'SPS-454',
+        status: 'Done',
+        createdAt: new Date('2026-03-31T23:32:00Z'), // inside Q1 window
+        sprintId: 'sprint-q2',
+      });
+      issueRepo.find.mockResolvedValue([issue]);
+
+      // Status changelogs both fall in Q2 (outside Q1 window)
+      const statusLogs = [
+        makeChangelog({ issueKey: 'SPS-454', fromValue: 'To Do',       toValue: 'Peer Review', changedAt: new Date('2026-04-01T03:36:00Z') }),
+        makeChangelog({ issueKey: 'SPS-454', fromValue: 'Peer Review', toValue: 'Done',        changedAt: new Date('2026-04-01T05:39:00Z') }),
+      ];
+      setupChangelogs(statusLogs, []);
+
+      const result = await service.getUnplannedDone('ACC', 'sprint-q1');
+
+      // Must be excluded — the Done transition is outside Q1, createdAt fallback must not fire
+      expect(result.issues).toHaveLength(0);
+    });
+
     it('excludes Epics via isWorkItem filter', async () => {
       boardConfigRepo.findOne.mockResolvedValue(scrumConfig);
       const epic = makeIssue({ key: 'ACC-E1', issueType: 'Epic', status: 'Done' });

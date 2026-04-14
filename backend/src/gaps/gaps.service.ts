@@ -328,9 +328,13 @@ export class GapsService {
         }
       }
 
-      // Fallback: no status changelog, current status is done, createdAt in window
+      // Fallback: issue has NO status changelogs at all (created directly in a done
+      // state via the Jira UI), current status is done, and createdAt is within window.
+      // We must NOT use this fallback when statusLogs exist but simply don't fall in
+      // the window — that means the issue was completed outside this window entirely.
       if (resolvedAt === null) {
         if (
+          statusLogs.length === 0 &&
           doneStatusNames.includes(issue.status) &&
           issue.createdAt >= windowStart &&
           issue.createdAt <= windowEnd
