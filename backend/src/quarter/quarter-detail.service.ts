@@ -10,6 +10,7 @@ import {
   BoardConfig,
   JiraChangelog,
   JiraIssue,
+  JiraIssueLink,
   JpdIdea,
   RoadmapConfig,
 } from '../database/entities/index.js';
@@ -113,6 +114,8 @@ export class QuarterDetailService {
     private readonly roadmapConfigRepo: Repository<RoadmapConfig>,
     @InjectRepository(JpdIdea)
     private readonly jpdIdeaRepo: Repository<JpdIdea>,
+    @InjectRepository(JiraIssueLink)
+    private readonly issueLinkRepo: Repository<JiraIssueLink>,
     private readonly configService: ConfigService,
   ) {
     const baseUrl = this.configService.get<string>('JIRA_BASE_URL', '');
@@ -140,8 +143,10 @@ export class QuarterDetailService {
     const doneStatuses: string[] = boardConfig?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
     const incidentIssueTypes: string[] = boardConfig?.incidentIssueTypes ?? ['Bug', 'Incident'];
     const incidentLabels: string[] = boardConfig?.incidentLabels ?? [];
+    const incidentPriorities: string[] = boardConfig?.incidentPriorities ?? ['Critical'];
     const failureIssueTypes: string[] = boardConfig?.failureIssueTypes ?? ['Bug', 'Incident'];
     const failureLabels: string[] = boardConfig?.failureLabels ?? ['regression', 'incident', 'hotfix'];
+    const failureLinkTypes: string[] = boardConfig?.failureLinkTypes ?? [];
     const boardType: string = boardConfig?.boardType ?? 'scrum';
     const backlogStatusIds: string[] = boardConfig?.backlogStatusIds ?? [];
 
@@ -242,6 +247,28 @@ export class QuarterDetailService {
     }
 
     // -----------------------------------------------------------------------
+    // Step 6b — failureLinkTypes AND-gate: bulk causal-link query
+    //
+    // When failureLinkTypes is non-empty, only issues with a matching causal
+    // link (e.g. 'caused by') are classified as failures.  When
+    // failureLinkTypes is empty (the default), all type/label matches qualify.
+    // See Proposal 0032.
+    // -----------------------------------------------------------------------
+    const quarterIssueKeys = quarterIssues.map((i) => i.key);
+    let keysWithCausalLink = new Set<string>();
+    if (failureLinkTypes.length > 0) {
+      const linkRows = await this.issueLinkRepo
+        .createQueryBuilder('l')
+        .select('l.sourceIssueKey', 'key')
+        .where('l.sourceIssueKey IN (:...keys)', { keys: quarterIssueKeys })
+        .andWhere('LOWER(l.linkTypeName) IN (:...types)', {
+          types: failureLinkTypes.map((t) => t.toLowerCase()),
+        })
+        .getRawMany<{ key: string }>();
+      keysWithCausalLink = new Set(linkRows.map((r) => r.key));
+    }
+
+    // -----------------------------------------------------------------------
     // Step 7 — Load RoadmapConfig and build coveredEpicKeys
     // -----------------------------------------------------------------------
     const roadmapConfigs = await this.roadmapConfigRepo.find({ where: {} });
@@ -285,16 +312,27 @@ export class QuarterDetailService {
       const linkedToRoadmap =
         issue.epicKey != null && coveredEpicKeys.has(issue.epicKey);
 
-      // isIncident: must match type/label AND be Critical priority
+      // isIncident: must match type/label AND pass priority AND-gate
+      // (consistent with MttrService; incidentPriorities = [] means all priorities qualify)
       const matchesIncidentTypeOrLabel =
         incidentIssueTypes.includes(issue.issueType) ||
         (incidentLabels.length > 0 && issue.labels.some((l) => incidentLabels.includes(l)));
-      const isIncident = matchesIncidentTypeOrLabel && issue.priority === 'Critical';
+      const isIncident =
+        matchesIncidentTypeOrLabel &&
+        (incidentPriorities.length === 0 ||
+          incidentPriorities.includes(issue.priority ?? ''));
 
-      // isFailure
-      const isFailure =
+      // isFailure: type/label match AND causal-link gate
+      // failureLinkTypes AND-gate: when configured, only issues with a matching
+      // causal link (e.g. 'caused by') are classified as failures.  When
+      // failureLinkTypes is empty (the default), all type/label matches qualify.
+      // See Proposal 0032.
+      const passesTypeGate =
         failureIssueTypes.includes(issue.issueType) ||
         (failureLabels.length > 0 && issue.labels.some((l) => failureLabels.includes(l)));
+      const passesLinkGate =
+        failureLinkTypes.length === 0 || keysWithCausalLink.has(issue.key);
+      const isFailure = passesTypeGate && passesLinkGate;
 
       // jiraUrl
       const jiraUrl = this.jiraBaseUrl

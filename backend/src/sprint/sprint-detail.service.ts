@@ -11,6 +11,7 @@ import {
   BoardConfig,
   JiraChangelog,
   JiraIssue,
+  JiraIssueLink,
   JiraSprint,
   JpdIdea,
   RoadmapConfig,
@@ -27,6 +28,7 @@ export interface SprintDetailBoardConfig {
   doneStatusNames: string[];
   failureIssueTypes: string[];
   failureLabels: string[];
+  failureLinkTypes: string[];
   incidentIssueTypes: string[];
   incidentLabels: string[];
 }
@@ -71,8 +73,12 @@ export interface SprintDetailIssue {
 
   /**
    * True if the issue matches failureIssueTypes OR failureLabels
-   * from BoardConfig. This is the CFR signal.
-   * Note: link-based failure detection (failureLinkTypes) is excluded.
+   * from BoardConfig, AND passes the failureLinkTypes AND-gate.
+   * When failureLinkTypes is non-empty, the issue must also have a matching
+   * causal Jira link (e.g. 'caused by') to be classified as a failure.
+   * When failureLinkTypes is empty (the default), the link gate is skipped
+   * and all type/label matches qualify. This is the CFR signal.
+   * See Proposal 0032.
    */
   isFailure: boolean;
 
@@ -181,6 +187,8 @@ export class SprintDetailService {
     private readonly jpdIdeaRepo: Repository<JpdIdea>,
     @InjectRepository(RoadmapConfig)
     private readonly roadmapConfigRepo: Repository<RoadmapConfig>,
+    @InjectRepository(JiraIssueLink)
+    private readonly issueLinkRepo: Repository<JiraIssueLink>,
     private readonly configService: ConfigService,
     private readonly workingTimeService: WorkingTimeService,
   ) {
@@ -226,16 +234,19 @@ export class SprintDetailService {
       'Closed',
       'Released',
     ];
-    const failureIssueTypes: string[] = boardConfig?.failureIssueTypes ?? [];
-    const failureLabels: string[] = boardConfig?.failureLabels ?? [];
-    const incidentIssueTypes: string[] = boardConfig?.incidentIssueTypes ?? [];
+    const failureIssueTypes: string[] = boardConfig?.failureIssueTypes ?? ['Bug', 'Incident'];
+    const failureLabels: string[] = boardConfig?.failureLabels ?? ['regression', 'incident', 'hotfix'];
+    const failureLinkTypes: string[] = boardConfig?.failureLinkTypes ?? [];
+    const incidentIssueTypes: string[] = boardConfig?.incidentIssueTypes ?? ['Bug', 'Incident'];
     const incidentLabels: string[] = boardConfig?.incidentLabels ?? [];
     const cancelledStatusNames: string[] = boardConfig?.cancelledStatusNames ?? ['Cancelled', "Won't Do"];
+    const incidentPriorities: string[] = boardConfig?.incidentPriorities ?? ['Critical'];
 
     const boardConfigShape: SprintDetailBoardConfig = {
       doneStatusNames,
       failureIssueTypes,
       failureLabels,
+      failureLinkTypes,
       incidentIssueTypes,
       incidentLabels,
     };
@@ -401,6 +412,27 @@ export class SprintDetailService {
     }
 
     // -----------------------------------------------------------------------
+    // failureLinkTypes AND-gate: bulk causal-link query (Query 5b)
+    //
+    // When failureLinkTypes is non-empty, only issues with a matching causal
+    // link (e.g. 'caused by') are classified as failures.  When
+    // failureLinkTypes is empty (the default), all type/label matches qualify.
+    // See Proposal 0032.
+    // -----------------------------------------------------------------------
+    let keysWithCausalLink = new Set<string>();
+    if (failureLinkTypes.length > 0) {
+      const linkRows = await this.issueLinkRepo
+        .createQueryBuilder('l')
+        .select('l.sourceIssueKey', 'key')
+        .where('l.sourceIssueKey IN (:...keys)', { keys: finalKeys })
+        .andWhere('LOWER(l.linkTypeName) IN (:...types)', {
+          types: failureLinkTypes.map((t) => t.toLowerCase()),
+        })
+        .getRawMany<{ key: string }>();
+      keysWithCausalLink = new Set(linkRows.map((r) => r.key));
+    }
+
+    // -----------------------------------------------------------------------
     // Queries 6 & 7: Load roadmap ideas (RoadmapConfig-scoped)
     //
     // Build epicKey → targetDate map with no date-window filter.
@@ -445,16 +477,28 @@ export class SprintDetailService {
       // addedMidSprint
       const addedMidSprint = addedKeys.has(issueKey);
 
-      // isIncident
-      const isIncident =
+      // isIncident: must match type/label AND pass priority AND-gate
+      // (consistent with MttrService; incidentPriorities = [] means all priorities qualify)
+      const matchesIncidentTypeOrLabel =
         incidentIssueTypes.includes(issue.issueType) ||
         (incidentLabels.length > 0 &&
           issue.labels.some((l) => incidentLabels.includes(l)));
+      const isIncident =
+        matchesIncidentTypeOrLabel &&
+        (incidentPriorities.length === 0 ||
+          incidentPriorities.includes(issue.priority ?? ''));
 
-      // isFailure
-      const isFailure =
+      // isFailure: type/label match AND causal-link gate
+      // failureLinkTypes AND-gate: when configured, only issues with a matching
+      // causal link (e.g. 'caused by') are classified as failures.  When
+      // failureLinkTypes is empty (the default), all type/label matches qualify.
+      // See Proposal 0032.
+      const passesTypeGate =
         failureIssueTypes.includes(issue.issueType) ||
         issue.labels.some((l) => failureLabels.includes(l));
+      const passesLinkGate =
+        failureLinkTypes.length === 0 || keysWithCausalLink.has(issue.key);
+      const isFailure = passesTypeGate && passesLinkGate;
 
       // completedInSprint
       // Case 1 (changelog): a status changelog transitioned TO a done status
