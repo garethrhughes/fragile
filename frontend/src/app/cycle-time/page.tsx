@@ -8,6 +8,7 @@ import {
   getCycleTime,
   getCycleTimeTrend,
   getQuarters,
+  getAppConfig,
   type CycleTimeResult,
   type CycleTimeTrendPoint,
   type CycleTimeObservation,
@@ -92,6 +93,14 @@ function CycleTimePageInner() {
 
   const [quarters, setQuarters] = useState<QuarterInfo[]>([])
   const [pageState, setPageState] = useState<PageState>({ status: 'idle' })
+  const [excludeWeekends, setExcludeWeekends] = useState(true)
+
+  // Fetch app config (timezone, excludeWeekends) once on mount
+  useEffect(() => {
+    getAppConfig()
+      .then((cfg) => setExcludeWeekends(cfg.excludeWeekends))
+      .catch(() => { /* keep default */ })
+  }, [])
 
   // Load quarter list once on mount; auto-select first quarter if none in URL
   useEffect(() => {
@@ -322,24 +331,28 @@ function CycleTimePageInner() {
                   days={pooled.p50}
                   sampleSize={pooled.count}
                   band={classifyCycleTime(pooled.p50)}
+                  excludeWeekends={excludeWeekends}
                 />
                 <CycleTimePercentileCard
                   percentile="p75"
                   days={pooled.p75}
                   sampleSize={pooled.count}
                   band={classifyCycleTime(pooled.p75)}
+                  excludeWeekends={excludeWeekends}
                 />
                 <CycleTimePercentileCard
                   percentile="p85"
                   days={pooled.p85}
                   sampleSize={pooled.count}
                   band={classifyCycleTime(pooled.p85)}
+                  excludeWeekends={excludeWeekends}
                 />
                 <CycleTimePercentileCard
                   percentile="p95"
                   days={pooled.p95}
                   sampleSize={pooled.count}
                   band={classifyCycleTime(pooled.p95)}
+                  excludeWeekends={excludeWeekends}
                 />
               </div>
 

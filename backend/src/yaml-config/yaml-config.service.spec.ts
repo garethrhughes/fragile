@@ -2,7 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { YamlConfigService } from './yaml-config.service.js';
 import type { FileReader } from './yaml-config.service.js';
-import { BoardConfig, RoadmapConfig, JiraFieldConfig } from '../database/entities/index.js';
+import { BoardConfig, RoadmapConfig, JiraFieldConfig, WorkingTimeConfigEntity } from '../database/entities/index.js';
 
 /** Minimal ConfigService stub — returns undefined for all keys (uses service defaults). */
 const stubConfigService = {
@@ -29,6 +29,12 @@ function mockJiraFieldConfigRepo(): jest.Mocked<Pick<Repository<JiraFieldConfig>
   return {
     upsert: jest.fn().mockResolvedValue({ identifiers: [], generatedMaps: [], raw: [] }),
   } as unknown as jest.Mocked<Pick<Repository<JiraFieldConfig>, 'upsert'>>;
+}
+
+function mockWorkingTimeConfigRepo(): jest.Mocked<Pick<Repository<WorkingTimeConfigEntity>, 'upsert'>> {
+  return {
+    upsert: jest.fn().mockResolvedValue({ identifiers: [], generatedMaps: [], raw: [] }),
+  } as unknown as jest.Mocked<Pick<Repository<WorkingTimeConfigEntity>, 'upsert'>>;
 }
 
 /**
@@ -59,11 +65,13 @@ function buildService(
   roadmapRepo: unknown,
   fileReader: FileReader = noFilesReader,
   jiraFieldConfigRepo: unknown = mockJiraFieldConfigRepo(),
+  workingTimeConfigRepo: unknown = mockWorkingTimeConfigRepo(),
 ): YamlConfigService {
   return new YamlConfigService(
     boardRepo as Repository<BoardConfig>,
     roadmapRepo as Repository<RoadmapConfig>,
     jiraFieldConfigRepo as Repository<JiraFieldConfig>,
+    workingTimeConfigRepo as Repository<WorkingTimeConfigEntity>,
     stubConfigService,
   ).withFileReader(fileReader);
 }

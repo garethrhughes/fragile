@@ -855,6 +855,8 @@ export function getUnplannedDone(
 
 export interface AppConfig {
   timezone: string
+  /** When true, weekends are excluded from cycle-time and lead-time calculations. */
+  excludeWeekends: boolean
 }
 
 export function getAppConfig(): Promise<AppConfig> {

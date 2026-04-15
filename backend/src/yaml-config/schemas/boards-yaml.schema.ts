@@ -62,10 +62,45 @@ const BoardYamlSchema = z.object({
     .optional(),
 });
 
+/**
+ * Optional tenant-level working-time configuration.
+ * Controls whether weekends and public holidays are excluded when computing
+ * cycle-time and lead-time durations.  All fields are optional; omitting any
+ * field leaves the existing database value unchanged.
+ */
+export const WorkingTimeStanzaSchema = z.object({
+  /** When true, non-workDays are excluded from duration calculations. */
+  excludeWeekends: z.boolean().optional(),
+
+  /**
+   * ISO weekday numbers that count as working days.
+   * 0 = Sunday, 1 = Monday, …, 6 = Saturday.
+   */
+  workDays: z.array(z.number().int().min(0).max(6)).optional(),
+
+  /** Number of working hours in a full working day (divisor for day conversion). */
+  hoursPerDay: z.number().int().positive().optional(),
+
+  /**
+   * List of public holiday dates in YYYY-MM-DD format.
+   * These dates are excluded from working-time calculations regardless of workDays.
+   */
+  holidays: z
+    .array(
+      z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'Holiday must be YYYY-MM-DD'),
+    )
+    .optional(),
+});
+
+export type WorkingTimeStanza = z.infer<typeof WorkingTimeStanzaSchema>;
+
 export const BoardsYamlFileSchema = z
   .object({
     boards: z.array(BoardYamlSchema),
     jira: JiraStanzaSchema.optional(),
+    workingTime: WorkingTimeStanzaSchema.optional(),
   })
   .superRefine((data, ctx) => {
     const seen = new Set<string>();

@@ -8,6 +8,8 @@ interface CycleTimePercentileCardProps {
   days: number
   sampleSize: number
   band: CycleTimeBand
+  /** When true the days label reads "working days"; otherwise "calendar days". */
+  excludeWeekends?: boolean
 }
 
 const PERCENTILE_LABELS: Record<string, string> = {
@@ -31,7 +33,10 @@ export function CycleTimePercentileCard({
   days,
   sampleSize,
   band,
+  excludeWeekends = true,
 }: CycleTimePercentileCardProps) {
+  const daysLabel = excludeWeekends ? 'working days' : 'calendar days'
+
   return (
     <div
       className={`rounded-xl border bg-card p-5 shadow-sm border-l-4 ${bandLeftBorder(band)}`}
@@ -46,7 +51,7 @@ export function CycleTimePercentileCard({
         <span className="text-3xl font-bold tracking-tight">
           {days.toFixed(1)}
         </span>
-        <span className="mb-1 text-sm text-muted">days</span>
+        <span className="mb-1 text-sm text-muted">{daysLabel}</span>
       </div>
       <div className="mt-3 text-xs text-muted">
         n={sampleSize}
@@ -54,3 +59,4 @@ export function CycleTimePercentileCard({
     </div>
   )
 }
+

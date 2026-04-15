@@ -10,6 +10,7 @@ import {
   JpdIdea,
   RoadmapConfig,
 } from '../database/entities/index.js';
+import { WorkingTimeService } from '../metrics/working-time.service.js';
 
 function mockRepo<T extends object>(): jest.Mocked<Repository<T>> {
   return {
@@ -49,6 +50,19 @@ const SPRINT: JiraSprint = {
   goal: '',
 } as JiraSprint;
 
+function mockWorkingTimeService(): jest.Mocked<WorkingTimeService> {
+  return {
+    getConfig: jest.fn().mockResolvedValue({
+      id: 1, excludeWeekends: false, workDays: [1, 2, 3, 4, 5], hoursPerDay: 8, holidays: [],
+    }),
+    toConfig: jest.fn().mockReturnValue({
+      timezone: 'UTC', workDays: [1, 2, 3, 4, 5], hoursPerDay: 8, holidays: [],
+    }),
+    workingDaysBetween: jest.fn(),
+    workingHoursBetween: jest.fn(),
+  } as unknown as jest.Mocked<WorkingTimeService>;
+}
+
 describe('SprintDetailService', () => {
   let service: SprintDetailService;
   let sprintRepo: jest.Mocked<Repository<JiraSprint>>;
@@ -57,6 +71,7 @@ describe('SprintDetailService', () => {
   let boardConfigRepo: jest.Mocked<Repository<BoardConfig>>;
   let jpdIdeaRepo: jest.Mocked<Repository<JpdIdea>>;
   let roadmapConfigRepo: jest.Mocked<Repository<RoadmapConfig>>;
+  let workingTimeService: jest.Mocked<WorkingTimeService>;
 
   beforeEach(() => {
     sprintRepo = mockRepo<JiraSprint>();
@@ -65,6 +80,7 @@ describe('SprintDetailService', () => {
     boardConfigRepo = mockRepo<BoardConfig>();
     jpdIdeaRepo = mockRepo<JpdIdea>();
     roadmapConfigRepo = mockRepo<RoadmapConfig>();
+    workingTimeService = mockWorkingTimeService();
 
     service = new SprintDetailService(
       sprintRepo,
@@ -74,6 +90,7 @@ describe('SprintDetailService', () => {
       jpdIdeaRepo,
       roadmapConfigRepo,
       mockConfigService(),
+      workingTimeService,
     );
   });
 
@@ -1453,6 +1470,7 @@ describe('SprintDetailService', () => {
       jpdIdeaRepo,
       roadmapConfigRepo,
       mockConfigService('https://myco.atlassian.net'),
+      workingTimeService,
     );
 
     sprintRepo.findOne.mockResolvedValue(SPRINT);

@@ -7,6 +7,7 @@ import {
   JiraVersion,
   BoardConfig,
 } from '../database/entities/index.js';
+import { WorkingTimeService } from './working-time.service.js';
 
 function mockRepo<T extends object>(): jest.Mocked<Repository<T>> {
   return {
@@ -45,6 +46,7 @@ describe('CycleTimeService', () => {
   let changelogRepo: jest.Mocked<Repository<JiraChangelog>>;
   let versionRepo: jest.Mocked<Repository<JiraVersion>>;
   let boardConfigRepo: jest.Mocked<Repository<BoardConfig>>;
+  let workingTimeService: jest.Mocked<WorkingTimeService>;
 
   const start = new Date('2026-01-01T00:00:00Z');
   const end = new Date('2026-03-31T23:59:59Z');
@@ -55,12 +57,24 @@ describe('CycleTimeService', () => {
     versionRepo = mockRepo<JiraVersion>();
     boardConfigRepo = mockRepo<BoardConfig>();
 
+    workingTimeService = {
+      getConfig: jest.fn().mockResolvedValue({
+        id: 1, excludeWeekends: false, workDays: [1, 2, 3, 4, 5], hoursPerDay: 8, holidays: [],
+      }),
+      toConfig: jest.fn().mockReturnValue({
+        timezone: 'UTC', workDays: [1, 2, 3, 4, 5], hoursPerDay: 8, holidays: [],
+      }),
+      workingDaysBetween: jest.fn(),
+      workingHoursBetween: jest.fn(),
+    } as unknown as jest.Mocked<WorkingTimeService>;
+
     service = new CycleTimeService(
       issueRepo,
       changelogRepo,
       versionRepo,
       boardConfigRepo,
       mockConfigService(),
+      workingTimeService,
     );
   });
 
@@ -306,6 +320,7 @@ describe('CycleTimeService', () => {
       versionRepo,
       boardConfigRepo,
       mockConfigService('https://mycompany.atlassian.net'),
+      workingTimeService,
     );
 
     const inProgressAt = new Date('2026-01-05T00:00:00Z');

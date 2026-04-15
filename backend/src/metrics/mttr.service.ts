@@ -139,6 +139,11 @@ export class MttrService {
     // Calculate MTTR for each incident.
     // Start time = first "In Progress" transition (when work began), falling
     // back to issue creation if no such transition exists.
+    //
+    // Note (proposal 0029): MTTR is measured in wall-clock hours, not working
+    // hours, because incident recovery time is an elapsed-time metric — teams
+    // respond to incidents around the clock, not just during business hours.
+    // WorkingTimeService is therefore intentionally NOT used here.
     const issueMap = new Map(priorityFilteredIssues.map((i) => [i.key, i]));
     const recoveryHours: number[] = [];
 
