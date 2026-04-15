@@ -1,7 +1,7 @@
 # 0028 — Jira Field ID and Instance-Specific Value Externalisation
 
 **Date:** 2026-04-15
-**Status:** Draft
+**Status:** Accepted
 **Author:** Architect Agent
 **Related ADRs:** None yet — will be created on acceptance
 

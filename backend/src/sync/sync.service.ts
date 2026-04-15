@@ -124,8 +124,8 @@ export class SyncService {
     const row = await this.jiraFieldConfigRepo.findOne({ where: { id: 1 } });
     if (!row) {
       this.logger.warn(
-        'JiraFieldConfig row not found — using hardcoded defaults. ' +
-        'Run DB migrations to create the jira_field_config table.',
+        'JiraFieldConfig row (id=1) missing — using hardcoded defaults. ' +
+        'This should not happen on a migrated database.',
       );
       return { ...DEFAULT_FIELD_CONFIG };
     }

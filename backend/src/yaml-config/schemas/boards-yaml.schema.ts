@@ -1,6 +1,17 @@
 import { z } from 'zod';
 
 /**
+ * Accepts either a bare string (coerced to a single-element array) or an
+ * explicit string array.  This allows the common YAML idiom of writing a
+ * scalar value for a single link type name without requiring the operator to
+ * wrap it in a list.
+ */
+const stringOrArray = z.union([
+  z.string().min(1).transform((s) => [s]),
+  z.array(z.string().min(1)),
+]);
+
+/**
  * Optional tenant-level Jira field configuration.
  * All fields have defaults that match the previously hardcoded values, so
  * omitting this stanza entirely leaves behaviour unchanged.
@@ -16,10 +27,10 @@ export const JiraStanzaSchema = z.object({
   epicLinkFieldId: z.string().min(1).nullable().optional(),
 
   /** Inward link type name substrings for JPD delivery links. */
-  jpdDeliveryLinkInward: z.array(z.string().min(1)).optional(),
+  jpdDeliveryLinkInward: stringOrArray.optional(),
 
   /** Outward link type name substrings for JPD delivery links. */
-  jpdDeliveryLinkOutward: z.array(z.string().min(1)).optional(),
+  jpdDeliveryLinkOutward: stringOrArray.optional(),
 });
 
 export type JiraStanza = z.infer<typeof JiraStanzaSchema>;

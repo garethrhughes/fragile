@@ -724,8 +724,8 @@ jira:
         'story_points',
       ]);
       expect(call[0].epicLinkFieldId).toBe('customfield_10014');
-      expect(call[0].jpdDeliveryLinkInward).toBe('is delivered by');
-      expect(call[0].jpdDeliveryLinkOutward).toBe('delivers');
+      expect(call[0].jpdDeliveryLinkInward).toEqual(['is delivered by']);
+      expect(call[0].jpdDeliveryLinkOutward).toEqual(['delivers']);
       expect(call[1]).toEqual({ conflictPaths: ['id'] });
     });
 

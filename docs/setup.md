@@ -135,12 +135,14 @@ Add them to `backend/config/boards.yaml` under the `jira:` stanza:
 ```yaml
 jira:
   storyPointsFieldIds:
-    - customfield_10016
-    - customfield_10028
     - story_points
+    - customfield_10016
+    - customfield_10026
+    - customfield_10028
+    - customfield_11031
 ```
 
-If you omit this stanza, Fragile uses all three IDs above by default.
+If you omit this stanza, Fragile uses all five IDs above by default.
 
 ### Epic Link field ID
 
@@ -167,8 +169,9 @@ jira:
 ### JPD delivery link type names
 
 When you use Jira's native **Delivery** panel to link a Jira Software issue to a JPD idea, Jira
-creates an issue link with a specific type name. The default names Fragile expects are
-`"is delivered by"` (inward) and `"delivers"` (outward).
+creates an issue link with a specific type name. The default names Fragile recognises are
+`"is implemented by"` and `"is delivered by"` (inward), and `"implements"` and `"delivers"`
+(outward).
 
 **To confirm your link type names:**
 
@@ -301,17 +304,25 @@ cd backend && npm run build && npm run migration:run
 ```yaml
 jira:
   # List of custom field IDs to try for story points. First non-null value wins.
+  # Default: all five IDs below.
   storyPointsFieldIds:
-    - customfield_10016
-    - customfield_10028
-    - story_points
+    - story_points          # legacy Jira Server / some older cloud projects
+    - customfield_10016     # "Story point estimate" (classic projects)
+    - customfield_10026     # "Story Points" (classic projects, older)
+    - customfield_10028     # "Story Points" (some cloud instances)
+    - customfield_11031     # "Story point estimate" (team-managed / next-gen)
 
   # Legacy Epic Link field ID. Set to null to use only the native parent field.
   epicLinkFieldId: customfield_10014
 
   # JPD delivery link type names. Must match Jira's link type panel exactly.
-  jpdDeliveryLinkInward: "is delivered by"
-  jpdDeliveryLinkOutward: "delivers"
+  # Accepts a bare string or a list. Default: both values shown below.
+  jpdDeliveryLinkInward:
+    - "is implemented by"
+    - "is delivered by"
+  jpdDeliveryLinkOutward:
+    - "implements"
+    - "delivers"
 ```
 
 All fields in the `jira:` stanza are optional. Omitting a field preserves the current database

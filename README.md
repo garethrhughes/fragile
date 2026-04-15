@@ -625,12 +625,13 @@ fields inside the stanza are optional — any field omitted keeps its current da
 jira:
   # Story point field IDs — Fragile tries each in order and uses the first non-null value found.
   # List all field ID variants present in your Jira instance.
-  # Common values: customfield_10016 (next-gen), customfield_10028 (team-managed),
-  #                story_points (classic). Default: all three of the above.
+  # Default: all five IDs below.
   storyPointsFieldIds:
-    - customfield_10016
-    - customfield_10028
-    - story_points
+    - story_points          # legacy Jira Server / some older cloud projects
+    - customfield_10016     # "Story point estimate" (classic projects)
+    - customfield_10026     # "Story Points" (classic projects, older)
+    - customfield_10028     # "Story Points" (some cloud instances)
+    - customfield_11031     # "Story point estimate" (team-managed / next-gen)
 
   # Epic Link custom field — used for legacy epic relationships pre-dating Jira's parent field.
   # Set to null to disable and rely solely on the native parent field.
@@ -638,10 +639,14 @@ jira:
   epicLinkFieldId: customfield_10014
 
   # JPD delivery link type names — must match exactly what Jira shows on the issue link panel.
+  # Accepts either a bare string or a list. Default: both values shown below.
   # Check by opening any delivery-linked issue in your Jira instance.
-  # Default: "is delivered by" / "delivers"
-  jpdDeliveryLinkInward: "is delivered by"
-  jpdDeliveryLinkOutward: "delivers"
+  jpdDeliveryLinkInward:
+    - "is implemented by"
+    - "is delivered by"
+  jpdDeliveryLinkOutward:
+    - "implements"
+    - "delivers"
 ```
 
 These values are stored in the `jira_field_config` table (singleton row, `id = 1`) and loaded once
