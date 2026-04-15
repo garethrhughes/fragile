@@ -132,6 +132,13 @@ export class WorkingTimeService {
       day: '2-digit',
     });
 
+    // Shared formatter for weekday names — constructed once to avoid allocating
+    // a new Intl.DateTimeFormat on every calendar-day iteration.
+    const weekdayFmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      weekday: 'short',
+    });
+
     let totalMs = 0;
 
     // Determine the local calendar date of `start` in the target timezone.
@@ -163,7 +170,7 @@ export class WorkingTimeService {
       if (intervalStart < intervalEnd) {
         // Classify the day using the midpoint to avoid boundary ambiguity.
         const midpointMs = (dayStart.getTime() + nextDayStart.getTime()) / 2;
-        const weekday = getWeekday(new Date(midpointMs), timezone);
+        const weekday = getWeekday(new Date(midpointMs), weekdayFmt);
 
         if (workDays.includes(weekday) && !holidaySet.has(dayStr)) {
           totalMs += intervalEnd.getTime() - intervalStart.getTime();
@@ -181,15 +188,18 @@ export class WorkingTimeService {
 
   /**
    * Returns the number of working days between `start` and `end`.
-   * = workingHoursBetween / hoursPerDay
+   *
+   * `workingHoursBetween()` currently measures the full overlapping duration
+   * within configured working weekdays, so a full working weekday can
+   * contribute up to 24 hours. Convert those hours into day units using a
+   * 24-hour day to keep day-based metrics and thresholds consistent.
    */
   workingDaysBetween(
     start: Date,
     end: Date,
     config: WorkingTimeConfig,
   ): number {
-    if (config.hoursPerDay <= 0) return 0;
-    return this.workingHoursBetween(start, end, config) / config.hoursPerDay;
+    return this.workingHoursBetween(start, end, config) / 24;
   }
 }
 
@@ -280,14 +290,11 @@ function startOfDayInTz(
 
 /**
  * Returns the ISO weekday (0 = Sunday, 1 = Monday, …, 6 = Saturday) for a
- * Date in the given IANA timezone.  Uses `Intl.DateTimeFormat` so it is
- * DST-safe and does not depend on UTC weekday.
+ * Date using the provided `Intl.DateTimeFormat` (must be configured with
+ * `{ weekday: 'short' }` in the desired IANA timezone).  Accepts a
+ * pre-constructed formatter to avoid repeated allocations in tight loops.
  */
-function getWeekday(date: Date, timezone: string): number {
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    weekday: 'short',
-  });
+function getWeekday(date: Date, formatter: Intl.DateTimeFormat): number {
   const dayStr = formatter.format(date); // e.g. "Mon", "Tue", ...
   const map: Record<string, number> = {
     Sun: 0,

@@ -7,8 +7,8 @@ import { Entity, Column, PrimaryColumn } from 'typeorm';
  *
  * Values are populated on application startup from the optional `workingTime:`
  * stanza in `config/boards.yaml`.  If the stanza is absent the defaults here
- * produce calendar-day behaviour (excludeWeekends = true with Mon–Fri work
- * days, 8 h/day, no holidays) which is the most common real-world expectation.
+ * produce working-day behaviour (excludeWeekends = true with Mon–Fri work
+ * days, 8 h/day, no holidays), excluding weekends and counting no holidays.
  */
 @Entity('working_time_config')
 export class WorkingTimeConfigEntity {

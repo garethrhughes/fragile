@@ -8,7 +8,7 @@
  * Algorithm summary:
  *   - workingHoursBetween accumulates the wall-clock hours that fall on
  *     working calendar days (workDays, minus holidays) in the configured tz.
- *   - workingDaysBetween = workingHoursBetween / hoursPerDay.
+ *   - workingDaysBetween = workingHoursBetween / 24.
  *   - A full calendar day contributes 24h; a partial day contributes the
  *     portion that overlaps with [start, end].
  */
@@ -145,18 +145,18 @@ describe('WorkingTimeService — workingDaysBetween', () => {
     expect(service.workingDaysBetween(t, t, MON_FRI_UTC)).toBe(0);
   });
 
-  it('returns 3.0 for full Monday (24h ÷ 8 h/day = 3.0)', () => {
+  it('returns 1.0 for full Monday (24h ÷ 24 = 1.0)', () => {
     // 2026-04-13 is a Monday
     const start = new Date('2026-04-13T00:00:00Z');
     const end = new Date('2026-04-14T00:00:00Z');
-    expect(service.workingDaysBetween(start, end, MON_FRI_UTC)).toBe(3);
+    expect(service.workingDaysBetween(start, end, MON_FRI_UTC)).toBe(1);
   });
 
-  it('returns 3.0 for Fri 00:00 → Mon 00:00 (only Friday: 24h ÷ 8 = 3.0)', () => {
+  it('returns 1.0 for Fri 00:00 → Mon 00:00 (only Friday: 24h ÷ 24 = 1.0)', () => {
     // 2026-04-17 Fri, 2026-04-20 Mon
     const start = new Date('2026-04-17T00:00:00Z');
     const end = new Date('2026-04-20T00:00:00Z');
-    expect(service.workingDaysBetween(start, end, MON_FRI_UTC)).toBe(3);
+    expect(service.workingDaysBetween(start, end, MON_FRI_UTC)).toBe(1);
   });
 
   it('returns 0 for full Saturday', () => {
@@ -165,10 +165,10 @@ describe('WorkingTimeService — workingDaysBetween', () => {
     expect(service.workingDaysBetween(start, end, MON_FRI_UTC)).toBe(0);
   });
 
-  it('returns 1.5 for Fri 18:00 → Mon 06:00 UTC (12h ÷ 8 = 1.5)', () => {
+  it('returns 0.5 for Fri 18:00 → Mon 06:00 UTC (12h ÷ 24 = 0.5)', () => {
     const start = new Date('2026-04-17T18:00:00Z');
     const end = new Date('2026-04-20T06:00:00Z');
-    expect(service.workingDaysBetween(start, end, MON_FRI_UTC)).toBe(1.5);
+    expect(service.workingDaysBetween(start, end, MON_FRI_UTC)).toBe(0.5);
   });
 
   it('returns 0 when Monday is a holiday and span is Mon 00:00 → Tue 00:00', () => {
@@ -181,11 +181,14 @@ describe('WorkingTimeService — workingDaysBetween', () => {
     expect(service.workingDaysBetween(start, end, config)).toBe(0);
   });
 
-  it('returns 0 when hoursPerDay is 0 (guard against divide-by-zero)', () => {
+  it('hoursPerDay no longer affects workingDaysBetween — division is always by 24', () => {
+    // With hoursPerDay: 0, earlier code guarded against divide-by-zero;
+    // the new formula divides by 24 regardless so hoursPerDay is irrelevant here.
     const config: WorkingTimeConfig = { ...MON_FRI_UTC, hoursPerDay: 0 };
     const start = new Date('2026-04-13T00:00:00Z');
     const end = new Date('2026-04-14T00:00:00Z');
-    expect(service.workingDaysBetween(start, end, config)).toBe(0);
+    // Full Monday = 24h / 24 = 1.0 day
+    expect(service.workingDaysBetween(start, end, config)).toBe(1);
   });
 });
 

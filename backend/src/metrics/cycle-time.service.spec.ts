@@ -506,7 +506,6 @@ describe('CycleTimeService', () => {
     const firstDoneAt = new Date('2026-01-05T00:00:00Z');
     const reopenAt = new Date('2026-01-10T00:00:00Z');
     const secondDoneAt = new Date('2026-01-14T00:00:00Z');
-
     issueRepo.find.mockResolvedValue([
       { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', summary: 'Reopened', fixVersion: null },
     ] as unknown as JiraIssue[]);
@@ -532,5 +531,42 @@ describe('CycleTimeService', () => {
     // cycleStart = first In Progress; cycleEnd = last Done in period
     const expectedDays = (secondDoneAt.getTime() - inProgressAt.getTime()) / (1000 * 60 * 60 * 24);
     expect(observations[0].cycleTimeDays).toBeCloseTo(expectedDays, 1);
+  });
+
+  // ---------------------------------------------------------------------------
+  // excludeWeekends = true: delegates to WorkingTimeService
+  // ---------------------------------------------------------------------------
+
+  it('uses workingDaysBetween when excludeWeekends is true', async () => {
+    // Override the mock to enable excludeWeekends
+    workingTimeService.getConfig.mockResolvedValue({
+      id: 1, excludeWeekends: true, workDays: [1, 2, 3, 4, 5], hoursPerDay: 8, holidays: [],
+    });
+    workingTimeService.workingDaysBetween.mockReturnValue(2.5);
+
+    const inProgressAt = new Date('2026-01-09T00:00:00Z'); // Friday
+    const doneAt = new Date('2026-01-12T00:00:00Z');       // Monday
+
+    issueRepo.find.mockResolvedValue([
+      { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', summary: 'Weekend span', fixVersion: null },
+    ] as unknown as JiraIssue[]);
+    versionRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(
+      buildQb([
+        { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: inProgressAt },
+        { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: doneAt },
+      ]),
+    );
+
+    const result = await service.calculate('ACC', start, end, '2026-Q1');
+
+    // workingDaysBetween was called with the correct start/end dates
+    expect(workingTimeService.workingDaysBetween).toHaveBeenCalledWith(
+      inProgressAt,
+      doneAt,
+      expect.anything(),
+    );
+    // The returned value from workingDaysBetween is used as cycleTimeDays
+    expect(result.p50Days).toBe(2.5);
   });
 });

@@ -1524,4 +1524,77 @@ describe('SprintDetailService', () => {
 
     expect(result.issues[0].jiraUrl).toBe('https://myco.atlassian.net/browse/ACC-1');
   });
+
+  // ---------------------------------------------------------------------------
+  // excludeWeekends = true: delegates to WorkingTimeService for leadTimeDays
+  // ---------------------------------------------------------------------------
+
+  it('uses workingDaysBetween for per-issue leadTimeDays when excludeWeekends is true', async () => {
+    workingTimeService.getConfig.mockResolvedValue({
+      id: 1, excludeWeekends: true, workDays: [1, 2, 3, 4, 5], hoursPerDay: 8, holidays: [],
+    });
+    workingTimeService.workingDaysBetween.mockReturnValue(1);
+
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue({
+      boardId: 'ACC',
+      boardType: 'scrum',
+      doneStatusNames: ['Done'],
+      failureIssueTypes: [],
+      failureLabels: [],
+      incidentIssueTypes: [],
+      incidentLabels: [],
+      cancelledStatusNames: ['Cancelled'],
+    } as unknown as BoardConfig);
+
+    const inProgressAt = new Date('2026-01-09T00:00:00Z'); // Friday
+    const doneAt = new Date('2026-01-12T00:00:00Z');       // Monday
+
+    issueRepo.find.mockResolvedValue([
+      {
+        key: 'ACC-1',
+        boardId: 'ACC',
+        issueType: 'Story',
+        summary: 'Weekend span',
+        status: 'Done',
+        sprintId: 'sprint-1',
+        epicKey: null,
+        labels: [],
+        points: null,
+        createdAt: new Date('2026-01-05T00:00:00Z'),
+      } as unknown as JiraIssue,
+    ]);
+    roadmapConfigRepo.find.mockResolvedValue([]);
+
+    let qbCallCount = 0;
+    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
+      qbCallCount++;
+      if (qbCallCount === 1) {
+        return makeQb([
+          {
+            issueKey: 'ACC-1',
+            field: 'Sprint',
+            toValue: 'Sprint 1',
+            fromValue: null,
+            changedAt: new Date('2026-01-07T00:00:00Z'),
+          },
+        ]);
+      }
+      return makeQb([
+        { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: inProgressAt },
+        { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: doneAt },
+      ]);
+    });
+
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    // workingDaysBetween was called with the correct start/end dates
+    expect(workingTimeService.workingDaysBetween).toHaveBeenCalledWith(
+      inProgressAt,
+      doneAt,
+      expect.anything(),
+    );
+    // The returned value from workingDaysBetween is reflected in leadTimeDays
+    expect(result.issues[0].leadTimeDays).toBe(1);
+  });
 });
