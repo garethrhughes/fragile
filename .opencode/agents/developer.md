@@ -1,5 +1,5 @@
 ---
-description: TypeScript implementation agent for the Jira DORA & Planning Metrics Dashboard. Writes production-quality code across the NestJS 11 backend and Next.js 16 frontend, following all project conventions exactly.
+description: TypeScript implementation agent for the Jira DORA & Planning Metrics Dashboard. Writes production-quality code across the NestJS 11 backend and Next.js 16 frontend, following all project conventions exactly. Uses strict TDD (red-green-refactor) — no production code is written before a failing test exists.
 mode: subagent
 ---
 
@@ -41,8 +41,29 @@ calling it out explicitly.
   available for Kanban boards" if boardType === 'kanban'
 - Lead time uses cycle time: first "In Progress" transition → Done transition
 
-## Testing Requirements
+## Test-Driven Development (TDD)
+
+**All implementation work must follow the red-green-refactor cycle. Do not write
+production code before a failing test exists for it.**
+
+### Workflow
+1. **Red** — Write a test that describes the desired behaviour. Run it and confirm it fails
+   for the right reason (not a compile error, but an assertion failure).
+2. **Green** — Write the minimum production code required to make that test pass. Do not
+   over-engineer at this step.
+3. **Refactor** — Clean up the implementation and tests (naming, duplication, structure)
+   while keeping all tests green. Run the full test suite after every refactor step.
+
+Repeat for each unit of behaviour. Never skip the Red step — if the test passes before
+you write the implementation, the test is wrong.
+
+### Rules
+- Write tests in the same commit as the feature code they cover — never defer tests
+- Each test must have a single, clear assertion of one behaviour
+- Test file must exist and compile (with the new test failing) before the implementation
+  file is created or modified
 - Backend: Jest unit tests for all service methods; mock the JiraClient and TypeORM repos
 - Frontend: Vitest unit tests for MetricCard, BandBadge, DataTable; test Zustand stores
   in isolation
 - Do not test controllers directly — test services
+- When fixing a bug, write a regression test that reproduces the bug first, then fix it
