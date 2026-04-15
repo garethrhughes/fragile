@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { apiFetch, ApiError } from './api';
+import { apiFetch, ApiError, getDoraAggregate, getDoraTrend } from './api';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -43,5 +43,55 @@ describe('apiFetch', () => {
       expect(err).toBeInstanceOf(ApiError);
       expect((err as ApiError).status).toBe(404);
     }
+  });
+
+  it('passes next.revalidate option through when provided', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({}),
+    });
+
+    await apiFetch('/api/test', { next: { revalidate: 60 } } as RequestInit & { next?: { revalidate?: number } });
+
+    const [, options] = mockFetch.mock.calls[0] as [string, RequestInit & { next?: { revalidate?: number } }];
+    expect(options.next?.revalidate).toBe(60);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DORA endpoint caching options
+// ---------------------------------------------------------------------------
+
+describe('getDoraAggregate', () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({}),
+    });
+  });
+
+  it('passes next.revalidate: 60 to fetch for cache-friendly reads', async () => {
+    await getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+
+    const [, options] = mockFetch.mock.calls[0] as [string, RequestInit & { next?: { revalidate?: number } }];
+    expect(options.next?.revalidate).toBe(60);
+  });
+});
+
+describe('getDoraTrend', () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([]),
+    });
+  });
+
+  it('passes next.revalidate: 60 to fetch for cache-friendly reads', async () => {
+    await getDoraTrend({ boardId: 'ACC', mode: 'quarters', limit: 8 });
+
+    const [, options] = mockFetch.mock.calls[0] as [string, RequestInit & { next?: { revalidate?: number } }];
+    expect(options.next?.revalidate).toBe(60);
   });
 });

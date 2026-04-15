@@ -35,6 +35,7 @@ import {
 } from './dora-bands.js';
 import { percentile, round2 } from './statistics.js';
 import { listRecentQuarters, quarterToDates } from './period-utils.js';
+import { DoraCacheService } from './dora-cache.service.js';
 
 export interface DoraMetricsResult {
   boardId: string;
@@ -63,6 +64,7 @@ export class MetricsService {
     @InjectRepository(BoardConfig)
     private readonly boardConfigRepo: Repository<BoardConfig>,
     private readonly configService: ConfigService,
+    private readonly doraCache: DoraCacheService,
   ) {
     this.timezone = this.configService.get<string>('TIMEZONE', 'UTC');
   }
@@ -165,6 +167,25 @@ export class MetricsService {
   // ---------------------------------------------------------------------------
 
   async getDoraAggregate(query: DoraAggregateQueryDto): Promise<OrgDoraResult> {
+    // ---------------------------------------------------------------------------
+    // Cache look-up — avoid re-running expensive multi-table DB queries on every
+    // HTTP request.  TTL is 60 s; this is fine because DORA metrics are computed
+    // from historical Jira data that only changes during a background sync.
+    // ---------------------------------------------------------------------------
+    const cacheKey = DoraCacheService.buildKey(
+      {
+        boardId: query.boardId,
+        quarter: query.quarter,
+        sprintId: query.sprintId,
+        period: query.period,
+      },
+      'aggregate',
+    );
+    const cached = this.doraCache.get<OrgDoraResult>(cacheKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+
     let { startDate, endDate } = this.resolvePeriod(query);
     const boardIds = await this.resolveBoardIds(query.boardId);
 
@@ -298,7 +319,7 @@ export class MetricsService {
       },
     );
 
-    return {
+    const result: OrgDoraResult = {
       period: {
         start: startDate.toISOString(),
         end: endDate.toISOString(),
@@ -337,6 +358,10 @@ export class MetricsService {
       anyBoardUsingDefaultConfig,
       boardsUsingDefaultConfig,
     };
+
+    // Store in cache before returning
+    this.doraCache.set(cacheKey, result);
+    return result;
   }
 
   // ---------------------------------------------------------------------------
@@ -344,6 +369,23 @@ export class MetricsService {
   // ---------------------------------------------------------------------------
 
   async getDoraTrend(query: DoraTrendQueryDto): Promise<TrendResponse> {
+    // Cache look-up — getDoraTrend is the most expensive endpoint because it
+    // calls getDoraAggregate up to `limit` times (default 8).  Each of those
+    // aggregate calls fires 4-5 DB queries per board.  Cache the full trend
+    // response so repeated page loads don't re-run the full fan-out.
+    const trendCacheKey = DoraCacheService.buildKey(
+      {
+        boardId: query.boardId,
+        mode: query.mode,
+        limit: query.limit,
+      },
+      'trend',
+    );
+    const cachedTrend = this.doraCache.get<TrendResponse>(trendCacheKey);
+    if (cachedTrend !== undefined) {
+      return cachedTrend;
+    }
+
     const limit = query.limit ?? 8;
     const mode = query.mode ?? 'quarters';
 
@@ -404,8 +446,10 @@ export class MetricsService {
         }),
       );
 
-      // Return oldest → newest
-      return points.reverse();
+      // Return oldest → newest; cache the full sprint trend
+      const sprintTrend = points.reverse();
+      this.doraCache.set(trendCacheKey, sprintTrend);
+      return sprintTrend;
     }
 
     // Quarter mode (default)
@@ -436,8 +480,10 @@ export class MetricsService {
       }),
     );
 
-    // Return oldest → newest (quarters is newest-first, so reverse)
-    return points.reverse();
+    // Return oldest → newest (quarters is newest-first, so reverse); cache result
+    const quarterTrend = points.reverse();
+    this.doraCache.set(trendCacheKey, quarterTrend);
+    return quarterTrend;
   }
 
   // ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import { LeadTimeService } from './lead-time.service.js';
 import { CfrService } from './cfr.service.js';
 import { MttrService } from './mttr.service.js';
 import { CycleTimeService } from './cycle-time.service.js';
+import { DoraCacheService } from './dora-cache.service.js';
 import { JiraSprint, BoardConfig } from '../database/entities/index.js';
 
 // ---------------------------------------------------------------------------
@@ -115,6 +116,7 @@ describe('MetricsService', () => {
   let cycleTimeService: jest.Mocked<CycleTimeService>;
   let sprintRepo: jest.Mocked<Repository<JiraSprint>>;
   let boardConfigRepo: jest.Mocked<Repository<BoardConfig>>;
+  let doraCache: DoraCacheService;
 
   beforeEach(() => {
     dfService = buildDeploymentFrequencyService();
@@ -124,6 +126,7 @@ describe('MetricsService', () => {
     cycleTimeService = buildCycleTimeService();
     sprintRepo = mockRepo<JiraSprint>();
     boardConfigRepo = mockRepo<BoardConfig>();
+    doraCache = new DoraCacheService();
 
     service = new MetricsService(
       dfService,
@@ -134,6 +137,7 @@ describe('MetricsService', () => {
       sprintRepo,
       boardConfigRepo,
       mockConfigService(),
+      doraCache,
     );
   });
 
@@ -563,6 +567,79 @@ describe('MetricsService', () => {
       const results = await service.getDora({ boardId: 'ACC', period: 'not-a-date' });
       const endMs = new Date(results[0].period.end).getTime();
       expect(endMs).toBeGreaterThanOrEqual(before - 1000);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // getDoraAggregate — caching behaviour
+  // -------------------------------------------------------------------------
+
+  describe('getDoraAggregate (caching)', () => {
+    it('returns the same result on second call without hitting DB services again', async () => {
+      // First call — services invoked
+      const result1 = await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+      const firstCallCount = dfService.calculate.mock.calls.length;
+
+      // Second call — should be served from cache
+      const result2 = await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+
+      expect(dfService.calculate.mock.calls.length).toBe(firstCallCount); // no new DB calls
+      expect(result2.orgDeploymentFrequency.totalDeployments).toBe(
+        result1.orgDeploymentFrequency.totalDeployments,
+      );
+    });
+
+    it('calls DB services again after cache is manually cleared', async () => {
+      await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+      const countAfterFirst = dfService.calculate.mock.calls.length;
+
+      doraCache.clear();
+
+      await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+      expect(dfService.calculate.mock.calls.length).toBeGreaterThan(countAfterFirst);
+    });
+
+    it('does not share cache entries between different quarters', async () => {
+      await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+      const countAfterFirst = dfService.calculate.mock.calls.length;
+
+      await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q2' });
+      expect(dfService.calculate.mock.calls.length).toBeGreaterThan(countAfterFirst);
+    });
+
+    it('does not share cache entries between different boardId values', async () => {
+      await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+      const countAfterFirst = dfService.calculate.mock.calls.length;
+
+      await service.getDoraAggregate({ boardId: 'PLAT', quarter: '2026-Q1' });
+      expect(dfService.calculate.mock.calls.length).toBeGreaterThan(countAfterFirst);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // getDoraTrend — caching behaviour
+  // -------------------------------------------------------------------------
+
+  describe('getDoraTrend (caching)', () => {
+    it('returns the same result on second call without re-invoking aggregate', async () => {
+      const result1 = await service.getDoraTrend({ boardId: 'ACC', limit: 2 });
+      const countAfterFirst = dfService.calculate.mock.calls.length;
+
+      const result2 = await service.getDoraTrend({ boardId: 'ACC', limit: 2 });
+
+      // No additional DB calls for the second trend fetch
+      expect(dfService.calculate.mock.calls.length).toBe(countAfterFirst);
+      expect(result2).toHaveLength(result1.length);
+    });
+
+    it('re-fetches after cache is cleared', async () => {
+      await service.getDoraTrend({ boardId: 'ACC', limit: 2 });
+      const countAfterFirst = dfService.calculate.mock.calls.length;
+
+      doraCache.clear();
+
+      await service.getDoraTrend({ boardId: 'ACC', limit: 2 });
+      expect(dfService.calculate.mock.calls.length).toBeGreaterThan(countAfterFirst);
     });
   });
 });

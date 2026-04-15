@@ -673,6 +673,10 @@ export function getDoraAggregate(params: DoraAggregateParams): Promise<OrgDoraRe
       sprintId: params.sprintId,
       period: params.period,
     })}`,
+    // next.revalidate: 60 — allow Next.js fetch cache to serve this
+    // response for up to 60 s before revalidating.  DORA metrics are
+    // computed from historical Jira data and are safe to cache briefly.
+    { next: { revalidate: 60 } } as RequestInit,
   )
 }
 
@@ -683,6 +687,10 @@ export function getDoraTrend(params: DoraTrendParams): Promise<TrendResponse> {
       mode: params.mode,
       limit: params.limit !== undefined ? String(params.limit) : undefined,
     })}`,
+    // next.revalidate: 60 — allow Next.js fetch cache to serve this
+    // response for up to 60 s before revalidating.  Trend data is derived
+    // from historical Jira records and is safe to cache briefly.
+    { next: { revalidate: 60 } } as RequestInit,
   )
 }
 

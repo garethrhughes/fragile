@@ -1,6 +1,8 @@
-import { Entity, Column, PrimaryColumn } from 'typeorm';
+import { Entity, Column, PrimaryColumn, Index } from 'typeorm';
 
 @Entity('jira_sprints')
+@Index(['boardId'])
+@Index(['boardId', 'state'])
 export class JiraSprint {
   @PrimaryColumn()
   id!: string;

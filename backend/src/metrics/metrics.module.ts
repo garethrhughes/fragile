@@ -10,6 +10,7 @@ import { MttrService } from './mttr.service.js';
 import { CycleTimeService } from './cycle-time.service.js';
 import { CycleTimeController } from './cycle-time.controller.js';
 import { WorkingTimeService } from './working-time.service.js';
+import { DoraCacheService } from './dora-cache.service.js';
 import {
   JiraIssue,
   JiraChangelog,
@@ -42,6 +43,7 @@ import {
     MttrService,
     CycleTimeService,
     WorkingTimeService,
+    DoraCacheService,
   ],
   exports: [MetricsService, WorkingTimeService],
 })

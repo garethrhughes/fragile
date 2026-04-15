@@ -1,6 +1,8 @@
-import { Entity, Column, PrimaryColumn } from 'typeorm';
+import { Entity, Column, PrimaryColumn, Index } from 'typeorm';
 
 @Entity('jira_versions')
+@Index(['projectKey'])
+@Index(['projectKey', 'releaseDate'])
 export class JiraVersion {
   @PrimaryColumn()
   id!: string;

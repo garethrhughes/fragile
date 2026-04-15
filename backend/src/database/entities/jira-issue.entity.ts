@@ -3,9 +3,13 @@ import {
   Column,
   PrimaryColumn,
   UpdateDateColumn,
+  Index,
 } from 'typeorm';
 
 @Entity('jira_issues')
+@Index(['boardId'])
+@Index(['issueType'])
+@Index(['status'])
 export class JiraIssue {
   @PrimaryColumn()
   key!: string;
