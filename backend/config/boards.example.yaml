@@ -97,6 +97,27 @@
 #     a list. Used symmetrically with jpdDeliveryLinkInward.
 #     Default: ["implements", "delivers"]
 
+# Field reference — workingTime: stanza (optional, top-level):
+#
+#   excludeWeekends (optional)
+#     When true, weekend days (per workDays) are excluded from cycle-time and
+#     lead-time calculations. Default: true
+#
+#   workDays (optional)
+#     ISO weekday numbers that count as working days.
+#     0 = Sunday, 1 = Monday, …, 6 = Saturday.
+#     Default: [1, 2, 3, 4, 5] (Monday–Friday)
+#
+#   hoursPerDay (optional)
+#     Number of working hours in a full working day. Used as the divisor when
+#     converting working-hours to working-days.
+#     Default: 8
+#
+#   holidays (optional)
+#     List of public holiday dates in YYYY-MM-DD format (tenant's local timezone).
+#     These dates are excluded from working-time calculations regardless of workDays.
+#     Default: []
+
 boards:
   # --- Scrum board example ---
   - boardId: ACC
@@ -190,4 +211,32 @@ boards:
 #   jpdDeliveryLinkOutward:
 #     - "implements"
 #     - "delivers"
+
+# --- Optional: Working-time configuration ---
+# Uncomment and edit this stanza to control how cycle-time and lead-time
+# durations are computed.  All fields are optional; omit any field to keep
+# its current database value.  If this stanza is absent entirely the defaults
+# (Mon–Fri, 8 h/day, no holidays, excludeWeekends=true) are used.
+#
+# workingTime:
+#   # Set to false to use calendar days (include weekends) in duration metrics.
+#   excludeWeekends: true
+#
+#   # Weekdays that count as working days.
+#   # 0 = Sunday, 1 = Monday, …, 6 = Saturday.
+#   # Override for regions with a different weekend (e.g. Sun–Thu work weeks).
+#   workDays:
+#     - 1  # Monday
+#     - 2  # Tuesday
+#     - 3  # Wednesday
+#     - 4  # Thursday
+#     - 5  # Friday
+#
+#   # Number of working hours in a standard day.
+#   hoursPerDay: 8
+#
+#   # Public holidays to exclude (YYYY-MM-DD, tenant local timezone).
+#   holidays:
+#     - "2026-01-01"  # New Year's Day
+#     - "2026-04-25"  # ANZAC Day (example)
 

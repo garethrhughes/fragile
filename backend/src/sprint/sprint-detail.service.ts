@@ -16,6 +16,7 @@ import {
   RoadmapConfig,
 } from '../database/entities/index.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
+import { WorkingTimeService } from '../metrics/working-time.service.js';
 
 // ---------------------------------------------------------------------------
 // Response interfaces (exported for use by the controller and frontend types)
@@ -181,6 +182,7 @@ export class SprintDetailService {
     @InjectRepository(RoadmapConfig)
     private readonly roadmapConfigRepo: Repository<RoadmapConfig>,
     private readonly configService: ConfigService,
+    private readonly workingTimeService: WorkingTimeService,
   ) {
     const baseUrl = this.configService.get<string>('JIRA_BASE_URL', '');
     if (!baseUrl) {
@@ -430,6 +432,10 @@ export class SprintDetailService {
     // -----------------------------------------------------------------------
     const issues: SprintDetailIssue[] = [];
 
+    // Load working-time config once for the whole batch.
+    const wtEntity = await this.workingTimeService.getConfig();
+    const wtConfig = this.workingTimeService.toConfig(wtEntity);
+
     for (const issueKey of finalIssueKeys) {
       const issue = issueByKey.get(issueKey);
       if (!issue) continue;
@@ -526,9 +532,9 @@ export class SprintDetailService {
 
       let leadTimeDays: number | null = null;
       if (doneTransition) {
-        const rawDays =
-          (doneTransition.changedAt.getTime() - startTime.getTime()) /
-          86_400_000;
+        const rawDays = wtEntity.excludeWeekends
+          ? this.workingTimeService.workingDaysBetween(startTime, doneTransition.changedAt, wtConfig)
+          : (doneTransition.changedAt.getTime() - startTime.getTime()) / 86_400_000;
         // Clamp negative values (data anomalies) to null
         leadTimeDays =
           rawDays >= 0

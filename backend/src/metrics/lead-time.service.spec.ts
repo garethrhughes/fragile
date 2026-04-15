@@ -6,6 +6,7 @@ import {
   JiraVersion,
   BoardConfig,
 } from '../database/entities/index.js';
+import { WorkingTimeService } from './working-time.service.js';
 
 function mockRepo<T extends object>(): jest.Mocked<Repository<T>> {
   return {
@@ -26,6 +27,7 @@ describe('LeadTimeService', () => {
   let changelogRepo: jest.Mocked<Repository<JiraChangelog>>;
   let versionRepo: jest.Mocked<Repository<JiraVersion>>;
   let boardConfigRepo: jest.Mocked<Repository<BoardConfig>>;
+  let workingTimeService: jest.Mocked<WorkingTimeService>;
 
   beforeEach(() => {
     issueRepo = mockRepo<JiraIssue>();
@@ -33,11 +35,23 @@ describe('LeadTimeService', () => {
     versionRepo = mockRepo<JiraVersion>();
     boardConfigRepo = mockRepo<BoardConfig>();
 
+    workingTimeService = {
+      getConfig: jest.fn().mockResolvedValue({
+        id: 1, excludeWeekends: false, workDays: [1, 2, 3, 4, 5], hoursPerDay: 8, holidays: [],
+      }),
+      toConfig: jest.fn().mockReturnValue({
+        timezone: 'UTC', workDays: [1, 2, 3, 4, 5], hoursPerDay: 8, holidays: [],
+      }),
+      workingDaysBetween: jest.fn(),
+      workingHoursBetween: jest.fn(),
+    } as unknown as jest.Mocked<WorkingTimeService>;
+
     service = new LeadTimeService(
       issueRepo,
       changelogRepo,
       versionRepo,
       boardConfigRepo,
+      workingTimeService,
     );
   });
 
@@ -125,7 +139,6 @@ describe('LeadTimeService', () => {
   it('should calculate p95 lead time', async () => {
     const start = new Date('2025-01-01');
     const end = new Date('2025-06-30');
-
     // Create 20 issues with varying lead times
     const issues = Array.from({ length: 20 }, (_, i) => ({
       key: `ACC-${i + 1}`,
@@ -167,5 +180,48 @@ describe('LeadTimeService', () => {
 
     expect(result.sampleSize).toBe(20);
     expect(result.p95Days).toBeGreaterThan(result.medianDays);
+  });
+
+  // ---------------------------------------------------------------------------
+  // excludeWeekends = true: delegates to WorkingTimeService
+  // ---------------------------------------------------------------------------
+
+  it('uses workingDaysBetween when excludeWeekends is true', async () => {
+    workingTimeService.getConfig.mockResolvedValue({
+      id: 1, excludeWeekends: true, workDays: [1, 2, 3, 4, 5], hoursPerDay: 8, holidays: [],
+    });
+    workingTimeService.workingDaysBetween.mockReturnValue(1.5);
+
+    const inProgress = new Date('2025-01-10T09:00:00Z'); // Friday
+    const done = new Date('2025-01-13T09:00:00Z');       // Monday
+    const start = new Date('2025-01-01');
+    const end = new Date('2025-03-31');
+
+    issueRepo.find.mockResolvedValue([
+      { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', createdAt: inProgress, fixVersion: null, labels: [] },
+    ] as unknown as JiraIssue[]);
+
+    const qb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: inProgress },
+        { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: done },
+      ]),
+    };
+    changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(qb);
+    versionRepo.find.mockResolvedValue([]);
+
+    const result = await service.calculate('ACC', start, end);
+
+    // workingDaysBetween was called with the correct start/end dates
+    expect(workingTimeService.workingDaysBetween).toHaveBeenCalledWith(
+      inProgress,
+      done,
+      expect.anything(),
+    );
+    // The returned value from workingDaysBetween is used as medianDays
+    expect(result.medianDays).toBe(1.5);
   });
 });

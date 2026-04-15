@@ -2,7 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { YamlConfigService } from './yaml-config.service.js';
 import type { FileReader } from './yaml-config.service.js';
-import { BoardConfig, RoadmapConfig, JiraFieldConfig } from '../database/entities/index.js';
+import { BoardConfig, RoadmapConfig, JiraFieldConfig, WorkingTimeConfigEntity } from '../database/entities/index.js';
 
 /** Minimal ConfigService stub — returns undefined for all keys (uses service defaults). */
 const stubConfigService = {
@@ -29,6 +29,12 @@ function mockJiraFieldConfigRepo(): jest.Mocked<Pick<Repository<JiraFieldConfig>
   return {
     upsert: jest.fn().mockResolvedValue({ identifiers: [], generatedMaps: [], raw: [] }),
   } as unknown as jest.Mocked<Pick<Repository<JiraFieldConfig>, 'upsert'>>;
+}
+
+function mockWorkingTimeConfigRepo(): jest.Mocked<Pick<Repository<WorkingTimeConfigEntity>, 'upsert'>> {
+  return {
+    upsert: jest.fn().mockResolvedValue({ identifiers: [], generatedMaps: [], raw: [] }),
+  } as unknown as jest.Mocked<Pick<Repository<WorkingTimeConfigEntity>, 'upsert'>>;
 }
 
 /**
@@ -59,11 +65,13 @@ function buildService(
   roadmapRepo: unknown,
   fileReader: FileReader = noFilesReader,
   jiraFieldConfigRepo: unknown = mockJiraFieldConfigRepo(),
+  workingTimeConfigRepo: unknown = mockWorkingTimeConfigRepo(),
 ): YamlConfigService {
   return new YamlConfigService(
     boardRepo as Repository<BoardConfig>,
     roadmapRepo as Repository<RoadmapConfig>,
     jiraFieldConfigRepo as Repository<JiraFieldConfig>,
+    workingTimeConfigRepo as Repository<WorkingTimeConfigEntity>,
     stubConfigService,
   ).withFileReader(fileReader);
 }
@@ -823,6 +831,179 @@ jira:
       await service.onApplicationBootstrap();
 
       expect(jiraFieldConfigRepo.upsert).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // workingTime: stanza — WorkingTimeConfig upsert behaviour
+  // -------------------------------------------------------------------------
+
+  describe('workingTime: stanza in boards.yaml', () => {
+    let workingTimeConfigRepo: jest.Mocked<Pick<Repository<WorkingTimeConfigEntity>, 'upsert'>>;
+
+    beforeEach(() => {
+      workingTimeConfigRepo = mockWorkingTimeConfigRepo();
+    });
+
+    const boardsWithWorkingTimeStanza = `
+boards:
+  - boardId: ACC
+    boardType: scrum
+
+workingTime:
+  excludeWeekends: true
+  workDays: [1, 2, 3, 4, 5]
+  hoursPerDay: 8
+  holidays:
+    - "2026-12-25"
+    - "2026-01-01"
+`;
+
+    it('upserts WorkingTimeConfig when workingTime: stanza is present', async () => {
+      const service = buildService(
+        boardRepo,
+        roadmapRepo,
+        makeFileReader({ 'boards.yaml': boardsWithWorkingTimeStanza }),
+        jiraFieldConfigRepo,
+        workingTimeConfigRepo,
+      );
+
+      await service.onApplicationBootstrap();
+
+      expect(workingTimeConfigRepo.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it('upserts singleton row id=1 with all provided fields', async () => {
+      const service = buildService(
+        boardRepo,
+        roadmapRepo,
+        makeFileReader({ 'boards.yaml': boardsWithWorkingTimeStanza }),
+        jiraFieldConfigRepo,
+        workingTimeConfigRepo,
+      );
+
+      await service.onApplicationBootstrap();
+
+      const call = (workingTimeConfigRepo.upsert as jest.Mock).mock.calls[0] as [
+        Partial<WorkingTimeConfigEntity>,
+        { conflictPaths: string[] },
+      ];
+      expect(call[0].id).toBe(1);
+      expect(call[0].excludeWeekends).toBe(true);
+      expect(call[0].workDays).toEqual([1, 2, 3, 4, 5]);
+      expect(call[0].hoursPerDay).toBe(8);
+      expect(call[0].holidays).toEqual(['2026-12-25', '2026-01-01']);
+      expect(call[1]).toEqual({ conflictPaths: ['id'] });
+    });
+
+    it('sets workingTimeConfigApplied to true in seed status when stanza is present', async () => {
+      const service = buildService(
+        boardRepo,
+        roadmapRepo,
+        makeFileReader({ 'boards.yaml': boardsWithWorkingTimeStanza }),
+        jiraFieldConfigRepo,
+        workingTimeConfigRepo,
+      );
+
+      await service.onApplicationBootstrap();
+
+      expect(service.getLastSeedStatus().workingTimeConfigApplied).toBe(true);
+    });
+
+    it('does not upsert WorkingTimeConfig when workingTime: stanza is absent', async () => {
+      const service = buildService(
+        boardRepo,
+        roadmapRepo,
+        makeFileReader({
+          'boards.yaml': `
+boards:
+  - boardId: ACC
+    boardType: scrum
+`,
+        }),
+        jiraFieldConfigRepo,
+        workingTimeConfigRepo,
+      );
+
+      await service.onApplicationBootstrap();
+
+      expect(workingTimeConfigRepo.upsert).not.toHaveBeenCalled();
+    });
+
+    it('leaves workingTimeConfigApplied false when workingTime: stanza is absent', async () => {
+      const service = buildService(
+        boardRepo,
+        roadmapRepo,
+        makeFileReader({
+          'boards.yaml': `
+boards:
+  - boardId: ACC
+    boardType: scrum
+`,
+        }),
+        jiraFieldConfigRepo,
+        workingTimeConfigRepo,
+      );
+
+      await service.onApplicationBootstrap();
+
+      expect(service.getLastSeedStatus().workingTimeConfigApplied).toBe(false);
+    });
+
+    it('upserts partial workingTime: stanza with only explicitly set fields', async () => {
+      // Only excludeWeekends is set; workDays, hoursPerDay, holidays are absent.
+      const service = buildService(
+        boardRepo,
+        roadmapRepo,
+        makeFileReader({
+          'boards.yaml': `
+boards:
+  - boardId: ACC
+    boardType: scrum
+
+workingTime:
+  excludeWeekends: false
+`,
+        }),
+        jiraFieldConfigRepo,
+        workingTimeConfigRepo,
+      );
+
+      await service.onApplicationBootstrap();
+
+      const call = (workingTimeConfigRepo.upsert as jest.Mock).mock.calls[0] as [
+        Partial<WorkingTimeConfigEntity>,
+        unknown,
+      ];
+      expect(call[0].excludeWeekends).toBe(false);
+      // Absent fields must NOT be present in the payload
+      expect('workDays' in call[0]).toBe(false);
+      expect('hoursPerDay' in call[0]).toBe(false);
+      expect('holidays' in call[0]).toBe(false);
+    });
+
+    it('throws on invalid holiday date format (not YYYY-MM-DD)', async () => {
+      const service = buildService(
+        boardRepo,
+        roadmapRepo,
+        makeFileReader({
+          'boards.yaml': `
+boards:
+  - boardId: ACC
+    boardType: scrum
+
+workingTime:
+  holidays:
+    - "25/12/2026"
+`,
+        }),
+        jiraFieldConfigRepo,
+        workingTimeConfigRepo,
+      );
+
+      await expect(service.onApplicationBootstrap()).rejects.toThrow(
+        /boards.yaml validation failed/,
+      );
     });
   });
 });

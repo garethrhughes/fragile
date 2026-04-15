@@ -10,6 +10,7 @@ import {
 import { classifyLeadTime, type DoraBand } from './dora-bands.js';
 import { percentile, round2 } from './statistics.js';
 import { isWorkItem } from './issue-type-filters.js';
+import { WorkingTimeService } from './working-time.service.js';
 
 export interface LeadTimeResult {
   boardId: string;
@@ -34,6 +35,7 @@ export class LeadTimeService {
     private readonly versionRepo: Repository<JiraVersion>,
     @InjectRepository(BoardConfig)
     private readonly boardConfigRepo: Repository<BoardConfig>,
+    private readonly workingTimeService: WorkingTimeService,
   ) {}
 
   /**
@@ -127,6 +129,10 @@ export class LeadTimeService {
     const leadTimeDays: number[] = [];
     let anomalyCount = 0;
 
+    // Load working-time config once for the whole batch.
+    const wtEntity = await this.workingTimeService.getConfig();
+    const wtConfig = this.workingTimeService.toConfig(wtEntity);
+
     for (const issue of issues) {
       const issueLogs = changelogsByIssue.get(issue.key) ?? [];
 
@@ -177,8 +183,9 @@ export class LeadTimeService {
       }
       const startTime: Date = inProgressTransition.changedAt;
 
-      const days =
-        (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60 * 24);
+      const days = wtEntity.excludeWeekends
+        ? this.workingTimeService.workingDaysBetween(startTime, endTime, wtConfig)
+        : (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60 * 24);
       if (days < 0) {
         this.logger.warn(
           `Negative lead time for ${issue.key}: ${days.toFixed(2)} days — clamping to 0`,

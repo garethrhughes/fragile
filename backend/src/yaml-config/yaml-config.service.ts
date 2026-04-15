@@ -5,7 +5,7 @@ import { Repository } from 'typeorm';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as yaml from 'js-yaml';
-import { BoardConfig, RoadmapConfig, JiraFieldConfig } from '../database/entities/index.js';
+import { BoardConfig, RoadmapConfig, JiraFieldConfig, WorkingTimeConfigEntity } from '../database/entities/index.js';
 import { BoardsYamlFileSchema } from './schemas/boards-yaml.schema.js';
 import { RoadmapYamlFileSchema } from './schemas/roadmap-yaml.schema.js';
 
@@ -15,6 +15,7 @@ export interface YamlSeedStatus {
   roadmapFileFound: boolean;
   roadmapsApplied: number;
   jiraFieldConfigApplied: boolean;
+  workingTimeConfigApplied: boolean;
   lastAppliedAt: string | null;
   error: string | null;
 }
@@ -49,6 +50,7 @@ export class YamlConfigService implements OnApplicationBootstrap {
     roadmapFileFound: false,
     roadmapsApplied: 0,
     jiraFieldConfigApplied: false,
+    workingTimeConfigApplied: false,
     lastAppliedAt: null,
     error: null,
   };
@@ -60,6 +62,8 @@ export class YamlConfigService implements OnApplicationBootstrap {
     private readonly roadmapConfigRepo: Repository<RoadmapConfig>,
     @InjectRepository(JiraFieldConfig)
     private readonly jiraFieldConfigRepo: Repository<JiraFieldConfig>,
+    @InjectRepository(WorkingTimeConfigEntity)
+    private readonly workingTimeConfigRepo: Repository<WorkingTimeConfigEntity>,
     private readonly configService: ConfigService,
   ) {}
 
@@ -122,7 +126,7 @@ export class YamlConfigService implements OnApplicationBootstrap {
       throw new Error(`boards.yaml validation failed:\n${details}`);
     }
 
-    const { boards, jira } = result.data;
+    const { boards, jira, workingTime } = result.data;
     let applied = 0;
 
     for (const board of boards) {
@@ -187,6 +191,11 @@ export class YamlConfigService implements OnApplicationBootstrap {
     if (jira !== undefined) {
       await this.applyJiraStanza(jira);
     }
+
+    // Apply workingTime: stanza if present.
+    if (workingTime !== undefined) {
+      await this.applyWorkingTimeStanza(workingTime);
+    }
   }
 
   /**
@@ -215,6 +224,34 @@ export class YamlConfigService implements OnApplicationBootstrap {
     await this.jiraFieldConfigRepo.upsert(payload, { conflictPaths: ['id'] });
     this.seedStatus.jiraFieldConfigApplied = true;
     this.logger.log('YAML config: jira field config applied from boards.yaml jira: stanza');
+  }
+
+  /**
+   * Upsert the singleton WorkingTimeConfig row from the `workingTime:` stanza.
+   * Only fields explicitly set in YAML are written; all others keep their
+   * current DB values (or migration defaults if the row is brand-new).
+   */
+  private async applyWorkingTimeStanza(
+    workingTime: NonNullable<ReturnType<typeof BoardsYamlFileSchema.parse>['workingTime']>,
+  ): Promise<void> {
+    const payload: Partial<WorkingTimeConfigEntity> & Pick<WorkingTimeConfigEntity, 'id'> = { id: 1 };
+
+    if (workingTime.excludeWeekends !== undefined) {
+      payload.excludeWeekends = workingTime.excludeWeekends;
+    }
+    if (workingTime.workDays !== undefined) {
+      payload.workDays = workingTime.workDays;
+    }
+    if (workingTime.hoursPerDay !== undefined) {
+      payload.hoursPerDay = workingTime.hoursPerDay;
+    }
+    if (workingTime.holidays !== undefined) {
+      payload.holidays = workingTime.holidays;
+    }
+
+    await this.workingTimeConfigRepo.upsert(payload, { conflictPaths: ['id'] });
+    this.seedStatus.workingTimeConfigApplied = true;
+    this.logger.log('YAML config: working time config applied from boards.yaml workingTime: stanza');
   }
 
   private async applyRoadmapYaml(): Promise<void> {

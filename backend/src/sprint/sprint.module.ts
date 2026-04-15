@@ -10,6 +10,7 @@ import {
 } from '../database/entities/index.js';
 import { SprintController } from './sprint.controller.js';
 import { SprintDetailService } from './sprint-detail.service.js';
+import { MetricsModule } from '../metrics/metrics.module.js';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { SprintDetailService } from './sprint-detail.service.js';
       JpdIdea,
       RoadmapConfig,
     ]),
+    MetricsModule,
   ],
   controllers: [SprintController],
   providers: [SprintDetailService],

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MetricsService } from './metrics.service.js';
 import { MetricsController } from './metrics.controller.js';
@@ -8,6 +9,7 @@ import { CfrService } from './cfr.service.js';
 import { MttrService } from './mttr.service.js';
 import { CycleTimeService } from './cycle-time.service.js';
 import { CycleTimeController } from './cycle-time.controller.js';
+import { WorkingTimeService } from './working-time.service.js';
 import {
   JiraIssue,
   JiraChangelog,
@@ -15,10 +17,12 @@ import {
   JiraSprint,
   BoardConfig,
   JiraIssueLink,
+  WorkingTimeConfigEntity,
 } from '../database/entities/index.js';
 
 @Module({
   imports: [
+    ConfigModule,
     TypeOrmModule.forFeature([
       JiraIssue,
       JiraChangelog,
@@ -26,6 +30,7 @@ import {
       JiraSprint,
       BoardConfig,
       JiraIssueLink,
+      WorkingTimeConfigEntity,
     ]),
   ],
   controllers: [MetricsController, CycleTimeController],
@@ -36,7 +41,8 @@ import {
     CfrService,
     MttrService,
     CycleTimeService,
+    WorkingTimeService,
   ],
-  exports: [MetricsService],
+  exports: [MetricsService, WorkingTimeService],
 })
 export class MetricsModule {}

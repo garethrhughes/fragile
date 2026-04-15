@@ -11,6 +11,7 @@ import {
 import { classifyCycleTime, type CycleTimeBand } from './cycle-time-bands.js';
 import { percentile, round2 } from './statistics.js';
 import { isWorkItem } from './issue-type-filters.js';
+import { WorkingTimeService } from './working-time.service.js';
 
 // ---------------------------------------------------------------------------
 // Authoritative type definitions (single source of truth)
@@ -69,6 +70,7 @@ export class CycleTimeService {
     @InjectRepository(BoardConfig)
     private readonly boardConfigRepo: Repository<BoardConfig>,
     private readonly configService: ConfigService,
+    private readonly workingTimeService: WorkingTimeService,
   ) {
     const baseUrl = this.configService.get<string>('JIRA_BASE_URL', '');
     if (!baseUrl) {
@@ -180,6 +182,10 @@ export class CycleTimeService {
     const observations: CycleTimeObservation[] = [];
     let anomalyCount = 0;
 
+    // Load working-time config once for the whole batch.
+    const wtEntity = await this.workingTimeService.getConfig();
+    const wtConfig = this.workingTimeService.toConfig(wtEntity);
+
     for (const issue of issues) {
       const issueLogs = changelogsByIssue.get(issue.key) ?? [];
 
@@ -238,8 +244,9 @@ export class CycleTimeService {
       const cycleStart = inProgressTransition.changedAt;
 
       // Step (c): compute cycle time, clamp negative values (data anomaly)
-      const rawDays =
-        (cycleEnd.getTime() - cycleStart.getTime()) / (1000 * 60 * 60 * 24);
+      const rawDays = wtEntity.excludeWeekends
+        ? this.workingTimeService.workingDaysBetween(cycleStart, cycleEnd, wtConfig)
+        : (cycleEnd.getTime() - cycleStart.getTime()) / 86_400_000;
 
       if (rawDays < 0) {
         this.logger.warn(

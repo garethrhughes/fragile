@@ -9,3 +9,4 @@ export { JpdIdea } from './jpd-idea.entity.js';
 export { JiraIssueLink } from './jira-issue-link.entity.js';
 export { SprintReport } from './sprint-report.entity.js';
 export { JiraFieldConfig } from './jira-field-config.entity.js';
+export { WorkingTimeConfigEntity } from './working-time-config.entity.js';
