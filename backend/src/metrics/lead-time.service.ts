@@ -11,6 +11,16 @@ import { classifyLeadTime, type DoraBand } from './dora-bands.js';
 import { percentile, round2 } from './statistics.js';
 import { isWorkItem } from './issue-type-filters.js';
 import { WorkingTimeService } from './working-time.service.js';
+import type { TrendDataSlice } from './trend-data-loader.service.js';
+
+// Default in-progress status names shared between the DB path and the in-memory path.
+const DEFAULT_IN_PROGRESS_NAMES: string[] = [
+  'In Progress', 'In Review', 'Peer-Review', 'Peer Review', 'PEER REVIEW',
+  'PEER CODE REVIEW', 'Ready for Review', 'In Test', 'IN TEST', 'QA',
+  'QA testing', 'QA Validation', 'IN TESTING', 'Under Test', 'ready to test',
+  'Ready for Testing', 'READY FOR TESTING', 'Ready for Release',
+  'Ready for release', 'READY FOR RELEASE', 'Awaiting Release', 'READY',
+];
 
 export interface LeadTimeResult {
   boardId: string;
@@ -53,35 +63,8 @@ export class LeadTimeService {
     const config = await this.boardConfigRepo.findOne({
       where: { boardId },
     });
-    const doneStatuses = config?.doneStatusNames ?? [
-      'Done',
-      'Closed',
-      'Released',
-    ];
-    const inProgressNames: string[] = config?.inProgressStatusNames ?? [
-      'In Progress',
-      'In Review',
-      'Peer-Review',
-      'Peer Review',
-      'PEER REVIEW',
-      'PEER CODE REVIEW',
-      'Ready for Review',
-      'In Test',
-      'IN TEST',
-      'QA',
-      'QA testing',
-      'QA Validation',
-      'IN TESTING',
-      'Under Test',
-      'ready to test',
-      'Ready for Testing',
-      'READY FOR TESTING',
-      'Ready for Release',
-      'Ready for release',
-      'READY FOR RELEASE',
-      'Awaiting Release',
-      'READY',
-    ];
+    const doneStatuses = config?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
+    const inProgressNames: string[] = config?.inProgressStatusNames ?? DEFAULT_IN_PROGRESS_NAMES;
 
     // Get all issues for this board
     const issues = (await this.issueRepo.find({
@@ -92,11 +75,14 @@ export class LeadTimeService {
 
     const issueKeys = issues.map((i) => i.key);
 
-    // Fetch all status changelogs in bulk for these issues
+    // Fetch all status changelogs in bulk for these issues.
+    // Lower-bound on changedAt avoids loading transitions from before the period
+    // window, which would be discarded anyway and waste I/O on large boards.
     const changelogs = await this.changelogRepo
       .createQueryBuilder('cl')
       .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
       .andWhere('cl.field = :field', { field: 'status' })
+      .andWhere('cl.changedAt >= :from', { from: startDate })
       .orderBy('cl.changedAt', 'ASC')
       .getMany();
 
@@ -232,5 +218,92 @@ export class LeadTimeService {
       sampleSize: leadTimeDays.length,
       anomalyCount,
     };
+  }
+
+  /**
+   * In-memory variant for the trend path.
+   * Accepts pre-loaded data from TrendDataLoader and slices it to [startDate, endDate].
+   * No DB calls — pure computation.
+   */
+  getLeadTimeObservationsFromData(
+    slice: TrendDataSlice,
+    startDate: Date,
+    endDate: Date,
+  ): { observations: number[]; anomalyCount: number } {
+    const doneStatuses = slice.boardConfig?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
+    const inProgressNames = slice.boardConfig?.inProgressStatusNames ?? DEFAULT_IN_PROGRESS_NAMES;
+
+    if (slice.issues.length === 0) return { observations: [], anomalyCount: 0 };
+
+    // Group changelogs by issue key (already filtered to status field in the slice)
+    const changelogsByIssue = new Map<string, JiraChangelog[]>();
+    for (const cl of slice.changelogs) {
+      const list = changelogsByIssue.get(cl.issueKey) ?? [];
+      list.push(cl);
+      changelogsByIssue.set(cl.issueKey, list);
+    }
+
+    // Build version → releaseDate map (full slice range; period guard applied per-issue below)
+    const versionDateMap = new Map(
+      slice.versions
+        .filter((v) => v.releaseDate !== null)
+        .map((v) => [v.name, v.releaseDate as Date]),
+    );
+
+    const wtConfig = this.workingTimeService.toConfig(slice.wtEntity);
+
+    const leadTimeDays: number[] = [];
+    let anomalyCount = 0;
+
+    for (const issue of slice.issues) {
+      const issueLogs = changelogsByIssue.get(issue.key) ?? [];
+
+      const inProgressTransition = issueLogs.find(
+        (cl) => cl.toValue !== null && inProgressNames.includes(cl.toValue),
+      );
+
+      const doneTransition = issueLogs
+        .filter(
+          (cl) =>
+            doneStatuses.includes(cl.toValue ?? '') &&
+            cl.changedAt >= startDate &&
+            cl.changedAt <= endDate,
+        )
+        .at(-1);
+
+      let endTime: Date | null = null;
+
+      if (doneTransition) {
+        endTime = doneTransition.changedAt;
+      } else if (issue.fixVersion) {
+        const releaseDate = versionDateMap.get(issue.fixVersion);
+        if (
+          releaseDate &&
+          releaseDate >= startDate &&
+          releaseDate <= endDate &&
+          (inProgressTransition === undefined ||
+            releaseDate >= inProgressTransition.changedAt)
+        ) {
+          endTime = releaseDate;
+        }
+      }
+
+      if (!endTime) continue;
+
+      if (!inProgressTransition) {
+        anomalyCount++;
+        continue;
+      }
+
+      const startTime: Date = inProgressTransition.changedAt;
+      const days = slice.wtEntity.excludeWeekends
+        ? this.workingTimeService.workingDaysBetween(startTime, endTime, wtConfig)
+        : (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60 * 24);
+
+      leadTimeDays.push(Math.max(0, days));
+    }
+
+    leadTimeDays.sort((a, b) => a - b);
+    return { observations: leadTimeDays, anomalyCount };
   }
 }

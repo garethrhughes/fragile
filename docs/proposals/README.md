@@ -34,3 +34,4 @@
 | [0030](0030-metrics-correctness-second-audit-fixes.md) | Metrics Correctness: Second Audit Fix Batch | Draft | 2026-04-15 |
 | [0031](0031-mttr-headline-chart-discrepancy.md) | MTTR Headline / Chart Discrepancy: Root Cause & Fix | Accepted | 2026-04-15 |
 | [0032](0032-failure-link-types-detail-view-consistency.md) | Apply `failureLinkTypes` AND-gate consistently across all detail views | Draft | 2026-04-16 |
+| [0033](0033-dora-trend-endpoint-performance.md) | DORA Trend Endpoint Performance | Draft | 2026-04-16 |

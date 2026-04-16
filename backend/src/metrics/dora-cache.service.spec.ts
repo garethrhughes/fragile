@@ -135,6 +135,41 @@ describe('DoraCacheService', () => {
   });
 
   // -------------------------------------------------------------------------
+  // isHistoricalQuarter (Change 3)
+  // -------------------------------------------------------------------------
+
+  describe('isHistoricalQuarter', () => {
+    it('returns true for a quarter that ended in the past', () => {
+      // 2020-Q1 ended 2020-03-31 — definitely in the past
+      expect(DoraCacheService.isHistoricalQuarter('2020-Q1')).toBe(true);
+    });
+
+    it('returns false for a quarter that has not ended yet', () => {
+      // Use a far-future year that will always be in the future
+      expect(DoraCacheService.isHistoricalQuarter('2099-Q4')).toBe(false);
+    });
+
+    it('returns false for a malformed quarter label', () => {
+      // Invalid input — should not throw and should not be treated as historical
+      expect(DoraCacheService.isHistoricalQuarter('not-a-quarter')).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // HISTORICAL_TTL_MS constant
+  // -------------------------------------------------------------------------
+
+  describe('HISTORICAL_TTL_MS', () => {
+    it('is 15 minutes (900 000 ms)', () => {
+      expect(DoraCacheService.HISTORICAL_TTL_MS).toBe(900_000);
+    });
+
+    it('is greater than the implicit default TTL of 60 000 ms', () => {
+      expect(DoraCacheService.HISTORICAL_TTL_MS).toBeGreaterThan(60_000);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // size
   // -------------------------------------------------------------------------
 

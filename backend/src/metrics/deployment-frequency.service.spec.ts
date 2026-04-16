@@ -6,6 +6,7 @@ import {
   JiraChangelog,
   BoardConfig,
 } from '../database/entities/index.js';
+import type { TrendDataSlice } from './trend-data-loader.service.js';
 
 function mockRepo<T extends object>(): jest.Mocked<Repository<T>> {
   return {
@@ -134,6 +135,7 @@ describe('DeploymentFrequencyService', () => {
 
   describe('C-4: fallback counts distinct transition days', () => {
     it('returns 2 for issues completing on 2 distinct days (not 5 issues)', async () => {
+
       boardConfigRepo.findOne.mockResolvedValue({
         boardId: 'ACC',
         boardType: 'scrum',
@@ -173,6 +175,94 @@ describe('DeploymentFrequencyService', () => {
         'cl.toValue IN (:...statuses)',
         { statuses: ['Done'] },
       );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Change 2: calculateFromData — in-memory variant for the trend path
+  // -------------------------------------------------------------------------
+
+  describe('calculateFromData', () => {
+    function makeSlice(overrides: Partial<TrendDataSlice> = {}): TrendDataSlice {
+      return {
+        boardId: 'ACC',
+        boardConfig: null,
+        wtEntity: {} as never,
+        issues: [],
+        changelogs: [],
+        versions: [],
+        issueLinks: [],
+        ...overrides,
+      };
+    }
+
+    const start = new Date('2025-01-01');
+    const end = new Date('2025-03-31');
+
+    it('returns zero deployments for an empty slice', () => {
+      const result = service.calculateFromData(makeSlice(), start, end);
+      expect(result.boardId).toBe('ACC');
+      expect(result.totalDeployments).toBe(0);
+    });
+
+    it('counts distinct release days from versions filtered to period', () => {
+      const slice = makeSlice({
+        versions: [
+          { name: 'v1', releaseDate: new Date('2025-02-01'), projectKey: 'ACC', released: true } as JiraVersion,
+          { name: 'v2', releaseDate: new Date('2025-02-08'), projectKey: 'ACC', released: true } as JiraVersion,
+          // version outside the period — should be ignored
+          { name: 'v3', releaseDate: new Date('2025-04-01'), projectKey: 'ACC', released: true } as JiraVersion,
+        ],
+      });
+
+      const result = service.calculateFromData(slice, start, end);
+      expect(result.totalDeployments).toBe(2);
+    });
+
+    it('collapses multiple versions on the same day to 1 deployment', () => {
+      const slice = makeSlice({
+        versions: [
+          { name: 'v1', releaseDate: new Date('2025-02-01T09:00:00Z'), projectKey: 'ACC', released: true } as JiraVersion,
+          { name: 'v2', releaseDate: new Date('2025-02-01T15:00:00Z'), projectKey: 'ACC', released: true } as JiraVersion,
+        ],
+      });
+
+      const result = service.calculateFromData(slice, start, end);
+      expect(result.totalDeployments).toBe(1);
+    });
+
+    it('uses fallback path for issues without fixVersion', () => {
+      const doneAt = new Date('2025-02-10T10:00:00Z');
+      const slice = makeSlice({
+        boardConfig: { doneStatusNames: ['Done'] } as never,
+        issues: [
+          { key: 'ACC-1', issueType: 'Story', fixVersion: null } as JiraIssue,
+          { key: 'ACC-2', issueType: 'Story', fixVersion: null } as JiraIssue,
+        ],
+        changelogs: [
+          // Both issues done on the same day → 1 fallback deployment day
+          { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: new Date('2025-02-10T09:00:00Z') } as JiraChangelog,
+          { issueKey: 'ACC-2', field: 'status', toValue: 'Done', changedAt: doneAt } as JiraChangelog,
+        ],
+        versions: [],
+      });
+
+      const result = service.calculateFromData(slice, start, end);
+      expect(result.totalDeployments).toBe(1);
+    });
+
+    it('does not include fallback transitions outside the period', () => {
+      const slice = makeSlice({
+        issues: [{ key: 'ACC-1', issueType: 'Story', fixVersion: null } as JiraIssue],
+        changelogs: [
+          // Before period start — must be excluded
+          { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: new Date('2024-12-15') } as JiraChangelog,
+        ],
+        versions: [],
+      });
+
+      const result = service.calculateFromData(slice, start, end);
+      expect(result.totalDeployments).toBe(0);
     });
   });
 });

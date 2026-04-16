@@ -9,6 +9,16 @@ import {
 import { classifyMTTR, type DoraBand } from './dora-bands.js';
 import { percentile, round2 } from './statistics.js';
 import { isWorkItem } from './issue-type-filters.js';
+import type { TrendDataSlice } from './trend-data-loader.service.js';
+
+// Default in-progress status names shared between the DB path and the in-memory path.
+const DEFAULT_IN_PROGRESS_NAMES: string[] = [
+  'In Progress', 'In Review', 'Peer-Review', 'Peer Review', 'PEER REVIEW',
+  'PEER CODE REVIEW', 'Ready for Review', 'In Test', 'IN TEST', 'QA',
+  'QA testing', 'QA Validation', 'IN TESTING', 'Under Test', 'ready to test',
+  'Ready for Testing', 'READY FOR TESTING', 'Ready for Release',
+  'Ready for release', 'READY FOR RELEASE', 'Awaiting Release', 'READY',
+];
 
 export interface MttrResult {
   boardId: string;
@@ -54,40 +64,11 @@ export class MttrService {
     const config = await this.boardConfigRepo.findOne({
       where: { boardId },
     });
-    const incidentIssueTypes = config?.incidentIssueTypes ?? [
-      'Bug',
-      'Incident',
-    ];
-    const recoveryStatuses = config?.recoveryStatusNames ?? [
-      'Done',
-      'Resolved',
-    ];
+    const incidentIssueTypes = config?.incidentIssueTypes ?? ['Bug', 'Incident'];
+    const recoveryStatuses = config?.recoveryStatusNames ?? ['Done', 'Resolved'];
     const incidentLabels = config?.incidentLabels ?? [];
     const incidentPriorities = config?.incidentPriorities ?? ['Critical'];
-    const inProgressNames: string[] = config?.inProgressStatusNames ?? [
-      'In Progress',
-      'In Review',
-      'Peer-Review',
-      'Peer Review',
-      'PEER REVIEW',
-      'PEER CODE REVIEW',
-      'Ready for Review',
-      'In Test',
-      'IN TEST',
-      'QA',
-      'QA testing',
-      'QA Validation',
-      'IN TESTING',
-      'Under Test',
-      'ready to test',
-      'Ready for Testing',
-      'READY FOR TESTING',
-      'Ready for Release',
-      'Ready for release',
-      'READY FOR RELEASE',
-      'Awaiting Release',
-      'READY',
-    ];
+    const inProgressNames: string[] = config?.inProgressStatusNames ?? DEFAULT_IN_PROGRESS_NAMES;
 
     // Get incident issues for this board
     const allIssues = (await this.issueRepo.find({
@@ -117,12 +98,16 @@ export class MttrService {
 
     const incidentKeys = priorityFilteredIssues.map((i) => i.key);
 
-    // Get all status changelogs for incident issues (in period for recovery,
-    // but we also need pre-period In Progress transitions for start time)
+    // Get all status changelogs for incident issues.
+    // Lower-bound on changedAt avoids loading transitions from before the period
+    // window.  In Progress transitions before startDate are rare for incidents
+    // (incidents are typically short-lived), and createdAt is used as the fallback
+    // start time when no In Progress transition is found.
     const allIncidentChangelogs = await this.changelogRepo
       .createQueryBuilder('cl')
       .where('cl.issueKey IN (:...keys)', { keys: incidentKeys })
       .andWhere('cl.field = :field', { field: 'status' })
+      .andWhere('cl.changedAt >= :from', { from: startDate })
       .orderBy('cl.changedAt', 'ASC')
       .getMany();
 
@@ -187,6 +172,103 @@ export class MttrService {
           `MTTR anomaly: issue ${issue.key} has recovery before detection ` +
           `(${recoveryDate.toISOString()} < ${startTime.toISOString()}).` +
           ` Excluding from MTTR sample.`,
+        );
+        anomalyCount++;
+        continue;
+      }
+
+      recoveryHours.push(hours);
+    }
+
+    recoveryHours.sort((a, b) => a - b);
+    return { recoveryHours, openIncidentCount, anomalyCount };
+  }
+
+  /**
+   * In-memory variant for the trend path.
+   * Accepts pre-loaded data from TrendDataLoader and slices it to [startDate, endDate].
+   * No DB calls — pure computation.
+   */
+  getMttrObservationsFromData(
+    slice: TrendDataSlice,
+    startDate: Date,
+    endDate: Date,
+  ): MttrObservations {
+    const incidentIssueTypes = slice.boardConfig?.incidentIssueTypes ?? ['Bug', 'Incident'];
+    const recoveryStatuses   = slice.boardConfig?.recoveryStatusNames ?? ['Done', 'Resolved'];
+    const incidentLabels     = slice.boardConfig?.incidentLabels     ?? [];
+    const incidentPriorities = slice.boardConfig?.incidentPriorities ?? ['Critical'];
+    const inProgressNames    = slice.boardConfig?.inProgressStatusNames ?? DEFAULT_IN_PROGRESS_NAMES;
+
+    const incidentIssues = slice.issues.filter((issue) => {
+      const isIncidentType = incidentIssueTypes.includes(issue.issueType);
+      const hasIncidentLabel =
+        incidentLabels.length > 0
+          ? issue.labels.some((l) => incidentLabels.includes(l))
+          : false;
+      return isIncidentType || hasIncidentLabel;
+    });
+
+    const priorityFilteredIssues =
+      incidentPriorities.length > 0
+        ? incidentIssues.filter(
+            (issue) =>
+              issue.priority !== null && incidentPriorities.includes(issue.priority),
+          )
+        : incidentIssues;
+
+    if (priorityFilteredIssues.length === 0) {
+      return { recoveryHours: [], openIncidentCount: 0, anomalyCount: 0 };
+    }
+
+    const incidentKeySet = new Set(priorityFilteredIssues.map((i) => i.key));
+
+    // Group changelogs by issue key (scoped to incident issues)
+    const changelogsByIssue = new Map<string, JiraChangelog[]>();
+    for (const cl of slice.changelogs) {
+      if (!incidentKeySet.has(cl.issueKey)) continue;
+      const list = changelogsByIssue.get(cl.issueKey) ?? [];
+      list.push(cl);
+      changelogsByIssue.set(cl.issueKey, list);
+    }
+
+    // First recovery transition in period, per issue
+    const firstRecoveryByIssue = new Map<string, Date>();
+    for (const cl of slice.changelogs) {
+      if (!incidentKeySet.has(cl.issueKey)) continue;
+      if (
+        recoveryStatuses.includes(cl.toValue ?? '') &&
+        cl.changedAt >= startDate &&
+        cl.changedAt <= endDate &&
+        !firstRecoveryByIssue.has(cl.issueKey)
+      ) {
+        firstRecoveryByIssue.set(cl.issueKey, cl.changedAt);
+      }
+    }
+
+    const recoveryHours: number[] = [];
+    let openIncidentCount = 0;
+    let anomalyCount = 0;
+
+    for (const issue of priorityFilteredIssues) {
+      const issueLogs = changelogsByIssue.get(issue.key) ?? [];
+      const inProgressTransition = issueLogs.find(
+        (cl) => cl.toValue !== null && inProgressNames.includes(cl.toValue),
+      );
+      const startTime = inProgressTransition
+        ? inProgressTransition.changedAt
+        : issue.createdAt;
+
+      const recoveryDate = firstRecoveryByIssue.get(issue.key);
+      if (!recoveryDate) {
+        openIncidentCount++;
+        continue;
+      }
+
+      const hours = (recoveryDate.getTime() - startTime.getTime()) / (1000 * 60 * 60);
+      if (hours < 0) {
+        this.logger.warn(
+          `MTTR anomaly (from data): issue ${issue.key} recovery before detection — excluding.`,
         );
         anomalyCount++;
         continue;

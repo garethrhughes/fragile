@@ -8,7 +8,8 @@ import { CfrService } from './cfr.service.js';
 import { MttrService } from './mttr.service.js';
 import { CycleTimeService } from './cycle-time.service.js';
 import { DoraCacheService } from './dora-cache.service.js';
-import { JiraSprint, BoardConfig } from '../database/entities/index.js';
+import { TrendDataLoader, type TrendDataSlice } from './trend-data-loader.service.js';
+import { JiraSprint, BoardConfig, WorkingTimeConfigEntity } from '../database/entities/index.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -30,15 +31,30 @@ function mockConfigService(tz = 'UTC'): jest.Mocked<ConfigService> {
   } as unknown as jest.Mocked<ConfigService>;
 }
 
+const MOCK_DF_RESULT = {
+  boardId: 'ACC',
+  totalDeployments: 4,
+  deploymentsPerDay: 0.04,
+  band: 'fair',
+  periodDays: 90,
+};
+
+const MOCK_SLICE: TrendDataSlice = {
+  boardId: 'ACC',
+  boardConfig: null,
+  wtEntity: Object.assign(new WorkingTimeConfigEntity(), {
+    id: 1, excludeWeekends: false, workDays: [1,2,3,4,5], hoursPerDay: 8, holidays: [],
+  }),
+  issues: [],
+  changelogs: [],
+  versions: [],
+  issueLinks: [],
+};
+
 function buildDeploymentFrequencyService(): jest.Mocked<DeploymentFrequencyService> {
   return {
-    calculate: jest.fn().mockResolvedValue({
-      boardId: 'ACC',
-      totalDeployments: 4,
-      deploymentsPerDay: 0.04,
-      band: 'fair',
-      periodDays: 90,
-    }),
+    calculate: jest.fn().mockResolvedValue(MOCK_DF_RESULT),
+    calculateFromData: jest.fn().mockReturnValue(MOCK_DF_RESULT),
   } as unknown as jest.Mocked<DeploymentFrequencyService>;
 }
 
@@ -56,12 +72,24 @@ function buildLeadTimeService(): jest.Mocked<LeadTimeService> {
       observations: [3, 5, 8],
       anomalyCount: 0,
     }),
+    getLeadTimeObservationsFromData: jest.fn().mockReturnValue({
+      observations: [3, 5, 8],
+      anomalyCount: 0,
+    }),
   } as unknown as jest.Mocked<LeadTimeService>;
 }
 
 function buildCfrService(): jest.Mocked<CfrService> {
   return {
     calculate: jest.fn().mockResolvedValue({
+      boardId: 'ACC',
+      totalDeployments: 4,
+      failureCount: 1,
+      changeFailureRate: 25,
+      band: 'fair',
+      usingDefaultConfig: false,
+    }),
+    calculateFromData: jest.fn().mockReturnValue({
       boardId: 'ACC',
       totalDeployments: 4,
       failureCount: 1,
@@ -83,7 +111,14 @@ function buildMttrService(): jest.Mocked<MttrService> {
       anomalyCount: 0,
     }),
     getMttrObservations: jest.fn().mockResolvedValue({ recoveryHours: [2], openIncidentCount: 0, anomalyCount: 0 }),
+    getMttrObservationsFromData: jest.fn().mockReturnValue({ recoveryHours: [2], openIncidentCount: 0, anomalyCount: 0 }),
   } as unknown as jest.Mocked<MttrService>;
+}
+
+function buildTrendDataLoader(): jest.Mocked<TrendDataLoader> {
+  return {
+    load: jest.fn().mockResolvedValue(MOCK_SLICE),
+  } as unknown as jest.Mocked<TrendDataLoader>;
 }
 
 function buildCycleTimeService(): jest.Mocked<CycleTimeService> {
@@ -117,6 +152,7 @@ describe('MetricsService', () => {
   let sprintRepo: jest.Mocked<Repository<JiraSprint>>;
   let boardConfigRepo: jest.Mocked<Repository<BoardConfig>>;
   let doraCache: DoraCacheService;
+  let trendDataLoader: jest.Mocked<TrendDataLoader>;
 
   beforeEach(() => {
     dfService = buildDeploymentFrequencyService();
@@ -127,6 +163,7 @@ describe('MetricsService', () => {
     sprintRepo = mockRepo<JiraSprint>();
     boardConfigRepo = mockRepo<BoardConfig>();
     doraCache = new DoraCacheService();
+    trendDataLoader = buildTrendDataLoader();
 
     service = new MetricsService(
       dfService,
@@ -138,6 +175,7 @@ describe('MetricsService', () => {
       boardConfigRepo,
       mockConfigService(),
       doraCache,
+      trendDataLoader,
     );
   });
 
@@ -621,25 +659,46 @@ describe('MetricsService', () => {
   // -------------------------------------------------------------------------
 
   describe('getDoraTrend (caching)', () => {
-    it('returns the same result on second call without re-invoking aggregate', async () => {
+    it('returns the same result on second call without calling TrendDataLoader again', async () => {
       const result1 = await service.getDoraTrend({ boardId: 'ACC', limit: 2 });
-      const countAfterFirst = dfService.calculate.mock.calls.length;
+      const loadsAfterFirst = trendDataLoader.load.mock.calls.length;
 
       const result2 = await service.getDoraTrend({ boardId: 'ACC', limit: 2 });
 
-      // No additional DB calls for the second trend fetch
-      expect(dfService.calculate.mock.calls.length).toBe(countAfterFirst);
+      // No additional data loads for the second trend fetch (cache hit)
+      expect(trendDataLoader.load.mock.calls.length).toBe(loadsAfterFirst);
       expect(result2).toHaveLength(result1.length);
     });
 
     it('re-fetches after cache is cleared', async () => {
       await service.getDoraTrend({ boardId: 'ACC', limit: 2 });
-      const countAfterFirst = dfService.calculate.mock.calls.length;
+      const loadsAfterFirst = trendDataLoader.load.mock.calls.length;
 
       doraCache.clear();
 
       await service.getDoraTrend({ boardId: 'ACC', limit: 2 });
-      expect(dfService.calculate.mock.calls.length).toBeGreaterThan(countAfterFirst);
+      expect(trendDataLoader.load.mock.calls.length).toBeGreaterThan(loadsAfterFirst);
+    });
+
+    it('calls TrendDataLoader.load once per board regardless of period count', async () => {
+      await service.getDoraTrend({ boardId: 'ACC', limit: 4 });
+      // 1 board → 1 load, not 4 loads (one per quarter)
+      expect(trendDataLoader.load).toHaveBeenCalledTimes(1);
+    });
+
+    it('calls TrendDataLoader.load once per board for multi-board trend', async () => {
+      boardConfigRepo.find.mockResolvedValue([
+        { boardId: 'ACC' } as BoardConfig,
+        { boardId: 'PLAT' } as BoardConfig,
+      ]);
+      trendDataLoader.load
+        .mockResolvedValueOnce({ ...MOCK_SLICE, boardId: 'ACC' })
+        .mockResolvedValueOnce({ ...MOCK_SLICE, boardId: 'PLAT' });
+
+      await service.getDoraTrend({ limit: 3 });
+
+      // 2 boards → 2 loads, not 2 × 3 = 6
+      expect(trendDataLoader.load).toHaveBeenCalledTimes(2);
     });
   });
 });
