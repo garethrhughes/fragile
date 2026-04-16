@@ -42,6 +42,13 @@
   --color-primary-hover: var(--primary-hover);
   --color-primary-fg: var(--primary-fg);
 
+  /* Interactive element tokens (replaces raw colour utilities) */
+  --color-interactive-selected-bg: var(--interactive-selected-bg);
+  --color-interactive-selected-fg: var(--interactive-selected-fg);
+  --color-interactive-selected-border: var(--interactive-selected-border);
+  --color-interactive-hover-bg: var(--interactive-hover-bg);
+  --color-table-header-bg: var(--table-header-bg);
+
   /* Font tokens */
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
@@ -84,6 +91,13 @@
   --primary: #3b82f6;
   --primary-hover: #2563eb;
   --primary-fg: #ffffff;
+
+  /* Interactive element semantic tokens */
+  --interactive-selected-bg: #dbeafe;    /* squirrel-100 */
+  --interactive-selected-fg: #1d4ed8;    /* squirrel-700 */
+  --interactive-selected-border: #60a5fa; /* squirrel-400 */
+  --interactive-hover-bg: #f1f5f9;       /* surface-hover */
+  --table-header-bg: #f8fafc;            /* surface-alt */
 }
 
 /* ── Dark theme ─────────────────────────────────────────────────────────────── */
@@ -115,6 +129,13 @@
   --primary: #528bff;
   --primary-hover: #4070e0;
   --primary-fg: #ffffff;
+
+  /* Interactive element semantic tokens */
+  --interactive-selected-bg: #3e4451;    /* surface-raised */
+  --interactive-selected-fg: #61afef;    /* tab-active (light blue) */
+  --interactive-selected-border: #528bff; /* primary */
+  --interactive-hover-bg: #2c313a;       /* surface-hover */
+  --table-header-bg: #21252b;            /* surface-alt */
 }
 
 /* ── Base styles ────────────────────────────────────────────────────────────── */

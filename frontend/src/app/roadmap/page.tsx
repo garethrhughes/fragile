@@ -21,41 +21,12 @@ import {
   getAppConfig,
   type RoadmapSprintAccuracy,
 } from '@/lib/api'
+import { getQuarterKey, getCurrentQuarterKey } from '@/lib/quarter-utils'
 import { useBoardsStore } from '@/store/boards-store'
 import { BoardChip } from '@/components/ui/board-chip'
 import { DataTable, type Column } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { NoBoardsConfigured } from '@/components/ui/no-boards-configured'
-
-// ---------------------------------------------------------------------------
-// Quarter helpers
-// ---------------------------------------------------------------------------
-
-function getQuarterKey(isoDate: string | null, tz: string): string | null {
-  if (!isoDate) return null
-  const d = new Date(isoDate)
-  if (isNaN(d.getTime())) return null
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-  })
-  const [year, month] = formatter.format(d).split('-').map(Number)
-  const q = Math.floor((month - 1) / 3) + 1
-  return `${year}-Q${q}`
-}
-
-function getCurrentQuarterKey(tz: string): string {
-  const now = new Date()
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-  })
-  const [year, month] = formatter.format(now).split('-').map(Number)
-  const q = Math.floor((month - 1) / 3) + 1
-  return `${year}-Q${q}`
-}
 
 // ---------------------------------------------------------------------------
 // Quarter row type (for quarter-mode table)
@@ -255,6 +226,7 @@ function RoadmapPageInner() {
   const [kanbanWeekData, setKanbanWeekData] = useState<RoadmapSprintAccuracy[]>([])
   const [hasConfigs, setHasConfigs] = useState<boolean | null>(null)
   const [timezone, setTimezone] = useState('UTC')
+  const [retryKey, setRetryKey] = useState(0)
 
   const isKanban = kanbanBoardIds.has(selectedBoard)
 
@@ -315,7 +287,7 @@ function RoadmapPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [selectedBoard, isKanban, kanbanPeriod, boardsStatus]);
+  }, [selectedBoard, isKanban, kanbanPeriod, boardsStatus, retryKey]);
 
   // Fetch weekly roadmap accuracy data for Kanban boards
   useEffect(() => {
@@ -345,7 +317,7 @@ function RoadmapPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [selectedBoard, isKanban, kanbanPeriod, boardsStatus]);
+  }, [selectedBoard, isKanban, kanbanPeriod, boardsStatus, retryKey]);
 
   // Quarter rows derived client-side from raw sprint data
   const quarterRows = useMemo(() => groupByQuarter(rawData, timezone), [rawData, timezone]);
@@ -663,8 +635,8 @@ function RoadmapPageInner() {
                     onClick={() => replaceParams({ kanban: 'week' })}
                     className={`rounded-l-lg px-4 py-2 text-sm font-medium transition-colors ${
                       kanbanPeriod === 'week'
-                        ? 'bg-blue-50 text-blue-700'
-                        : 'text-muted hover:bg-gray-50'
+                        ? 'bg-interactive-selected-bg text-interactive-selected-fg'
+                        : 'text-muted hover:bg-interactive-hover-bg'
                     }`}
                   >
                     Week
@@ -674,8 +646,8 @@ function RoadmapPageInner() {
                     onClick={() => replaceParams({ kanban: 'quarter' })}
                     className={`rounded-r-lg px-4 py-2 text-sm font-medium transition-colors ${
                       kanbanPeriod === 'quarter'
-                        ? 'bg-blue-50 text-blue-700'
-                        : 'text-muted hover:bg-gray-50'
+                        ? 'bg-interactive-selected-bg text-interactive-selected-fg'
+                        : 'text-muted hover:bg-interactive-hover-bg'
                     }`}
                   >
                     Quarter
@@ -688,8 +660,8 @@ function RoadmapPageInner() {
                     onClick={() => replaceParams({ mode: 'sprint' })}
                     className={`rounded-l-lg px-4 py-2 text-sm font-medium transition-colors ${
                       periodType === 'sprint'
-                        ? 'bg-blue-50 text-blue-700'
-                        : 'text-muted hover:bg-gray-50'
+                        ? 'bg-interactive-selected-bg text-interactive-selected-fg'
+                        : 'text-muted hover:bg-interactive-hover-bg'
                     }`}
                   >
                     Sprint
@@ -699,8 +671,8 @@ function RoadmapPageInner() {
                     onClick={() => replaceParams({ mode: 'quarter' })}
                     className={`rounded-r-lg px-4 py-2 text-sm font-medium transition-colors ${
                       periodType === 'quarter'
-                        ? 'bg-blue-50 text-blue-700'
-                        : 'text-muted hover:bg-gray-50'
+                        ? 'bg-interactive-selected-bg text-interactive-selected-fg'
+                        : 'text-muted hover:bg-interactive-hover-bg'
                     }`}
                   >
                     Quarter
@@ -719,8 +691,15 @@ function RoadmapPageInner() {
 
           {/* Error */}
           {error && (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-              {error}
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+              <p className="text-sm text-red-600">{error}</p>
+              <button
+                type="button"
+                onClick={() => setRetryKey((k) => k + 1)}
+                className="mt-2 text-sm font-medium text-red-700 underline hover:no-underline"
+              >
+                Try again
+              </button>
             </div>
           )}
 

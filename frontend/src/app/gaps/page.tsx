@@ -142,6 +142,7 @@ export default function GapsPage() {
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<GapsResponse | null>(null)
   const [selectedBoard, setSelectedBoard] = useState<string | null>(null)
+  const [retryKey, setRetryKey] = useState(0)
 
   const allBoards = useBoardsStore((s) => s.allBoards)
   const boardsStatus = useBoardsStore((s) => s.status)
@@ -167,7 +168,7 @@ export default function GapsPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [retryKey])
 
   // Client-side board filter
   const filteredNoEpic = useMemo<GapIssue[]>(() => {
@@ -208,8 +209,8 @@ export default function GapsPage() {
             onClick={() => setSelectedBoard(null)}
             className={`rounded-full border px-3 py-1 text-sm font-medium transition-colors ${
               selectedBoard === null
-                ? 'border-blue-500 bg-blue-50 text-blue-700'
-                : 'border-border text-muted hover:bg-gray-50'
+                ? 'border-interactive-selected-border bg-interactive-selected-bg text-interactive-selected-fg'
+                : 'border-border text-muted hover:bg-interactive-hover-bg'
             }`}
           >
             All
@@ -234,8 +235,15 @@ export default function GapsPage() {
 
       {/* Error */}
       {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-          {error}
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <p className="text-sm text-red-600">{error}</p>
+          <button
+            type="button"
+            onClick={() => setRetryKey((k) => k + 1)}
+            className="mt-2 text-sm font-medium text-red-700 underline hover:no-underline"
+          >
+            Try again
+          </button>
         </div>
       )}
 

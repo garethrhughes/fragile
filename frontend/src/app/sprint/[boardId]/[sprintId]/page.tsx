@@ -15,7 +15,7 @@ import {
 } from '@/lib/api'
 import { DataTable, type Column } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
-import { BackButton } from '@/components/ui/back-button'
+import { Breadcrumb } from '@/components/ui/breadcrumb'
 
 // ---------------------------------------------------------------------------
 // Summary stat chip
@@ -539,6 +539,12 @@ export default function SprintDetailPage() {
   const backLabel = getBackLabel(from)
   const backFallback = getBackFallback(from)
 
+  const breadcrumbSegments = [
+    { label: 'Planning', href: '/planning' },
+    { label: boardId, href: `/planning?board=${boardId}` },
+    { label: data?.sprintName ?? sprintId },
+  ]
+
   // ── Loading ──────────────────────────────────────────────────────────────
   if (loading) {
     return (
@@ -552,7 +558,7 @@ export default function SprintDetailPage() {
   if (notFound) {
     return (
       <div className="space-y-4">
-        <BackButton label={backLabel} fallbackHref={backFallback} />
+        <Breadcrumb segments={[{ label: 'Planning', href: backFallback }, { label: boardId }]} />
         <EmptyState
           title="Sprint not found"
           message={`Sprint "${sprintId}" was not found on board "${boardId}".`}
@@ -565,7 +571,7 @@ export default function SprintDetailPage() {
   if (isKanban) {
     return (
       <div className="space-y-4">
-        <BackButton label={backLabel} fallbackHref={backFallback} />
+        <Breadcrumb segments={[{ label: 'Planning', href: backFallback }, { label: boardId }]} />
         <EmptyState
           title="Kanban board"
           message="Sprint detail view is not available for Kanban boards."
@@ -578,10 +584,34 @@ export default function SprintDetailPage() {
   if (error) {
     return (
       <div className="space-y-4">
-        <BackButton label={backLabel} fallbackHref={backFallback} />
-        <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-          <AlertCircle className="h-5 w-5 flex-shrink-0" />
-          {error}
+        <Breadcrumb segments={[{ label: 'Planning', href: backFallback }, { label: boardId }]} />
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-500" />
+            <p className="text-sm text-red-600">{error}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setError(null)
+              setLoading(true)
+              getSprintDetail(boardId, sprintId)
+                .then((res) => setData(res))
+                .catch((err: unknown) => {
+                  if (err instanceof ApiError) {
+                    if (err.status === 404) setNotFound(true)
+                    else if (err.status === 400) setIsKanban(true)
+                    else setError(err.message)
+                  } else {
+                    setError(err instanceof Error ? err.message : 'Failed to load sprint detail')
+                  }
+                })
+                .finally(() => setLoading(false))
+            }}
+            className="mt-2 text-sm font-medium text-red-700 underline hover:no-underline"
+          >
+            Try again
+          </button>
         </div>
       </div>
     )
@@ -591,7 +621,7 @@ export default function SprintDetailPage() {
   if (!data) {
     return (
       <div className="space-y-4">
-        <BackButton label={backLabel} fallbackHref={backFallback} />
+        <Breadcrumb segments={[{ label: 'Planning', href: backFallback }, { label: boardId }]} />
         <EmptyState title="No data" message="No sprint data available." />
       </div>
     )
@@ -605,11 +635,11 @@ export default function SprintDetailPage() {
       {/* Header */}
       <div>
         <div className="mb-2 flex flex-wrap items-center gap-3">
-          <BackButton label={backLabel} fallbackHref={backFallback} />
+          <Breadcrumb segments={breadcrumbSegments} />
           {data.state === 'closed' && (
             <Link
               href={`/sprint-report/${boardId}/${sprintId}`}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1 text-sm font-medium text-foreground shadow-sm hover:bg-gray-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1 text-sm font-medium text-foreground shadow-sm hover:bg-interactive-hover-bg"
             >
               <BarChart2 className="h-4 w-4" />
               View Report

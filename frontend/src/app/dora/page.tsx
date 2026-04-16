@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { AlertTriangle, Loader2 } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
 import { useReplaceParams } from '@/hooks/use-page-params'
 import {
   ResponsiveContainer,
@@ -27,6 +27,7 @@ import { useBoardsStore } from '@/store/boards-store'
 import { OrgMetricCard } from '@/components/ui/org-metric-card'
 import { BoardBreakdownTable } from '@/components/ui/board-breakdown-table'
 import { BoardChip } from '@/components/ui/board-chip'
+import { ToggleChip } from '@/components/ui/toggle-chip'
 import { EmptyState } from '@/components/ui/empty-state'
 import { NoBoardsConfigured } from '@/components/ui/no-boards-configured'
 
@@ -207,55 +208,75 @@ function DoraPageInner() {
   )
 
   // Main data fetch — fires on filter change (2 calls in parallel)
-  useEffect(() => {
+  const loadData = useCallback(async (): Promise<void> => {
     if (selectedBoards.length === 0) {
       setPageState({ status: 'idle' })
       return
     }
 
-    let cancelled = false
     setPageState({ status: 'loading' })
 
     const boardId = selectedBoards.join(',')
 
-    const load = async (): Promise<void> => {
+    try {
       // Fetch trend first so we can align the aggregate window to the rightmost
       // chart point using the server's timezone, not the browser's local date.
-      // Around quarter boundaries, a browser in a different timezone than the
-      // backend's TIMEZONE config can call the wrong quarter and cause the
-      // headline aggregate to disagree with the rightmost chart bar.
       const trend = await getDoraTrend({
         boardId,
         mode: periodType === 'sprint' ? 'sprints' : 'quarters',
         limit: 8,
       })
 
-      if (cancelled) return
-
       // Use the last trend label as the aggregate quarter when it is a
       // quarter label (server timezone aligned). Fall back to the
-      // browser-derived label when trend data is empty or in sprint mode
-      // (where labels are sprint names, not quarter strings).
+      // browser-derived label when trend data is empty or in sprint mode.
       const lastLabel = trend.length > 0 ? trend[trend.length - 1].label : undefined
       const aggregateQuarter =
         lastLabel?.match(/^\d{4}-Q[1-4]$/) != null ? lastLabel : currentQuarterLabel()
 
       const aggregate = await getDoraAggregate({ boardId, quarter: aggregateQuarter })
+      setPageState({ status: 'ready', aggregate, trend })
+    } catch (err: unknown) {
+      setPageState({
+        status: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load metrics',
+      })
+    }
+  }, [selectedBoards, periodType])
 
-      if (!cancelled) {
-        setPageState({ status: 'ready', aggregate, trend })
+  useEffect(() => {
+    let cancelled = false
+    const run = async (): Promise<void> => {
+      if (selectedBoards.length === 0) {
+        setPageState({ status: 'idle' })
+        return
+      }
+      setPageState({ status: 'loading' })
+      const boardId = selectedBoards.join(',')
+      try {
+        const trend = await getDoraTrend({
+          boardId,
+          mode: periodType === 'sprint' ? 'sprints' : 'quarters',
+          limit: 8,
+        })
+        if (cancelled) return
+        const lastLabel = trend.length > 0 ? trend[trend.length - 1].label : undefined
+        const aggregateQuarter =
+          lastLabel?.match(/^\d{4}-Q[1-4]$/) != null ? lastLabel : currentQuarterLabel()
+        const aggregate = await getDoraAggregate({ boardId, quarter: aggregateQuarter })
+        if (!cancelled) {
+          setPageState({ status: 'ready', aggregate, trend })
+        }
+      } catch (err: unknown) {
+        if (!cancelled) {
+          setPageState({
+            status: 'error',
+            message: err instanceof Error ? err.message : 'Failed to load metrics',
+          })
+        }
       }
     }
-
-    load().catch((err: unknown) => {
-      if (!cancelled) {
-        setPageState({
-          status: 'error',
-          message: err instanceof Error ? err.message : 'Failed to load metrics',
-        })
-      }
-    })
-
+    void run()
     return () => {
       cancelled = true
     }
@@ -344,40 +365,24 @@ function DoraPageInner() {
           <label className="mb-2 block text-sm font-medium text-muted">
             Period
           </label>
-          <div className="inline-flex rounded-lg border border-border">
-            <button
-              type="button"
+          <div className="inline-flex gap-1">
+            <ToggleChip
+              label="Quarter"
+              selected={periodType === 'quarter'}
               onClick={() => replaceParams({ mode: 'quarter' })}
-              className={`rounded-l-lg px-4 py-2 text-sm font-medium transition-colors ${
-                periodType === 'quarter'
-                  ? 'bg-blue-50 text-blue-700'
-                  : 'text-muted hover:bg-gray-50'
-              }`}
-            >
-              Quarter
-            </button>
-            <button
-              type="button"
+            />
+            <ToggleChip
+              label="Sprint"
+              selected={periodType === 'sprint'}
+              disabled={!sprintModeAvailable}
               onClick={() => {
                 if (sprintModeAvailable) replaceParams({ mode: 'sprint' })
               }}
-              disabled={!sprintModeAvailable}
-              title={
-                !sprintModeAvailable
-                  ? 'Sprint mode requires exactly one Scrum board to be selected'
-                  : undefined
-              }
-              className={`rounded-r-lg px-4 py-2 text-sm font-medium transition-colors ${
-                periodType === 'sprint'
-                  ? 'bg-blue-50 text-blue-700'
-                  : !sprintModeAvailable
-                    ? 'cursor-not-allowed text-muted opacity-50'
-                    : 'text-muted hover:bg-gray-50'
-              }`}
-            >
-              Sprint
-            </button>
+            />
           </div>
+          {!sprintModeAvailable && (
+            <p className="mt-2 text-xs text-muted">Sprint mode requires a single Scrum board</p>
+          )}
           {periodType === 'sprint' && selectedBoards.length === 1 && (
             <p className="mt-1 text-xs text-muted">
               Showing last 8 sprints for {selectedBoards[0]}
@@ -419,17 +424,42 @@ function DoraPageInner() {
           </div>
         )}
 
-      {/* Loading */}
+      {/* Skeleton loading */}
       {pageState.status === 'loading' && (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-muted" />
+        <div className="space-y-6">
+          {/* Metric card skeletons */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-32 animate-pulse rounded-xl bg-surface-alt" />
+            ))}
+          </div>
+          {/* Trend chart skeletons */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-[200px] animate-pulse rounded-xl bg-surface-alt" />
+            ))}
+          </div>
+          {/* Table skeleton */}
+          <div className="space-y-2 rounded-xl border border-border bg-card p-4">
+            <div className="h-8 animate-pulse rounded bg-surface-alt" />
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="h-10 animate-pulse rounded bg-surface-alt opacity-70" />
+            ))}
+          </div>
         </div>
       )}
 
       {/* Error */}
       {pageState.status === 'error' && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-          {pageState.message}
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <p className="text-sm text-red-600">{pageState.message}</p>
+          <button
+            type="button"
+            onClick={() => void loadData()}
+            className="mt-2 text-sm font-medium text-red-700 underline hover:no-underline"
+          >
+            Try again
+          </button>
         </div>
       )}
 
