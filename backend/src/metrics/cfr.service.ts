@@ -10,6 +10,7 @@ import {
 } from '../database/entities/index.js';
 import { classifyChangeFailureRate, type DoraBand } from './dora-bands.js';
 import { isWorkItem } from './issue-type-filters.js';
+import type { TrendDataSlice } from './trend-data-loader.service.js';
 
 export interface CfrResult {
   boardId: string;
@@ -194,6 +195,106 @@ export class CfrService {
 
     return {
       boardId,
+      totalDeployments,
+      failureCount,
+      changeFailureRate,
+      band: classifyChangeFailureRate(changeFailureRate),
+      usingDefaultConfig,
+    };
+  }
+
+  /**
+   * In-memory variant for the trend path.
+   * Accepts pre-loaded data from TrendDataLoader and slices it to [startDate, endDate].
+   * No DB calls — pure computation.
+   */
+  calculateFromData(
+    slice: TrendDataSlice,
+    startDate: Date,
+    endDate: Date,
+  ): CfrResult {
+    const usingDefaultConfig = slice.boardConfig === null;
+    const doneStatuses = slice.boardConfig?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
+    const failureIssueTypes = slice.boardConfig?.failureIssueTypes ?? ['Bug', 'Incident'];
+    const failureLabels = slice.boardConfig?.failureLabels ?? ['regression', 'incident', 'hotfix'];
+    const failureLinkTypes = slice.boardConfig?.failureLinkTypes ?? [];
+
+    // Primary path: distinct release days in period
+    const periodVersions = slice.versions.filter(
+      (v) => v.releaseDate != null && v.releaseDate >= startDate && v.releaseDate <= endDate,
+    );
+    const releaseDays = new Set(
+      periodVersions.map((v) => v.releaseDate!.toISOString().split('T')[0]),
+    );
+    const versionDeployments = releaseDays.size;
+
+    const versionNames = new Set(periodVersions.map((v) => v.name));
+    const versionIssueKeys = new Set(
+      slice.issues
+        .filter((i) => i.fixVersion != null && versionNames.has(i.fixVersion))
+        .map((i) => i.key),
+    );
+
+    // Fallback path: issues without fixVersion, done transitions in period
+    const noVersionKeys = new Set(
+      slice.issues
+        .filter((i) => !i.fixVersion && !versionIssueKeys.has(i.key))
+        .map((i) => i.key),
+    );
+    const fallbackDays = new Set<string>();
+    const transitionIssueKeys = new Set<string>();
+    for (const cl of slice.changelogs) {
+      if (
+        noVersionKeys.has(cl.issueKey) &&
+        doneStatuses.includes(cl.toValue ?? '') &&
+        cl.changedAt >= startDate &&
+        cl.changedAt <= endDate
+      ) {
+        fallbackDays.add(cl.changedAt.toISOString().split('T')[0]);
+        transitionIssueKeys.add(cl.issueKey);
+      }
+    }
+    const fallbackDeployments = fallbackDays.size;
+
+    const deployedKeys = new Set([...versionIssueKeys, ...transitionIssueKeys]);
+    const totalDeployments = versionDeployments + fallbackDeployments;
+
+    // Failure classification (type/label OR-gate)
+    const issueMap = new Map(slice.issues.map((i) => [i.key, i]));
+    const failureIssues: JiraIssue[] = [];
+    for (const key of deployedKeys) {
+      const issue = issueMap.get(key);
+      if (!issue) continue;
+      const isFailureType = failureIssueTypes.includes(issue.issueType);
+      const hasFailureLabel = issue.labels.some((l) => failureLabels.includes(l));
+      if (isFailureType || hasFailureLabel) failureIssues.push(issue);
+    }
+
+    // AND-gate: require causal link if failureLinkTypes is non-empty
+    let filteredFailures = failureIssues;
+    if (failureLinkTypes.length > 0 && failureIssues.length > 0) {
+      const failureKeySet = new Set(failureIssues.map((i) => i.key));
+      const normalizedLinkTypes = failureLinkTypes.map((t) => t.toLowerCase());
+      const keysWithCausalLink = new Set(
+        slice.issueLinks
+          .filter(
+            (link) =>
+              failureKeySet.has(link.sourceIssueKey) &&
+              normalizedLinkTypes.includes(link.linkTypeName.toLowerCase()),
+          )
+          .map((link) => link.sourceIssueKey),
+      );
+      filteredFailures = failureIssues.filter((i) => keysWithCausalLink.has(i.key));
+    }
+
+    const failureCount = filteredFailures.length;
+    const changeFailureRate =
+      totalDeployments > 0
+        ? Math.round((failureCount / totalDeployments) * 10000) / 100
+        : 0;
+
+    return {
+      boardId: slice.boardId,
       totalDeployments,
       failureCount,
       changeFailureRate,

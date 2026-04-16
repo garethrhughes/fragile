@@ -36,6 +36,7 @@ import {
 import { percentile, round2 } from './statistics.js';
 import { listRecentQuarters, quarterToDates } from './period-utils.js';
 import { DoraCacheService } from './dora-cache.service.js';
+import { TrendDataLoader, type TrendDataSlice } from './trend-data-loader.service.js';
 
 export interface DoraMetricsResult {
   boardId: string;
@@ -47,6 +48,20 @@ export interface DoraMetricsResult {
 }
 
 export type { CycleTimeResult, CycleTimeTrendPoint };
+
+// ---------------------------------------------------------------------------
+// Internal helper type for per-board results before org-level aggregation.
+// ---------------------------------------------------------------------------
+interface PerBoardDoraResult {
+  boardId: string;
+  df: DeploymentFrequencyResult;
+  cfr: CfrResult;
+  lt: LeadTimeResult;
+  mttr: MttrResult;
+  ltObs: number[];
+  mttrObs: number[];
+  boardConfig: BoardConfig | null;
+}
 
 @Injectable()
 export class MetricsService {
@@ -65,6 +80,7 @@ export class MetricsService {
     private readonly boardConfigRepo: Repository<BoardConfig>,
     private readonly configService: ConfigService,
     private readonly doraCache: DoraCacheService,
+    private readonly trendDataLoader: TrendDataLoader,
   ) {
     this.timezone = this.configService.get<string>('TIMEZONE', 'UTC');
   }
@@ -217,13 +233,10 @@ export class MetricsService {
 
         const ltObs = ltResult.observations;
         const ltAnomalyCount = ltResult.anomalyCount;
-
         const mttrObs = mttrObsResult.recoveryHours;
         const mttrOpenCount = mttrObsResult.openIncidentCount;
         const mttrAnomalyCount = mttrObsResult.anomalyCount;
 
-        // Derive per-board summaries from the already-fetched observations.
-        // Arrays are pre-sorted by the observation methods.
         const ltMedian = percentile(ltObs, 50);
         const ltP95 = percentile(ltObs, 95);
         const lt: LeadTimeResult = {
@@ -249,115 +262,7 @@ export class MetricsService {
       }),
     );
 
-    // --- Org-level deployment frequency: sum of totals
-    const totalDeployments = boardResults.reduce(
-      (sum, r) => sum + r.df.totalDeployments,
-      0,
-    );
-    const periodMs = endDate.getTime() - startDate.getTime();
-    const periodDays = Math.max(periodMs / (1000 * 60 * 60 * 24), 1);
-    const deploymentsPerDay = totalDeployments / periodDays;
-    const dfContributing = boardResults.filter((r) => r.df.totalDeployments > 0).length;
-
-    // --- Org-level lead time: pooled median across all boards' observations
-    const allLtObs = boardResults.flatMap((r) => r.ltObs);
-    allLtObs.sort((a, b) => a - b);
-    const ltMedian = percentile(allLtObs, 50);
-    const ltP95 = percentile(allLtObs, 95);
-    const ltContributing = boardResults.filter((r) => r.ltObs.length > 0).length;
-    const ltAnomalyTotal = boardResults.reduce(
-      (sum, r) => sum + r.lt.anomalyCount,
-      0,
-    );
-
-    // --- Org-level CFR: ratio of sums
-    const totalFailures = boardResults.reduce(
-      (sum, r) => sum + r.cfr.failureCount,
-      0,
-    );
-    const totalDeplForCfr = boardResults.reduce(
-      (sum, r) => sum + r.cfr.totalDeployments,
-      0,
-    );
-    const orgCfr =
-      totalDeplForCfr > 0
-        ? Math.round((totalFailures / totalDeplForCfr) * 10000) / 100
-        : 0;
-    const cfrContributing = boardResults.filter(
-      (r) => r.cfr.totalDeployments > 0,
-    ).length;
-    const boardsUsingDefaultConfig = boardResults
-      .filter((r) => r.cfr.usingDefaultConfig)
-      .map((r) => r.boardId);
-    const anyBoardUsingDefaultConfig = boardsUsingDefaultConfig.length > 0;
-
-    // --- Org-level MTTR: pooled median across all boards' observations
-    const allMttrObs = boardResults.flatMap((r) => r.mttrObs);
-    allMttrObs.sort((a, b) => a - b);
-    const mttrMedian = percentile(allMttrObs, 50);
-    const mttrContributing = boardResults.filter((r) => r.mttrObs.length > 0).length;
-    const totalIncidents = allMttrObs.length;
-
-    // --- Per-board breakdowns (RC-4: include boardType)
-    const boardBreakdowns: DoraMetricsBoardBreakdown[] = boardResults.map(
-      (r) => {
-        const rawBoardType = r.boardConfig?.boardType ?? 'scrum';
-        const boardType: 'scrum' | 'kanban' =
-          rawBoardType === 'kanban' ? 'kanban' : 'scrum';
-        return {
-          boardId: r.boardId,
-          period: {
-            start: startDate.toISOString(),
-            end: endDate.toISOString(),
-          },
-          deploymentFrequency: r.df,
-          leadTime: r.lt,
-          changeFailureRate: r.cfr,
-          mttr: r.mttr,
-          boardType,
-        };
-      },
-    );
-
-    const result: OrgDoraResult = {
-      period: {
-        start: startDate.toISOString(),
-        end: endDate.toISOString(),
-      },
-      orgDeploymentFrequency: {
-        totalDeployments,
-        deploymentsPerDay: round2(deploymentsPerDay),
-        band: classifyDeploymentFrequency(deploymentsPerDay),
-        periodDays: Math.round(periodDays),
-        contributingBoards: dfContributing,
-      },
-      orgLeadTime: {
-        medianDays: round2(ltMedian),
-        p95Days: round2(ltP95),
-        band: classifyLeadTime(ltMedian),
-        sampleSize: allLtObs.length,
-        contributingBoards: ltContributing,
-        anomalyCount: ltAnomalyTotal,
-      },
-      orgChangeFailureRate: {
-        totalDeployments: totalDeplForCfr,
-        failureCount: totalFailures,
-        changeFailureRate: orgCfr,
-        band: classifyChangeFailureRate(orgCfr),
-        contributingBoards: cfrContributing,
-        anyBoardUsingDefaultConfig,
-        boardsUsingDefaultConfig,
-      },
-      orgMttr: {
-        medianHours: round2(mttrMedian),
-        band: classifyMTTR(mttrMedian),
-        incidentCount: totalIncidents,
-        contributingBoards: mttrContributing,
-      },
-      boardBreakdowns,
-      anyBoardUsingDefaultConfig,
-      boardsUsingDefaultConfig,
-    };
+    const result = this.buildOrgDoraResult(boardResults, startDate, endDate);
 
     // Store in cache before returning
     this.doraCache.set(cacheKey, result);
@@ -365,14 +270,16 @@ export class MetricsService {
   }
 
   // ---------------------------------------------------------------------------
-  // getDoraTrend (RC-6: parallel over periods via Promise.all)
+  // getDoraTrend
+  //
+  // Change 2: loads all board data once for the full trend range via
+  // TrendDataLoader, then fans out to per-period in-memory calculations.
+  // Query budget: ~2–4 per board (regardless of period count) vs the previous
+  // ~9 × boards × periods.
   // ---------------------------------------------------------------------------
 
   async getDoraTrend(query: DoraTrendQueryDto): Promise<TrendResponse> {
-    // Cache look-up — getDoraTrend is the most expensive endpoint because it
-    // calls getDoraAggregate up to `limit` times (default 8).  Each of those
-    // aggregate calls fires 4-5 DB queries per board.  Cache the full trend
-    // response so repeated page loads don't re-run the full fan-out.
+    // Cache look-up — serve repeated page loads instantly
     const trendCacheKey = DoraCacheService.buildKey(
       {
         boardId: query.boardId,
@@ -388,9 +295,9 @@ export class MetricsService {
 
     const limit = query.limit ?? 8;
     const mode = query.mode ?? 'quarters';
+    const boardIds = await this.resolveBoardIds(query.boardId);
 
     if (mode === 'sprints') {
-      // Sprint mode: requires a single boardId.
       // RC-8: throw BadRequestException if the board is Kanban.
       const boardIdStr = query.boardId;
       if (!boardIdStr) {
@@ -408,81 +315,93 @@ export class MetricsService {
         );
       }
 
-      // List the last `limit` closed sprints for this board
-      const sprints = await this.sprintRepo.find({
+      const sprints = (await this.sprintRepo.find({
         where: { boardId, state: 'closed' },
         order: { endDate: 'DESC' },
         take: limit,
-      });
+      })).filter((s) => s.startDate !== null && s.endDate !== null);
 
       if (sprints.length === 0) return [];
 
-      // Compute aggregate for each sprint in parallel (RC-6)
-      const points = await Promise.all(
-        sprints.map(async (sprint): Promise<TrendPoint> => {
-          const startDate = sprint.startDate ?? new Date();
-          const endDate = sprint.endDate ?? new Date();
+      // Determine full date range spanning all sprints
+      const rangeStart = sprints[sprints.length - 1].startDate as Date;
+      const rangeEnd   = sprints[0].endDate as Date;
 
-          const agg = await this.getDoraAggregate({
-            boardId,
-            period: `${startDate.toISOString().slice(0, 10)}:${endDate.toISOString().slice(0, 10)}`,
-          });
-
-          return {
-            label: sprint.name,
-            start: startDate.toISOString(),
-            end: endDate.toISOString(),
-            deploymentsPerDay: agg.orgDeploymentFrequency.deploymentsPerDay,
-            medianLeadTimeDays: agg.orgLeadTime.medianDays,
-            changeFailureRate: agg.orgChangeFailureRate.changeFailureRate,
-            mttrMedianHours: agg.orgMttr.medianHours,
-            orgBands: {
-              deploymentFrequency: agg.orgDeploymentFrequency.band,
-              leadTime: agg.orgLeadTime.band,
-              changeFailureRate: agg.orgChangeFailureRate.band,
-              mttr: agg.orgMttr.band,
-            },
-          };
-        }),
+      // Sprint trend is always single-board: load data only for the board whose
+      // sprints were fetched.  Using the full resolved boardIds list here would
+      // mix multi-board data into an org aggregate while the sprint list itself
+      // is scoped to a single board, producing incorrect trend results.
+      const slices = await Promise.all(
+        [boardId].map((bid) => this.trendDataLoader.load(bid, rangeStart, rangeEnd)),
       );
 
-      // Return oldest → newest; cache the full sprint trend
+      const points = sprints.map((sprint): TrendPoint => {
+        const periodStart = sprint.startDate as Date;
+        const periodEnd   = sprint.endDate as Date;
+        const agg = this.buildOrgDoraResultFromData(slices, periodStart, periodEnd);
+        return {
+          label: sprint.name,
+          start: periodStart.toISOString(),
+          end:   periodEnd.toISOString(),
+          deploymentsPerDay:    agg.orgDeploymentFrequency.deploymentsPerDay,
+          medianLeadTimeDays:   agg.orgLeadTime.medianDays,
+          changeFailureRate:    agg.orgChangeFailureRate.changeFailureRate,
+          mttrMedianHours:      agg.orgMttr.medianHours,
+          orgBands: {
+            deploymentFrequency: agg.orgDeploymentFrequency.band,
+            leadTime:            agg.orgLeadTime.band,
+            changeFailureRate:   agg.orgChangeFailureRate.band,
+            mttr:                agg.orgMttr.band,
+          },
+        };
+      });
+
+      // Return oldest → newest; sprints are historical by definition
       const sprintTrend = points.reverse();
-      this.doraCache.set(trendCacheKey, sprintTrend);
+      this.doraCache.set(trendCacheKey, sprintTrend, DoraCacheService.HISTORICAL_TTL_MS);
       return sprintTrend;
     }
 
     // Quarter mode (default)
     const quarters = listRecentQuarters(limit, this.timezone); // newest first
-    // RC-6: compute all quarters in parallel
-    const points = await Promise.all(
-      quarters.map(async (q): Promise<TrendPoint> => {
-        const agg = await this.getDoraAggregate({
-          boardId: query.boardId,
-          quarter: q.label,
-        });
 
-        return {
-          label: q.label,
-          start: q.startDate.toISOString(),
-          end: q.endDate.toISOString(),
-          deploymentsPerDay: agg.orgDeploymentFrequency.deploymentsPerDay,
-          medianLeadTimeDays: agg.orgLeadTime.medianDays,
-          changeFailureRate: agg.orgChangeFailureRate.changeFailureRate,
-          mttrMedianHours: agg.orgMttr.medianHours,
-          orgBands: {
-            deploymentFrequency: agg.orgDeploymentFrequency.band,
-            leadTime: agg.orgLeadTime.band,
-            changeFailureRate: agg.orgChangeFailureRate.band,
-            mttr: agg.orgMttr.band,
-          },
-        };
-      }),
+    // Determine full date range spanning all quarters
+    const rangeStart = quarters[quarters.length - 1].startDate;
+    const rangeEnd   = quarters[0].endDate;
+
+    // Load data once per board for the full span
+    const slices = await Promise.all(
+      boardIds.map((bid) => this.trendDataLoader.load(bid, rangeStart, rangeEnd)),
     );
 
-    // Return oldest → newest (quarters is newest-first, so reverse); cache result
+    const points = quarters.map((q): TrendPoint => {
+      const agg = this.buildOrgDoraResultFromData(slices, q.startDate, q.endDate);
+      return {
+        label: q.label,
+        start: q.startDate.toISOString(),
+        end:   q.endDate.toISOString(),
+        deploymentsPerDay:    agg.orgDeploymentFrequency.deploymentsPerDay,
+        medianLeadTimeDays:   agg.orgLeadTime.medianDays,
+        changeFailureRate:    agg.orgChangeFailureRate.changeFailureRate,
+        mttrMedianHours:      agg.orgMttr.medianHours,
+        orgBands: {
+          deploymentFrequency: agg.orgDeploymentFrequency.band,
+          leadTime:            agg.orgLeadTime.band,
+          changeFailureRate:   agg.orgChangeFailureRate.band,
+          mttr:                agg.orgMttr.band,
+        },
+      };
+    });
+
+    // Return oldest → newest
     const quarterTrend = points.reverse();
-    this.doraCache.set(trendCacheKey, quarterTrend);
+
+    // Change 3: cache historical trends longer — data is immutable once the quarter closes
+    const allHistorical = quarters.every((q) =>
+      DoraCacheService.isHistoricalQuarter(q.label, this.timezone),
+    );
+    const ttl = allHistorical ? DoraCacheService.HISTORICAL_TTL_MS : undefined;
+    this.doraCache.set(trendCacheKey, quarterTrend, ttl);
     return quarterTrend;
   }
 
@@ -660,4 +579,178 @@ export class MetricsService {
     return { startDate, endDate };
   }
 
+  /**
+   * Aggregates per-board results into a single OrgDoraResult.
+   * Used by both getDoraAggregate (DB path) and buildOrgDoraResultFromData (trend path).
+   */
+  private buildOrgDoraResult(
+    boardResults: PerBoardDoraResult[],
+    startDate: Date,
+    endDate: Date,
+  ): OrgDoraResult {
+    // --- Org-level deployment frequency: sum of totals
+    const totalDeployments = boardResults.reduce(
+      (sum, r) => sum + r.df.totalDeployments,
+      0,
+    );
+    const periodMs = endDate.getTime() - startDate.getTime();
+    const periodDays = Math.max(periodMs / (1000 * 60 * 60 * 24), 1);
+    const deploymentsPerDay = totalDeployments / periodDays;
+    const dfContributing = boardResults.filter((r) => r.df.totalDeployments > 0).length;
+
+    // --- Org-level lead time: pooled median across all boards' observations
+    const allLtObs = boardResults.flatMap((r) => r.ltObs);
+    allLtObs.sort((a, b) => a - b);
+    const ltMedian = percentile(allLtObs, 50);
+    const ltP95 = percentile(allLtObs, 95);
+    const ltContributing = boardResults.filter((r) => r.ltObs.length > 0).length;
+    const ltAnomalyTotal = boardResults.reduce(
+      (sum, r) => sum + r.lt.anomalyCount,
+      0,
+    );
+
+    // --- Org-level CFR: ratio of sums
+    const totalFailures = boardResults.reduce(
+      (sum, r) => sum + r.cfr.failureCount,
+      0,
+    );
+    const totalDeplForCfr = boardResults.reduce(
+      (sum, r) => sum + r.cfr.totalDeployments,
+      0,
+    );
+    const orgCfr =
+      totalDeplForCfr > 0
+        ? Math.round((totalFailures / totalDeplForCfr) * 10000) / 100
+        : 0;
+    const cfrContributing = boardResults.filter(
+      (r) => r.cfr.totalDeployments > 0,
+    ).length;
+    const boardsUsingDefaultConfig = boardResults
+      .filter((r) => r.cfr.usingDefaultConfig)
+      .map((r) => r.boardId);
+    const anyBoardUsingDefaultConfig = boardsUsingDefaultConfig.length > 0;
+
+    // --- Org-level MTTR: pooled median across all boards' observations
+    const allMttrObs = boardResults.flatMap((r) => r.mttrObs);
+    allMttrObs.sort((a, b) => a - b);
+    const mttrMedian = percentile(allMttrObs, 50);
+    const mttrContributing = boardResults.filter((r) => r.mttrObs.length > 0).length;
+    const totalIncidents = allMttrObs.length;
+
+    // --- Per-board breakdowns (RC-4: include boardType)
+    const boardBreakdowns: DoraMetricsBoardBreakdown[] = boardResults.map((r) => {
+      const rawBoardType = r.boardConfig?.boardType ?? 'scrum';
+      const boardType: 'scrum' | 'kanban' =
+        rawBoardType === 'kanban' ? 'kanban' : 'scrum';
+      return {
+        boardId: r.boardId,
+        period: {
+          start: startDate.toISOString(),
+          end: endDate.toISOString(),
+        },
+        deploymentFrequency: r.df,
+        leadTime: r.lt,
+        changeFailureRate: r.cfr,
+        mttr: r.mttr,
+        boardType,
+      };
+    });
+
+    return {
+      period: {
+        start: startDate.toISOString(),
+        end: endDate.toISOString(),
+      },
+      orgDeploymentFrequency: {
+        totalDeployments,
+        deploymentsPerDay: round2(deploymentsPerDay),
+        band: classifyDeploymentFrequency(deploymentsPerDay),
+        periodDays: Math.round(periodDays),
+        contributingBoards: dfContributing,
+      },
+      orgLeadTime: {
+        medianDays: round2(ltMedian),
+        p95Days: round2(ltP95),
+        band: classifyLeadTime(ltMedian),
+        sampleSize: allLtObs.length,
+        contributingBoards: ltContributing,
+        anomalyCount: ltAnomalyTotal,
+      },
+      orgChangeFailureRate: {
+        totalDeployments: totalDeplForCfr,
+        failureCount: totalFailures,
+        changeFailureRate: orgCfr,
+        band: classifyChangeFailureRate(orgCfr),
+        contributingBoards: cfrContributing,
+        anyBoardUsingDefaultConfig,
+        boardsUsingDefaultConfig,
+      },
+      orgMttr: {
+        medianHours: round2(mttrMedian),
+        band: classifyMTTR(mttrMedian),
+        incidentCount: totalIncidents,
+        contributingBoards: mttrContributing,
+      },
+      boardBreakdowns,
+      anyBoardUsingDefaultConfig,
+      boardsUsingDefaultConfig,
+    };
+  }
+
+  /**
+   * Computes an OrgDoraResult for a single period using pre-loaded TrendDataSlices.
+   * All calculations are in-memory — no DB calls.
+   */
+  private buildOrgDoraResultFromData(
+    slices: TrendDataSlice[],
+    startDate: Date,
+    endDate: Date,
+  ): OrgDoraResult {
+    const boardResults: PerBoardDoraResult[] = slices.map((slice) => {
+      const df  = this.deploymentFrequencyService.calculateFromData(slice, startDate, endDate);
+      const cfr = this.cfrService.calculateFromData(slice, startDate, endDate);
+      const ltResult   = this.leadTimeService.getLeadTimeObservationsFromData(slice, startDate, endDate);
+      const mttrResult = this.mttrService.getMttrObservationsFromData(slice, startDate, endDate);
+
+      const ltObs = ltResult.observations;
+      const ltAnomalyCount = ltResult.anomalyCount;
+      const mttrObs = mttrResult.recoveryHours;
+      const mttrOpenCount = mttrResult.openIncidentCount;
+      const mttrAnomalyCount = mttrResult.anomalyCount;
+
+      const ltMedian = percentile(ltObs, 50);
+      const ltP95    = percentile(ltObs, 95);
+      const lt: LeadTimeResult = {
+        boardId: slice.boardId,
+        medianDays: round2(ltMedian),
+        p95Days:    round2(ltP95),
+        band: classifyLeadTime(ltMedian),
+        sampleSize: ltObs.length,
+        anomalyCount: ltAnomalyCount,
+      };
+
+      const mttrMedianVal = percentile(mttrObs, 50);
+      const mttr: MttrResult = {
+        boardId: slice.boardId,
+        medianHours: round2(mttrMedianVal),
+        band: classifyMTTR(mttrMedianVal),
+        incidentCount: mttrObs.length,
+        openIncidentCount: mttrOpenCount,
+        anomalyCount: mttrAnomalyCount,
+      };
+
+      return {
+        boardId: slice.boardId,
+        df,
+        cfr,
+        lt,
+        mttr,
+        ltObs,
+        mttrObs,
+        boardConfig: slice.boardConfig,
+      };
+    });
+
+    return this.buildOrgDoraResult(boardResults, startDate, endDate);
+  }
 }

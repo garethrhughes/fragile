@@ -7,6 +7,7 @@ import {
   BoardConfig,
   JiraIssueLink,
 } from '../database/entities/index.js';
+import type { TrendDataSlice } from './trend-data-loader.service.js';
 
 function mockRepo<T extends object>(): jest.Mocked<Repository<T>> {
   return {
@@ -285,6 +286,105 @@ describe('CfrService', () => {
       const result = await service.calculate('ACC', start, end);
 
       expect(result.totalDeployments).toBe(2);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Change 2: calculateFromData — in-memory variant for the trend path
+  // -------------------------------------------------------------------------
+
+  describe('calculateFromData', () => {
+    function makeSlice(overrides: Partial<TrendDataSlice> = {}): TrendDataSlice {
+      return {
+        boardId: 'ACC',
+        boardConfig: null,
+        wtEntity: {} as never,
+        issues: [],
+        changelogs: [],
+        versions: [],
+        issueLinks: [],
+        ...overrides,
+      };
+    }
+
+    const start = new Date('2025-01-01');
+    const end = new Date('2025-03-31');
+
+    it('returns zero CFR for an empty slice', () => {
+      const result = service.calculateFromData(makeSlice(), start, end);
+      expect(result.boardId).toBe('ACC');
+      expect(result.totalDeployments).toBe(0);
+      expect(result.failureCount).toBe(0);
+      expect(result.changeFailureRate).toBe(0);
+    });
+
+    it('calculates CFR from pre-loaded version and issue data', () => {
+      const slice = makeSlice({
+        boardConfig: {
+          boardId: 'ACC',
+          doneStatusNames: ['Done'],
+          failureIssueTypes: ['Bug'],
+          failureLabels: [],
+          failureLinkTypes: [],
+        } as never,
+        issues: [
+          { key: 'ACC-1', issueType: 'Story', fixVersion: 'v1.0', labels: [] } as JiraIssue,
+          { key: 'ACC-2', issueType: 'Bug',   fixVersion: 'v1.0', labels: [] } as JiraIssue,
+        ],
+        versions: [
+          { name: 'v1.0', releaseDate: new Date('2025-02-01'), projectKey: 'ACC', released: true } as JiraVersion,
+        ],
+        issueLinks: [],
+      });
+
+      const result = service.calculateFromData(slice, start, end);
+
+      // 1 release day = 1 deployment
+      expect(result.totalDeployments).toBe(1);
+      // ACC-2 is a Bug and was in the v1.0 release
+      expect(result.failureCount).toBe(1);
+      expect(result.changeFailureRate).toBe(100);
+    });
+
+    it('applies failureLinkTypes AND-gate from pre-loaded issueLinks', () => {
+      const slice = makeSlice({
+        boardConfig: {
+          boardId: 'ACC',
+          doneStatusNames: ['Done'],
+          failureIssueTypes: ['Bug'],
+          failureLabels: [],
+          failureLinkTypes: ['is caused by'],
+        } as never,
+        issues: [
+          { key: 'ACC-1', issueType: 'Bug', fixVersion: 'v1.0', labels: [] } as JiraIssue,
+          { key: 'ACC-2', issueType: 'Bug', fixVersion: 'v1.0', labels: [] } as JiraIssue,
+        ],
+        versions: [
+          { name: 'v1.0', releaseDate: new Date('2025-02-01'), projectKey: 'ACC', released: true } as JiraVersion,
+        ],
+        // Only ACC-1 has a causal link — ACC-2 should be excluded
+        issueLinks: [
+          { sourceIssueKey: 'ACC-1', targetIssueKey: 'X-99', linkTypeName: 'is caused by', isInward: false } as JiraIssueLink,
+        ],
+      });
+
+      const result = service.calculateFromData(slice, start, end);
+
+      expect(result.failureCount).toBe(1); // only ACC-1 passes AND-gate
+    });
+
+    it('excludes versions outside the period', () => {
+      const slice = makeSlice({
+        issues: [{ key: 'ACC-1', issueType: 'Story', fixVersion: 'v2.0', labels: [] } as JiraIssue],
+        versions: [
+          // Outside period — must not count
+          { name: 'v2.0', releaseDate: new Date('2025-06-01'), projectKey: 'ACC', released: true } as JiraVersion,
+        ],
+        issueLinks: [],
+      });
+
+      const result = service.calculateFromData(slice, start, end);
+      expect(result.totalDeployments).toBe(0);
     });
   });
 });

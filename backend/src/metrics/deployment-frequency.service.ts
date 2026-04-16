@@ -12,6 +12,7 @@ import {
   type DoraBand,
 } from './dora-bands.js';
 import { isWorkItem } from './issue-type-filters.js';
+import type { TrendDataSlice } from './trend-data-loader.service.js';
 
 export interface DeploymentFrequencyResult {
   boardId: string;
@@ -103,6 +104,66 @@ export class DeploymentFrequencyService {
 
     return {
       boardId,
+      totalDeployments,
+      deploymentsPerDay,
+      band: classifyDeploymentFrequency(deploymentsPerDay),
+      periodDays: Math.round(periodDays),
+    };
+  }
+
+  /**
+   * In-memory variant for the trend path.
+   * Accepts pre-loaded data from TrendDataLoader and slices it to [startDate, endDate].
+   * No DB calls — pure computation.
+   */
+  calculateFromData(
+    slice: TrendDataSlice,
+    startDate: Date,
+    endDate: Date,
+  ): DeploymentFrequencyResult {
+    const doneStatuses = slice.boardConfig?.doneStatusNames ?? [
+      'Done',
+      'Closed',
+      'Released',
+    ];
+
+    // Primary path: distinct release days within the period
+    const releaseDays = new Set(
+      slice.versions
+        .filter(
+          (v) =>
+            v.releaseDate != null &&
+            v.releaseDate >= startDate &&
+            v.releaseDate <= endDate,
+        )
+        .map((v) => v.releaseDate!.toISOString().split('T')[0]),
+    );
+    const versionDeployments = releaseDays.size;
+
+    // Fallback: issues with no fixVersion, distinct done-transition days in period
+    const noVersionKeys = new Set(
+      slice.issues.filter((i) => !i.fixVersion).map((i) => i.key),
+    );
+    const fallbackDays = new Set<string>();
+    for (const cl of slice.changelogs) {
+      if (
+        noVersionKeys.has(cl.issueKey) &&
+        doneStatuses.includes(cl.toValue ?? '') &&
+        cl.changedAt >= startDate &&
+        cl.changedAt <= endDate
+      ) {
+        fallbackDays.add(cl.changedAt.toISOString().split('T')[0]);
+      }
+    }
+    const fallbackDeployments = fallbackDays.size;
+
+    const totalDeployments = versionDeployments + fallbackDeployments;
+    const periodMs = endDate.getTime() - startDate.getTime();
+    const periodDays = Math.max(periodMs / (1000 * 60 * 60 * 24), 1);
+    const deploymentsPerDay = totalDeployments / periodDays;
+
+    return {
+      boardId: slice.boardId,
       totalDeployments,
       deploymentsPerDay,
       band: classifyDeploymentFrequency(deploymentsPerDay),

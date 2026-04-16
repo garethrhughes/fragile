@@ -11,6 +11,7 @@ import { CycleTimeService } from './cycle-time.service.js';
 import { CycleTimeController } from './cycle-time.controller.js';
 import { WorkingTimeService } from './working-time.service.js';
 import { DoraCacheService } from './dora-cache.service.js';
+import { TrendDataLoader } from './trend-data-loader.service.js';
 import {
   JiraIssue,
   JiraChangelog,
@@ -44,6 +45,7 @@ import {
     CycleTimeService,
     WorkingTimeService,
     DoraCacheService,
+    TrendDataLoader,
   ],
   exports: [MetricsService, WorkingTimeService],
 })

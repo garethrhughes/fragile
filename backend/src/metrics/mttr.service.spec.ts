@@ -4,7 +4,9 @@ import {
   JiraIssue,
   JiraChangelog,
   BoardConfig,
+  WorkingTimeConfigEntity,
 } from '../database/entities/index.js';
+import type { TrendDataSlice } from './trend-data-loader.service.js';
 
 function mockRepo<T extends object>(): jest.Mocked<Repository<T>> {
   return {
@@ -175,6 +177,88 @@ describe('MttrService', () => {
     expect(result.band).toBe('elite');
   });
 
+  // ---------------------------------------------------------------------------
+  // Fix 0034: in-flight incidents (In Progress before startDate) must use the
+  // correct start time, not fall back to createdAt
+  // ---------------------------------------------------------------------------
+
+  it('uses the pre-period In Progress transition as startTime, not createdAt (proposal 0034)', async () => {
+    const start = new Date('2025-02-01');
+    const end   = new Date('2025-03-31');
+
+    boardConfigRepo.findOne.mockResolvedValue({
+      boardId: 'ACC',
+      boardType: 'scrum',
+      incidentIssueTypes: ['Incident'],
+      recoveryStatusNames: ['Done'],
+      incidentLabels: [],
+      incidentPriorities: [],
+      inProgressStatusNames: ['In Progress'],
+      dataStartDate: null,
+    } as unknown as BoardConfig);
+
+    // Incident created well before the window; moved to In Progress before window opens
+    const createdAt    = new Date('2025-01-01T00:00:00Z');
+    const inProgress   = new Date('2025-01-20T00:00:00Z'); // before start
+    const recoveryDate = new Date('2025-02-20T00:00:00Z'); // within window — 31 days after In Progress
+
+    issueRepo.find.mockResolvedValue([
+      { key: 'ACC-1', boardId: 'ACC', issueType: 'Incident', labels: [], priority: null, createdAt },
+    ] as unknown as JiraIssue[]);
+
+    changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: inProgress },
+        { issueKey: 'ACC-1', field: 'status', toValue: 'Done',        changedAt: recoveryDate },
+      ]),
+    });
+
+    const result = await service.calculate('ACC', start, end);
+
+    expect(result.incidentCount).toBe(1);
+    // MTTR should be from inProgress → recoveryDate = 31 days = 744 hours
+    // NOT from createdAt → recoveryDate = 50 days = 1200 hours
+    expect(result.medianHours).toBeCloseTo(31 * 24, 0);
+  });
+
+  it('does not pass a changedAt lower-bound to the changelog query builder', async () => {
+    const start = new Date('2025-01-01');
+    const end   = new Date('2025-03-31');
+
+    boardConfigRepo.findOne.mockResolvedValue({
+      boardId: 'ACC',
+      boardType: 'scrum',
+      incidentIssueTypes: ['Bug'],
+      recoveryStatusNames: ['Done'],
+      incidentLabels: [],
+      incidentPriorities: [],
+      inProgressStatusNames: ['In Progress'],
+    } as unknown as BoardConfig);
+
+    issueRepo.find.mockResolvedValue([
+      { key: 'ACC-1', boardId: 'ACC', issueType: 'Bug', labels: [], priority: null, createdAt: new Date('2024-06-01') },
+    ] as unknown as JiraIssue[]);
+
+    const andWhere = jest.fn().mockReturnThis();
+    const qb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere,
+      orderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([]),
+    };
+    changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(qb);
+
+    await service.getMttrObservations('ACC', start, end);
+
+    const changedAtCall = andWhere.mock.calls.find(
+      (args) => typeof args[0] === 'string' && args[0].includes('changedAt'),
+    );
+    expect(changedAtCall).toBeUndefined();
+  });
+
   // -------------------------------------------------------------------------
   // Fix C-2: openIncidentCount and anomalyCount
   // -------------------------------------------------------------------------
@@ -271,6 +355,96 @@ describe('MttrService', () => {
 
       expect(result.anomalyCount).toBe(1);
       expect(result.incidentCount).toBe(0); // excluded from sample
+    });
+
+    // -------------------------------------------------------------------------
+    // Change 2: getMttrObservationsFromData — in-memory variant
+    // -------------------------------------------------------------------------
+
+    describe('getMttrObservationsFromData', () => {
+      function makeSlice(overrides: Partial<TrendDataSlice> = {}): TrendDataSlice {
+        return {
+          boardId: 'ACC',
+          boardConfig: null,
+          wtEntity: Object.assign(new WorkingTimeConfigEntity(), { id: 1, excludeWeekends: false, workDays: [1,2,3,4,5], hoursPerDay: 8, holidays: [] }),
+          issues: [],
+          changelogs: [],
+          versions: [],
+          issueLinks: [],
+          ...overrides,
+        };
+      }
+
+      const start = new Date('2025-01-01');
+      const end   = new Date('2025-03-31');
+
+      it('returns empty result for an empty slice', () => {
+        const r = service.getMttrObservationsFromData(makeSlice(), start, end);
+        expect(r.recoveryHours).toHaveLength(0);
+        expect(r.openIncidentCount).toBe(0);
+        expect(r.anomalyCount).toBe(0);
+      });
+
+      it('calculates recovery hours from In Progress to Done within the period', () => {
+        const created     = new Date('2025-02-01T00:00:00Z');
+        const inProgress  = new Date('2025-02-01T06:00:00Z');
+        const done        = new Date('2025-02-01T18:00:00Z'); // 12 h after inProgress
+
+        const slice = makeSlice({
+          boardConfig: {
+            boardId: 'ACC',
+            incidentIssueTypes: ['Bug'],
+            recoveryStatusNames: ['Done'],
+            incidentLabels: [],
+            incidentPriorities: [],
+            inProgressStatusNames: ['In Progress'],
+          } as never,
+          issues: [
+            { key: 'ACC-1', issueType: 'Bug', labels: [], priority: null, createdAt: created } as JiraIssue,
+          ],
+          changelogs: [
+            { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: inProgress } as JiraChangelog,
+            { issueKey: 'ACC-1', field: 'status', toValue: 'Done',        changedAt: done }        as JiraChangelog,
+          ],
+        });
+
+        const r = service.getMttrObservationsFromData(slice, start, end);
+        expect(r.recoveryHours).toHaveLength(1);
+        expect(r.recoveryHours[0]).toBe(12);
+      });
+
+      it('counts incident with no recovery transition as openIncidentCount', () => {
+        const slice = makeSlice({
+          boardConfig: { boardId: 'ACC', incidentIssueTypes: ['Incident'], recoveryStatusNames: ['Done'], incidentLabels: [], incidentPriorities: [], inProgressStatusNames: ['In Progress'] } as never,
+          issues: [
+            { key: 'ACC-1', issueType: 'Incident', labels: [], priority: null, createdAt: new Date('2025-02-01') } as JiraIssue,
+          ],
+          changelogs: [], // no recovery
+        });
+
+        const r = service.getMttrObservationsFromData(slice, start, end);
+        expect(r.openIncidentCount).toBe(1);
+        expect(r.recoveryHours).toHaveLength(0);
+      });
+
+      it('excludes recovery transitions outside the period', () => {
+        const created = new Date('2024-11-01T00:00:00Z');
+        const done    = new Date('2024-12-01T00:00:00Z'); // before start
+
+        const slice = makeSlice({
+          boardConfig: { boardId: 'ACC', incidentIssueTypes: ['Bug'], recoveryStatusNames: ['Done'], incidentLabels: [], incidentPriorities: [], inProgressStatusNames: ['In Progress'] } as never,
+          issues: [
+            { key: 'ACC-1', issueType: 'Bug', labels: [], priority: null, createdAt: created } as JiraIssue,
+          ],
+          changelogs: [
+            { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: done } as JiraChangelog,
+          ],
+        });
+
+        const r = service.getMttrObservationsFromData(slice, start, end);
+        expect(r.openIncidentCount).toBe(1);  // no in-period recovery → still open
+        expect(r.recoveryHours).toHaveLength(0);
+      });
     });
 
     it('returns openIncidentCount = 0 and anomalyCount = 0 for normal incidents', async () => {

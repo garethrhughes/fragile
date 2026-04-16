@@ -13,6 +13,7 @@
  * - Default TTL: 60 seconds (configurable per-entry)
  */
 import { Injectable } from '@nestjs/common';
+import { quarterToDates } from './period-utils.js';
 
 const DEFAULT_TTL_MS = 60_000; // 60 seconds
 
@@ -23,6 +24,8 @@ interface CacheEntry<T> {
 
 @Injectable()
 export class DoraCacheService {
+  /** 15-minute TTL used for trend responses where every period is historical. */
+  static readonly HISTORICAL_TTL_MS = 900_000;
   private readonly store = new Map<string, CacheEntry<unknown>>();
 
   /**
@@ -69,6 +72,25 @@ export class DoraCacheService {
   // ---------------------------------------------------------------------------
   // Static helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Returns true if the given quarter label's end date is in the past,
+   * meaning the data for that quarter is immutable and can be cached for longer.
+   *
+   * @param quarter - Quarter label in YYYY-QN format (e.g. "2025-Q1")
+   * @param tz      - IANA timezone (default 'UTC')
+   */
+  static isHistoricalQuarter(quarter: string, tz = 'UTC'): boolean {
+    try {
+      const { endDate } = quarterToDates(quarter, tz);
+      // quarterToDates returns a 90-day fallback for invalid input — detect by
+      // checking that the label matches the expected pattern.
+      if (!/^\d{4}-Q[1-4]$/.test(quarter)) return false;
+      return endDate < new Date();
+    } catch {
+      return false;
+    }
+  }
 
   /**
    * Build a deterministic cache key from an arbitrary params object.
