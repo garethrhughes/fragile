@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
 import { Loader2, ExternalLink, AlertCircle } from 'lucide-react'
 import {
@@ -11,7 +11,7 @@ import {
 } from '@/lib/api'
 import { DataTable, type Column } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
-import { BackButton } from '@/components/ui/back-button'
+import { Breadcrumb } from '@/components/ui/breadcrumb'
 
 // ---------------------------------------------------------------------------
 // Summary stat chip
@@ -207,12 +207,6 @@ function rowClassName(row: QuarterDetailIssue): string {
 // Back label helper
 // ---------------------------------------------------------------------------
 
-function getBackLabel(from: string | null): string {
-  if (from === 'roadmap') return 'Back to Roadmap'
-  if (from === 'planning') return 'Planning'
-  return 'Back to Roadmap'
-}
-
 function getBackFallback(from: string | null): string {
   if (from === 'planning') return '/planning'
   return '/roadmap'
@@ -245,6 +239,11 @@ export default function QuarterDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notFound, setNotFound] = useState(false)
+  const [retryKey, setRetryKey] = useState(0)
+
+  const reload = useCallback(() => {
+    setRetryKey((k) => k + 1)
+  }, [])
 
   useEffect(() => {
     if (!boardId || !quarter) return
@@ -277,11 +276,10 @@ export default function QuarterDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [boardId, quarter])
+  }, [boardId, quarter, retryKey])
 
   const columns = useMemo(() => buildColumns(), [])
 
-  const backLabel = getBackLabel(from)
   const backFallback = getBackFallback(from)
 
   // ── Loading ──────────────────────────────────────────────────────────────
@@ -297,7 +295,7 @@ export default function QuarterDetailPage() {
   if (notFound) {
     return (
       <div className="space-y-4">
-        <BackButton label={backLabel} fallbackHref={backFallback} />
+        <Breadcrumb segments={[{ label: 'Back', href: backFallback }, { label: boardId }]} />
         <EmptyState
           title="Quarter not found"
           message={`No data found for quarter "${quarter}" on board "${boardId}".`}
@@ -310,10 +308,19 @@ export default function QuarterDetailPage() {
   if (error) {
     return (
       <div className="space-y-4">
-        <BackButton label={backLabel} fallbackHref={backFallback} />
-        <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-          <AlertCircle className="h-5 w-5 flex-shrink-0" />
-          {error}
+        <Breadcrumb segments={[{ label: 'Back', href: backFallback }, { label: boardId }]} />
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-500" />
+            <p className="text-sm text-red-600">{error}</p>
+          </div>
+          <button
+            type="button"
+            onClick={reload}
+            className="mt-2 text-sm font-medium text-red-700 underline hover:no-underline"
+          >
+            Try again
+          </button>
         </div>
       </div>
     )
@@ -323,7 +330,7 @@ export default function QuarterDetailPage() {
   if (!data) {
     return (
       <div className="space-y-4">
-        <BackButton label={backLabel} fallbackHref={backFallback} />
+        <Breadcrumb segments={[{ label: 'Back', href: backFallback }, { label: boardId }]} />
         <EmptyState title="No data" message="No quarter data available." />
       </div>
     )
@@ -337,7 +344,13 @@ export default function QuarterDetailPage() {
       {/* Header */}
       <div>
         <div className="mb-2">
-          <BackButton label={backLabel} fallbackHref={backFallback} />
+          <Breadcrumb
+            segments={[
+              { label: 'Back', href: backFallback },
+              { label: boardId },
+              { label: quarter },
+            ]}
+          />
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold">{quarter}</h1>

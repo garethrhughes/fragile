@@ -2,10 +2,11 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart3, Target, Map, Settings, Timer, RefreshCw, AlertCircle } from 'lucide-react'
+import { BarChart3, Target, Map, Settings, Timer, RefreshCw, AlertCircle, Sun, Moon } from 'lucide-react'
 import { useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { useSyncStore } from '@/store/sync-store'
+import { useDarkMode } from '@/hooks/use-dark-mode'
 
 interface NavItem {
   label: string
@@ -49,6 +50,7 @@ function latestSync(lastSynced: Record<string, string>): string | null {
 export function Sidebar() {
   const pathname = usePathname()
   const { lastSynced, isSyncing, triggerSync, fetchStatus } = useSyncStore()
+  const { dark, toggle: toggleDark } = useDarkMode()
 
   useEffect(() => {
     void fetchStatus()
@@ -109,6 +111,18 @@ export function Sidebar() {
             <RefreshCw className={`h-5 w-5 ${isSyncing ? 'animate-spin' : ''}`} />
           </span>
           {isSyncing ? 'Syncing…' : 'Sync Now'}
+        </button>
+
+        {/* Dark mode toggle */}
+        <button
+          type="button"
+          onClick={toggleDark}
+          className="mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-text-secondary transition-colors hover:bg-surface-raised"
+        >
+          <span className="text-text-muted">
+            {dark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+          </span>
+          {dark ? 'Light Mode' : 'Dark Mode'}
         </button>
 
         {/* Settings link */}

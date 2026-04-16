@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { AlertTriangle, Loader2 } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
 import { useReplaceParams } from '@/hooks/use-page-params'
 import {
   getCycleTime,
@@ -17,12 +17,15 @@ import {
 import { classifyCycleTime } from '@/lib/cycle-time-bands'
 import { useBoardsStore } from '@/store/boards-store'
 import { BoardChip } from '@/components/ui/board-chip'
+import { ToggleChip } from '@/components/ui/toggle-chip'
 import { EmptyState } from '@/components/ui/empty-state'
 import { NoBoardsConfigured } from '@/components/ui/no-boards-configured'
 import { CycleTimePercentileCard } from '@/components/ui/cycle-time-percentile-card'
 import { CycleTimeTrendChart } from '@/components/ui/cycle-time-trend-chart'
 import { CycleTimeScatter } from '@/components/ui/cycle-time-scatter'
 import { CycleTimeBandBadge } from '@/components/ui/cycle-time-band-badge'
+
+const PAGE_SIZE = 50
 
 // ---------------------------------------------------------------------------
 // Types
@@ -93,7 +96,13 @@ function CycleTimePageInner() {
 
   const [quarters, setQuarters] = useState<QuarterInfo[]>([])
   const [pageState, setPageState] = useState<PageState>({ status: 'idle' })
+  const [retryKey, setRetryKey] = useState(0)
   const [excludeWeekends, setExcludeWeekends] = useState(true)
+
+  const reload = useCallback(() => {
+    setRetryKey((k) => k + 1)
+  }, [])
+  const [tablePage, setTablePage] = useState(0)
 
   // Fetch app config (timezone, excludeWeekends) once on mount
   useEffect(() => {
@@ -124,46 +133,44 @@ function CycleTimePageInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Main data fetch — fires on filter change
+  // Main data fetch — fires on filter change or retry
   useEffect(() => {
-    if (boardsStatus !== 'ready') return
-    if (!selectedQuarter) return
     let cancelled = false
+    if (boardsStatus !== 'ready' || !selectedQuarter) return
     setPageState({ status: 'loading' })
 
-    const load = async (): Promise<void> => {
-      const [results, trend] = await Promise.all([
-        getCycleTime({
-          boardId: selectedBoard,
-          quarter: selectedQuarter,
-          issueType: issueTypeFilter || undefined,
-        }),
-        getCycleTimeTrend({
-          boardId: selectedBoard,
-          mode: 'quarters',
-          limit: 8,
-          issueType: issueTypeFilter || undefined,
-        }),
-      ])
-
-      if (!cancelled) {
-        setPageState({ status: 'ready', results, trend })
+    const run = async (): Promise<void> => {
+      try {
+        const [results, trend] = await Promise.all([
+          getCycleTime({
+            boardId: selectedBoard,
+            quarter: selectedQuarter,
+            issueType: issueTypeFilter || undefined,
+          }),
+          getCycleTimeTrend({
+            boardId: selectedBoard,
+            mode: 'quarters',
+            limit: 8,
+            issueType: issueTypeFilter || undefined,
+          }),
+        ])
+        if (!cancelled) {
+          setPageState({ status: 'ready', results, trend })
+        }
+      } catch (err: unknown) {
+        if (!cancelled) {
+          setPageState({
+            status: 'error',
+            message: err instanceof Error ? err.message : 'Failed to load cycle time data',
+          })
+        }
       }
     }
-
-    load().catch((err: unknown) => {
-      if (!cancelled) {
-        setPageState({
-          status: 'error',
-          message: err instanceof Error ? err.message : 'Failed to load cycle time data',
-        })
-      }
-    })
-
+    void run()
     return () => {
       cancelled = true
     }
-  }, [selectedBoard, selectedQuarter, issueTypeFilter, boardsStatus])
+  }, [selectedBoard, selectedQuarter, issueTypeFilter, boardsStatus, retryKey])
 
   // Compute pooled percentiles across all boards' results
   const pooled = useMemo(() => {
@@ -176,6 +183,17 @@ function CycleTimePageInner() {
     if (pageState.status !== 'ready') return []
     return pageState.results.flatMap((r) => r.observations)
   }, [pageState])
+
+  // Reset table page when observations change
+  useEffect(() => {
+    setTablePage(0)
+  }, [allObservations])
+
+  // Paginated observations
+  const pagedObservations = useMemo(
+    () => allObservations.slice(tablePage * PAGE_SIZE, (tablePage + 1) * PAGE_SIZE),
+    [allObservations, tablePage],
+  )
 
   // Derive available issue types from observations
   const availableIssueTypes = useMemo((): string[] => {
@@ -224,18 +242,12 @@ function CycleTimePageInner() {
           <label className="mb-2 block text-sm font-medium text-muted">Quarter</label>
           <div className="inline-flex flex-wrap gap-1">
             {quarters.map((q) => (
-              <button
+              <ToggleChip
                 key={q.quarter}
-                type="button"
+                label={q.quarter}
+                selected={selectedQuarter === q.quarter}
                 onClick={() => replaceParams({ quarter: q.quarter })}
-                className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
-                  selectedQuarter === q.quarter
-                    ? 'border-blue-300 bg-blue-50 text-blue-700'
-                    : 'border-border text-muted hover:bg-gray-50'
-                }`}
-              >
-                {q.quarter}
-              </button>
+              />
             ))}
           </div>
         </div>
@@ -245,47 +257,57 @@ function CycleTimePageInner() {
           <div>
             <label className="mb-2 block text-sm font-medium text-muted">Issue Type</label>
             <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
+              <ToggleChip
+                label="All"
+                selected={issueTypeFilter === ''}
                 onClick={() => replaceParams({ type: null })}
-                className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
-                  issueTypeFilter === ''
-                    ? 'border-blue-300 bg-blue-50 text-blue-700'
-                    : 'border-border text-muted hover:bg-gray-50'
-                }`}
-              >
-                All
-              </button>
+              />
               {availableIssueTypes.map((t) => (
-                <button
+                <ToggleChip
                   key={t}
-                  type="button"
+                  label={t}
+                  selected={issueTypeFilter === t}
                   onClick={() => replaceParams({ type: t })}
-                  className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
-                    issueTypeFilter === t
-                      ? 'border-blue-300 bg-blue-50 text-blue-700'
-                      : 'border-border text-muted hover:bg-gray-50'
-                  }`}
-                >
-                  {t}
-                </button>
+                />
               ))}
             </div>
           </div>
         )}
       </div>
 
-      {/* Loading */}
+      {/* Skeleton loading */}
       {pageState.status === 'loading' && (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-muted" />
+        <div className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-32 animate-pulse rounded-xl bg-surface-alt" />
+            ))}
+          </div>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div key={i} className="h-[200px] animate-pulse rounded-xl bg-surface-alt" />
+            ))}
+          </div>
+          <div className="space-y-2 rounded-xl border border-border bg-card p-4">
+            <div className="h-8 animate-pulse rounded bg-surface-alt" />
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="h-10 animate-pulse rounded bg-surface-alt opacity-70" />
+            ))}
+          </div>
         </div>
       )}
 
       {/* Error */}
       {pageState.status === 'error' && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-          {pageState.message}
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <p className="text-sm text-red-600">{pageState.message}</p>
+          <button
+            type="button"
+            onClick={reload}
+            className="mt-2 text-sm font-medium text-red-700 underline hover:no-underline"
+          >
+            Try again
+          </button>
         </div>
       )}
 
@@ -372,7 +394,7 @@ function CycleTimePageInner() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-border bg-gray-50">
+                      <tr className="border-b border-border bg-table-header-bg">
                         <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted">
                           Issue
                         </th>
@@ -394,10 +416,10 @@ function CycleTimePageInner() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
-                      {allObservations.map((obs) => (
+                      {pagedObservations.map((obs) => (
                         <tr
                           key={obs.issueKey}
-                          className="hover:bg-gray-50"
+                          className="hover:bg-interactive-hover-bg"
                         >
                           <td className="px-4 py-2.5 font-mono text-xs">
                             {obs.jiraUrl ? (
@@ -433,6 +455,31 @@ function CycleTimePageInner() {
                     </tbody>
                   </table>
                 </div>
+                {allObservations.length > PAGE_SIZE && (
+                  <div className="flex items-center justify-between border-t border-border px-4 py-3">
+                    <p className="text-xs text-muted">
+                      Showing {tablePage * PAGE_SIZE + 1}–{Math.min((tablePage + 1) * PAGE_SIZE, allObservations.length)} of {allObservations.length}
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setTablePage((p) => p - 1)}
+                        disabled={tablePage === 0}
+                        className="rounded border border-border px-2 py-1 text-xs transition-colors hover:bg-interactive-hover-bg disabled:opacity-50"
+                      >
+                        ← Prev
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTablePage((p) => p + 1)}
+                        disabled={(tablePage + 1) * PAGE_SIZE >= allObservations.length}
+                        className="rounded border border-border px-2 py-1 text-xs transition-colors hover:bg-interactive-hover-bg disabled:opacity-50"
+                      >
+                        Next →
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </>
           )}

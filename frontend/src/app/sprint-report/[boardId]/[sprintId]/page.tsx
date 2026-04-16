@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import { Loader2, AlertCircle, RefreshCw, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
-import { BackButton } from '@/components/ui/back-button'
+import { Breadcrumb } from '@/components/ui/breadcrumb'
 import {
   ResponsiveContainer,
   LineChart,
@@ -548,10 +548,19 @@ export default function SprintReportPage() {
   if (pageState.status === 'error') {
     return (
       <div className="space-y-4">
-        <BackButton label="Back to Sprint" fallbackHref={`/sprint/${boardId}/${sprintId}`} />
-        <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-          <AlertCircle className="h-5 w-5 flex-shrink-0" />
-          {pageState.message}
+        <Breadcrumb segments={[{ label: 'Sprint', href: `/sprint/${boardId}/${sprintId}` }, { label: 'Report' }]} />
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="h-5 w-5 flex-shrink-0 text-red-500" />
+            <p className="text-sm text-red-600">{pageState.message}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => load(false)}
+            className="mt-2 text-sm font-medium text-red-700 underline hover:no-underline"
+          >
+            Try again
+          </button>
         </div>
       </div>
     )
@@ -582,7 +591,7 @@ export default function SprintReportPage() {
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div>
         <div className="mb-3">
-          <BackButton label="Back to Sprint" fallbackHref={`/sprint/${boardId}/${sprintId}`} />
+          <Breadcrumb segments={[{ label: 'Sprint', href: `/sprint/${boardId}/${sprintId}` }, { label: 'Report' }]} />
         </div>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>

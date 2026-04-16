@@ -24,41 +24,12 @@ import {
   type KanbanQuarterSummary,
   type KanbanWeekSummary,
 } from '@/lib/api'
+import { getQuarterKey, getCurrentQuarterKey } from '@/lib/quarter-utils'
 import { useBoardsStore } from '@/store/boards-store'
 import { BoardChip } from '@/components/ui/board-chip'
 import { DataTable, type Column } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { NoBoardsConfigured } from '@/components/ui/no-boards-configured'
-
-// ---------------------------------------------------------------------------
-// Quarter helpers
-// ---------------------------------------------------------------------------
-
-function getQuarterKey(isoDate: string | null, tz: string): string | null {
-  if (!isoDate) return null
-  const d = new Date(isoDate)
-  if (isNaN(d.getTime())) return null
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-  })
-  const [year, month] = formatter.format(d).split('-').map(Number)
-  const q = Math.floor((month - 1) / 3) + 1
-  return `${year}-Q${q}`
-}
-
-function getCurrentQuarterKey(tz: string): string {
-  const now = new Date()
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-  })
-  const [year, month] = formatter.format(now).split('-').map(Number)
-  const q = Math.floor((month - 1) / 3) + 1
-  return `${year}-Q${q}`
-}
 
 // ---------------------------------------------------------------------------
 // Quarter row type (for quarter-mode table on Scrum boards)
@@ -289,6 +260,7 @@ function PlanningPageInner() {
   const [kanbanData, setKanbanData] = useState<KanbanQuarterSummary[]>([])
   const [kanbanWeekData, setKanbanWeekData] = useState<KanbanWeekSummary[]>([])
   const [timezone, setTimezone] = useState('UTC')
+  const [retryKey, setRetryKey] = useState(0)
 
   // Fetch server timezone on mount
   useEffect(() => {
@@ -333,7 +305,7 @@ function PlanningPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [selectedBoard, isKanban, boardsStatus]);
+  }, [selectedBoard, isKanban, boardsStatus, retryKey]);
 
   // Fetch quarterly flow data for Kanban boards
   useEffect(() => {
@@ -360,7 +332,7 @@ function PlanningPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [selectedBoard, isKanban, kanbanPeriod]);
+  }, [selectedBoard, isKanban, kanbanPeriod, retryKey]);
 
   // Fetch weekly flow data for Kanban boards
   useEffect(() => {
@@ -387,7 +359,7 @@ function PlanningPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [selectedBoard, isKanban, kanbanPeriod]);
+  }, [selectedBoard, isKanban, kanbanPeriod, retryKey]);
 
   // Quarter rows derived client-side from raw sprint data (Scrum)
   const quarterRows = useMemo(() => groupByQuarter(rawData, timezone), [rawData, timezone]);
@@ -728,8 +700,8 @@ function PlanningPageInner() {
                 onClick={() => replaceParams({ kanban: 'week' })}
                 className={`rounded-l-lg px-4 py-2 text-sm font-medium transition-colors ${
                   kanbanPeriod === 'week'
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'text-muted hover:bg-gray-50'
+                    ? 'bg-interactive-selected-bg text-interactive-selected-fg'
+                    : 'text-muted hover:bg-interactive-hover-bg'
                 }`}
               >
                 Week
@@ -739,8 +711,8 @@ function PlanningPageInner() {
                 onClick={() => replaceParams({ kanban: 'quarter' })}
                 className={`rounded-r-lg px-4 py-2 text-sm font-medium transition-colors ${
                   kanbanPeriod === 'quarter'
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'text-muted hover:bg-gray-50'
+                    ? 'bg-interactive-selected-bg text-interactive-selected-fg'
+                    : 'text-muted hover:bg-interactive-hover-bg'
                 }`}
               >
                 Quarter
@@ -753,8 +725,8 @@ function PlanningPageInner() {
                 onClick={() => replaceParams({ mode: 'sprint' })}
                 className={`rounded-l-lg px-4 py-2 text-sm font-medium transition-colors ${
                   periodType === 'sprint'
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'text-muted hover:bg-gray-50'
+                    ? 'bg-interactive-selected-bg text-interactive-selected-fg'
+                    : 'text-muted hover:bg-interactive-hover-bg'
                 }`}
               >
                 Sprint
@@ -764,8 +736,8 @@ function PlanningPageInner() {
                 onClick={() => replaceParams({ mode: 'quarter' })}
                 className={`rounded-r-lg px-4 py-2 text-sm font-medium transition-colors ${
                   periodType === 'quarter'
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'text-muted hover:bg-gray-50'
+                    ? 'bg-interactive-selected-bg text-interactive-selected-fg'
+                    : 'text-muted hover:bg-interactive-hover-bg'
                 }`}
               >
                 Quarter
@@ -784,8 +756,15 @@ function PlanningPageInner() {
 
       {/* Error */}
       {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-          {error}
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <p className="text-sm text-red-600">{error}</p>
+          <button
+            type="button"
+            onClick={() => setRetryKey((k) => k + 1)}
+            className="mt-2 text-sm font-medium text-red-700 underline hover:no-underline"
+          >
+            Try again
+          </button>
         </div>
       )}
 
