@@ -24,8 +24,36 @@ import { CycleTimePercentileCard } from '@/components/ui/cycle-time-percentile-c
 import { CycleTimeTrendChart } from '@/components/ui/cycle-time-trend-chart'
 import { CycleTimeScatter } from '@/components/ui/cycle-time-scatter'
 import { CycleTimeBandBadge } from '@/components/ui/cycle-time-band-badge'
+import { MetricHelp, type MetricDefinition } from '@/components/ui/metric-help'
 
 const PAGE_SIZE = 50
+
+// ---------------------------------------------------------------------------
+// Metric help definitions
+// ---------------------------------------------------------------------------
+
+const CYCLE_TIME_HELP: MetricDefinition[] = [
+  {
+    name: 'Cycle Time',
+    description: 'Time from when work started (first transition to In Progress) to when it was done (transition to Done). Pre-work queue time (before In Progress) is excluded.',
+  },
+  {
+    name: 'P50 (Median)',
+    description: 'The midpoint — half of issues were completed faster than this value.',
+  },
+  {
+    name: 'P75',
+    description: '75% of issues were completed within this time. A more conservative planning target than P50.',
+  },
+  {
+    name: 'P85',
+    description: '85% of issues were completed within this time.',
+  },
+  {
+    name: 'P95',
+    description: 'Only 5% of issues took longer than this. Useful for identifying outliers and worst-case scenarios.',
+  },
+]
 
 // ---------------------------------------------------------------------------
 // Types
@@ -209,7 +237,10 @@ function CycleTimePageInner() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold">Cycle Time</h1>
+        <h1 className="flex items-center gap-2 text-2xl font-bold">
+          Cycle Time
+          <MetricHelp metrics={CYCLE_TIME_HELP} />
+        </h1>
         <p className="mt-1 text-sm text-muted">
           Time from work started to done — excluding pre-work queue
         </p>

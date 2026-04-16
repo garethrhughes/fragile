@@ -16,6 +16,40 @@ import {
 import { DataTable, type Column } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
+import { MetricHelp, type MetricDefinition } from '@/components/ui/metric-help'
+
+// ---------------------------------------------------------------------------
+// Metric help definitions
+// ---------------------------------------------------------------------------
+
+const SPRINT_HELP: MetricDefinition[] = [
+  {
+    name: 'Commitment',
+    description: 'Issues in the sprint at the start date, reconstructed from Jira changelog.',
+  },
+  {
+    name: 'Added',
+    description: 'Issues added to the sprint after the start date.',
+  },
+  {
+    name: 'Removed',
+    description: 'Issues removed from the sprint before it ended.',
+  },
+  {
+    name: 'Completed',
+    description: 'Issues that reached a Done status by sprint end.',
+  },
+  {
+    name: 'Scope Change %',
+    description: 'Relative change in sprint scope from the original commitment.',
+    formula: '(added + removed) ÷ commitment × 100',
+  },
+  {
+    name: 'Completion Rate',
+    description: 'Percentage of final sprint scope completed.',
+    formula: 'completed ÷ (commitment + added − removed) × 100',
+  },
+]
 
 // ---------------------------------------------------------------------------
 // Summary stat chip
@@ -640,7 +674,10 @@ export default function SprintDetailPage() {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-bold">{data.sprintName}</h1>
+          <h1 className="flex items-center gap-2 text-2xl font-bold">
+            {data.sprintName}
+            <MetricHelp metrics={SPRINT_HELP} />
+          </h1>
           <span className="text-sm text-muted">{boardId}</span>
           <span
             className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium capitalize ${

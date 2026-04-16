@@ -30,6 +30,7 @@ import { BoardChip } from '@/components/ui/board-chip'
 import { DataTable, type Column } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { NoBoardsConfigured } from '@/components/ui/no-boards-configured'
+import { MetricHelp, type MetricDefinition } from '@/components/ui/metric-help'
 
 // ---------------------------------------------------------------------------
 // Quarter row type (for quarter-mode table on Scrum boards)
@@ -227,6 +228,43 @@ function renderDeliveryRate(value: unknown) {
   const color = pct < 50 ? 'text-red-600 font-semibold' : pct < 80 ? 'text-amber-600 font-semibold' : 'text-green-700 font-semibold';
   return <span className={color}>{pct.toFixed(1)}%</span>;
 }
+
+// ---------------------------------------------------------------------------
+// Metric help definitions
+// ---------------------------------------------------------------------------
+
+const PLANNING_HELP: MetricDefinition[] = [
+  {
+    name: 'Commitment',
+    description: 'Number of issues in the sprint at the sprint start date. Reconstructed from Jira changelog entries — not the current sprint field.',
+  },
+  {
+    name: 'Added',
+    description: 'Issues added to the sprint after the start date.',
+  },
+  {
+    name: 'Removed',
+    description: 'Issues removed from the sprint before it ended.',
+  },
+  {
+    name: 'Completed',
+    description: 'Issues that reached a Done status by the end of the sprint.',
+  },
+  {
+    name: 'Scope Change %',
+    description: 'How much the sprint scope changed relative to the original commitment.',
+    formula: '(added + removed) ÷ commitment × 100',
+  },
+  {
+    name: 'Completion Rate',
+    description: 'Percentage of the final sprint scope that was completed.',
+    formula: 'completed ÷ (commitment + added − removed) × 100',
+  },
+  {
+    name: 'Planning Accuracy',
+    description: 'Composite score combining scope stability and completion rate. Higher is better.',
+  },
+]
 
 // ---------------------------------------------------------------------------
 // Page
@@ -654,7 +692,10 @@ function PlanningPageInner() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold">Planning Accuracy</h1>
+        <h1 className="flex items-center gap-2 text-2xl font-bold">
+          Planning Accuracy
+          <MetricHelp metrics={PLANNING_HELP} />
+        </h1>
         <p className="mt-1 text-sm text-muted">
           {isKanban
             ? kanbanPeriod === 'week'

@@ -12,6 +12,32 @@ import {
 import { DataTable, type Column } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
+import { MetricHelp, type MetricDefinition } from '@/components/ui/metric-help'
+
+// ---------------------------------------------------------------------------
+// Metric help definitions
+// ---------------------------------------------------------------------------
+
+const QUARTER_HELP: MetricDefinition[] = [
+  {
+    name: 'Commitment',
+    description: 'Issues active (In Progress or waiting) at the start of the quarter, based on changelog reconstruction.',
+  },
+  {
+    name: 'Completed',
+    description: 'Issues that reached a Done status within the quarter.',
+  },
+  {
+    name: 'Scope Change %',
+    description: 'Issues added or removed mid-quarter relative to the opening commitment.',
+    formula: '(added + removed) ÷ commitment × 100',
+  },
+  {
+    name: 'Completion Rate',
+    description: 'Percentage of final quarter scope completed.',
+    formula: 'completed ÷ (commitment + added − removed) × 100',
+  },
+]
 
 // ---------------------------------------------------------------------------
 // Summary stat chip
@@ -353,7 +379,10 @@ export default function QuarterDetailPage() {
           />
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-bold">{quarter}</h1>
+          <h1 className="flex items-center gap-2 text-2xl font-bold">
+            {quarter}
+            <MetricHelp metrics={QUARTER_HELP} />
+          </h1>
           <span className="text-sm text-muted">{boardId}</span>
           <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 capitalize">
             {data.boardConfig.boardType}

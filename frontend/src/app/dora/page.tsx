@@ -30,6 +30,7 @@ import { BoardChip } from '@/components/ui/board-chip'
 import { ToggleChip } from '@/components/ui/toggle-chip'
 import { EmptyState } from '@/components/ui/empty-state'
 import { NoBoardsConfigured } from '@/components/ui/no-boards-configured'
+import { MetricHelp, type MetricDefinition } from '@/components/ui/metric-help'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -146,6 +147,57 @@ function TrendChart({ title, data, dataKey, unit, color }: TrendChartProps) {
     </div>
   )
 }
+
+// ---------------------------------------------------------------------------
+// Metric help definitions
+// ---------------------------------------------------------------------------
+
+const DORA_HELP: MetricDefinition[] = [
+  {
+    name: 'Deployment Frequency',
+    description: 'How often the team releases to production. Uses fix versions with a release date as the primary signal; falls back to transitions to a done status.',
+    formula: 'deployments ÷ days in period',
+    bands: [
+      { label: 'Elite', threshold: 'Multiple deploys per day' },
+      { label: 'High', threshold: 'Between once per day and once per week' },
+      { label: 'Medium', threshold: 'Between once per week and once per month' },
+      { label: 'Low', threshold: 'Less than once per month' },
+    ],
+  },
+  {
+    name: 'Lead Time for Changes',
+    description: 'Median time from issue creation to first transition to a done/released status. When a fix version is present, the version release date is used as the endpoint.',
+    formula: 'median(doneDate − createdAt) across issues in period',
+    bands: [
+      { label: 'Elite', threshold: 'Less than 1 day' },
+      { label: 'High', threshold: '1 day – 1 week' },
+      { label: 'Medium', threshold: '1 week – 1 month' },
+      { label: 'Low', threshold: 'More than 1 month' },
+    ],
+  },
+  {
+    name: 'Change Failure Rate',
+    description: 'Percentage of deployments that result in a failure requiring remediation. Failure issues are identified by issue type, labels, or link type as configured per board.',
+    formula: 'failure issues ÷ total deployments × 100',
+    bands: [
+      { label: 'Elite', threshold: '0 – 5%' },
+      { label: 'High', threshold: '5 – 10%' },
+      { label: 'Medium', threshold: '10 – 15%' },
+      { label: 'Low', threshold: 'More than 15%' },
+    ],
+  },
+  {
+    name: 'Mean Time to Recovery',
+    description: 'Median time to recover from a failure. Measured from incident creation to transition to the configured recovery status.',
+    formula: 'median(recoveryDate − failureCreatedAt) across incidents',
+    bands: [
+      { label: 'Elite', threshold: 'Less than 1 hour' },
+      { label: 'High', threshold: '1 hour – 1 day' },
+      { label: 'Medium', threshold: '1 day – 1 week' },
+      { label: 'Low', threshold: 'More than 1 week' },
+    ],
+  },
+]
 
 // ---------------------------------------------------------------------------
 // Page
@@ -290,7 +342,10 @@ function DoraPageInner() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold">DORA Metrics</h1>
+        <h1 className="flex items-center gap-2 text-2xl font-bold">
+          DORA Metrics
+          <MetricHelp metrics={DORA_HELP} />
+        </h1>
         <p className="mt-1 text-sm text-muted">
           Organisation-wide delivery performance
         </p>

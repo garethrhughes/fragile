@@ -12,6 +12,26 @@ import {
 import { DataTable, type Column } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
+import { MetricHelp, type MetricDefinition } from '@/components/ui/metric-help'
+
+// ---------------------------------------------------------------------------
+// Metric help definitions
+// ---------------------------------------------------------------------------
+
+const WEEK_HELP: MetricDefinition[] = [
+  {
+    name: 'Pulled In',
+    description: 'Issues that entered the board (transitioned from backlog/to-do to in-progress or beyond) during this week.',
+  },
+  {
+    name: 'Completed',
+    description: 'Issues that reached a Done status during this week.',
+  },
+  {
+    name: 'Cycle Time',
+    description: 'Median time from first In Progress transition to Done for issues completed this week.',
+  },
+]
 
 // ---------------------------------------------------------------------------
 // Summary stat chip
@@ -363,7 +383,10 @@ export default function WeekDetailPage() {
           />
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-bold">{week}</h1>
+          <h1 className="flex items-center gap-2 text-2xl font-bold">
+            {week}
+            <MetricHelp metrics={WEEK_HELP} />
+          </h1>
           <span className="text-sm text-muted">{boardId}</span>
           <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 capitalize">
             {data.boardConfig.boardType}

@@ -27,6 +27,24 @@ import { BoardChip } from '@/components/ui/board-chip'
 import { DataTable, type Column } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { NoBoardsConfigured } from '@/components/ui/no-boards-configured'
+import { MetricHelp, type MetricDefinition } from '@/components/ui/metric-help'
+
+// ---------------------------------------------------------------------------
+// Metric help definitions
+// ---------------------------------------------------------------------------
+
+const ROADMAP_HELP: MetricDefinition[] = [
+  {
+    name: 'Roadmap Coverage',
+    description: 'Percentage of sprint issues that are linked to a JPD roadmap item. Higher coverage means more work is aligned to planned initiatives.',
+    formula: 'roadmap-linked issues ÷ total sprint issues × 100',
+  },
+  {
+    name: 'On-Time Rate',
+    description: 'Of the roadmap-linked issues committed to a sprint, the percentage that were completed on time.',
+    formula: 'completed roadmap issues ÷ committed roadmap issues × 100',
+  },
+]
 
 // ---------------------------------------------------------------------------
 // Quarter row type (for quarter-mode table)
@@ -583,7 +601,10 @@ function RoadmapPageInner() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold">Roadmap Accuracy</h1>
+        <h1 className="flex items-center gap-2 text-2xl font-bold">
+          Roadmap Accuracy
+          <MetricHelp metrics={ROADMAP_HELP} />
+        </h1>
         <p className="mt-1 text-sm text-muted">
           Sprint work aligned to JPD roadmap items
         </p>

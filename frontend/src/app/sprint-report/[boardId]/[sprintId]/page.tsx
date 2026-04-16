@@ -28,6 +28,50 @@ import {
 } from '@/lib/api'
 import { BandBadge } from '@/components/ui/band-badge'
 import { DataTable, type Column } from '@/components/ui/data-table'
+import { MetricHelp, type MetricDefinition } from '@/components/ui/metric-help'
+
+// ---------------------------------------------------------------------------
+// Metric help definitions
+// ---------------------------------------------------------------------------
+
+const SPRINT_REPORT_HELP: MetricDefinition[] = [
+  {
+    name: 'Composite Score',
+    description: 'Weighted average of all dimension scores, rated 0–100. Higher is better.',
+  },
+  {
+    name: 'Delivery Rate',
+    description: 'Percentage of committed issues completed by sprint end.',
+    formula: 'completed ÷ commitment × 100',
+  },
+  {
+    name: 'Scope Stability',
+    description: 'Inverse of scope change — a high score means the sprint plan stayed stable.',
+    formula: '100 − scope change %',
+  },
+  {
+    name: 'Roadmap Coverage',
+    description: 'Percentage of sprint issues linked to a JPD roadmap item.',
+    formula: 'roadmap-linked issues ÷ total sprint issues × 100',
+  },
+  {
+    name: 'Lead Time',
+    description: 'Median days from issue creation to Done for issues completed in this sprint.',
+  },
+  {
+    name: 'Deployment Frequency',
+    description: 'Number of releases or done-status transitions in this sprint period.',
+  },
+  {
+    name: 'Change Failure Rate',
+    description: 'Percentage of deployments in the sprint that resulted in a failure issue.',
+    formula: 'failure issues ÷ deployments × 100',
+  },
+  {
+    name: 'MTTR',
+    description: 'Median time to recover from failures that occurred during the sprint.',
+  },
+]
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -595,7 +639,10 @@ export default function SprintReportPage() {
         </div>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold">{data.sprintName}</h1>
+            <h1 className="flex items-center gap-2 text-2xl font-bold">
+              {data.sprintName}
+              <MetricHelp metrics={SPRINT_REPORT_HELP} />
+            </h1>
             <div className="mt-1 flex flex-wrap items-center gap-3 text-sm text-muted">
               <span>{boardId}</span>
               {(data.startDate ?? data.endDate) && (

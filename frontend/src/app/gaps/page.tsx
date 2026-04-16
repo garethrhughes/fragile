@@ -9,6 +9,26 @@ import { DataTable, type Column } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { NoBoardsConfigured } from '@/components/ui/no-boards-configured'
 import { UnplannedDoneSection } from './unplanned-done-section'
+import { MetricHelp, type MetricDefinition } from '@/components/ui/metric-help'
+
+// ---------------------------------------------------------------------------
+// Metric help definitions
+// ---------------------------------------------------------------------------
+
+const GAPS_HELP: MetricDefinition[] = [
+  {
+    name: 'No Epic Link',
+    description: 'Open issues (non-Done status) that are not linked to a parent epic. These issues cannot be tracked against roadmap goals.',
+  },
+  {
+    name: 'No Story Points',
+    description: 'Open issues without a story point estimate. These issues cannot be included in velocity or capacity calculations.',
+  },
+  {
+    name: 'Unplanned Done',
+    description: 'Issues that were completed during the sprint but were not part of the sprint commitment at the start date. These indicate unplanned reactive work.',
+  },
+]
 
 // ---------------------------------------------------------------------------
 // Collapsible section
@@ -189,7 +209,10 @@ export default function GapsPage() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold">Issues Gaps</h1>
+        <h1 className="flex items-center gap-2 text-2xl font-bold">
+          Issues Gaps
+          <MetricHelp metrics={GAPS_HELP} />
+        </h1>
         <p className="mt-1 text-sm text-muted">
           Open issues missing epic links or story point estimates
         </p>
