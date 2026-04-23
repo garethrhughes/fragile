@@ -121,7 +121,7 @@ resource "aws_cloudfront_distribution" "backend" {
     # AllViewerExceptHostHeader — forwards all headers, query strings, and
     # cookies except Host. CloudFront then sends the App Runner origin URL as
     # the Host header, which App Runner recognises. Sending the viewer's Host
-    # (e.g. fragile.ops.mypassglobal.com) causes App Runner to return 404
+    # (e.g. fragile.<your-domain>) causes App Runner to return 404
     # because it only serves its own default *.awsapprunner.com hostname.
     origin_request_policy_id = "b689b0a8-53d0-40ab-baf2-68738e2966ac"
   }

@@ -7,7 +7,7 @@
 #   --plan-only   Run `terraform plan` only (no apply). Useful for CI checks.
 #
 # Prerequisites:
-#   - AWS credentials for the mypassglobal ops account active in the shell
+#   - AWS credentials for your AWS account active in the shell
 #   - terraform >= 1.7 on PATH
 #   - terraform.tfvars present in the prod environment directory
 

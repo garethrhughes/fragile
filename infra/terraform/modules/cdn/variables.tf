@@ -1,5 +1,5 @@
 variable "domain_name" {
-  description = "Root domain name (e.g. 'ops.mypassglobal.com'). A Route 53 hosted zone must already exist."
+  description = "Root domain name (e.g. 'example.com'). A Route 53 hosted zone must already exist."
   type        = string
 }
 

@@ -12,7 +12,7 @@
 #   -h, --help          Show this help
 #
 # Prerequisites:
-#   - AWS credentials for the mypassglobal ops account (env vars or profile)
+#   - AWS credentials for your AWS account (env vars or profile)
 #   - Docker running
 #   - terraform output available (or set ECR_BACKEND_URL / ECR_FRONTEND_URL manually)
 #
@@ -122,7 +122,7 @@ fi
 if [[ "$BUILD_FRONTEND" == "true" ]]; then
   # NEXT_PUBLIC_API_URL is baked into the JS bundle at build time.
   # Derive it from the backend ECR URL's subdomain pattern, or override via env.
-  NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-https://fragile-api.ops.mypassglobal.com}"
+  NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-https://fragile-api.<your-domain>}"
 
   build_and_push \
     "frontend" \
