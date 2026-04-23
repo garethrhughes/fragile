@@ -16,6 +16,8 @@ import type { SnapshotResult, BoardSnapshotStatus } from './dora-snapshot-read.s
 import type { OrgDoraResult, TrendResponse } from './dto/org-dora-response.dto.js';
 import type { DoraAggregateQueryDto } from './dto/dora-aggregate-query.dto.js';
 import type { DoraTrendQueryDto } from './dto/dora-trend-query.dto.js';
+import { Repository } from 'typeorm';
+import { BoardConfig } from '../database/entities/index.js';
 
 function mockMetricsService(): jest.Mocked<MetricsService> {
   return {
@@ -36,6 +38,12 @@ function mockSnapshotReadService(): jest.Mocked<DoraSnapshotReadService> {
   } as unknown as jest.Mocked<DoraSnapshotReadService>;
 }
 
+function mockBoardConfigRepo(boardIds = ['ACC', 'BPT', 'SPS', 'OCS', 'DATA', 'PLAT']): jest.Mocked<Repository<BoardConfig>> {
+  return {
+    find: jest.fn().mockResolvedValue(boardIds.map((boardId) => ({ boardId }))),
+  } as unknown as jest.Mocked<Repository<BoardConfig>>;
+}
+
 function mockRes(): { status: jest.Mock; setHeader: jest.Mock } {
   return {
     status: jest.fn(),
@@ -49,7 +57,7 @@ describe('MetricsController — snapshot-aware endpoints', () => {
 
   beforeEach(() => {
     snapshotSvc = mockSnapshotReadService();
-    controller = new MetricsController(mockMetricsService(), snapshotSvc);
+    controller = new MetricsController(mockMetricsService(), snapshotSvc, mockBoardConfigRepo());
   });
 
   // ── getDoraAggregate ──────────────────────────────────────────────────────

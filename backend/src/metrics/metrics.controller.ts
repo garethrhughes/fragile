@@ -1,4 +1,6 @@
 import { Controller, Get, Query, Res } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { MetricsService } from './metrics.service.js';
@@ -7,9 +9,8 @@ import { MetricsQueryDto } from './dto/metrics-query.dto.js';
 import { DoraAggregateQueryDto } from './dto/dora-aggregate-query.dto.js';
 import { DoraTrendQueryDto } from './dto/dora-trend-query.dto.js';
 import type { OrgDoraResult, TrendResponse } from './dto/org-dora-response.dto.js';
-
-/** All configured board IDs — used by the snapshot status endpoint. */
-const ALL_BOARD_IDS = ['ACC', 'BPT', 'SPS', 'OCS', 'DATA', 'PLAT'];
+import { ORG_SNAPSHOT_KEY } from '../lambda/in-process-snapshot.service.js';
+import { BoardConfig } from '../database/entities/index.js';
 
 @ApiTags('metrics')
 @Controller('api/metrics')
@@ -17,6 +18,8 @@ export class MetricsController {
   constructor(
     private readonly metricsService: MetricsService,
     private readonly doraSnapshotReadService: DoraSnapshotReadService,
+    @InjectRepository(BoardConfig)
+    private readonly boardConfigRepo: Repository<BoardConfig>,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -32,8 +35,15 @@ export class MetricsController {
     @Query() query: DoraAggregateQueryDto,
     @Res({ passthrough: true }) res: Response,
   ): Promise<OrgDoraResult | { status: string; message: string }> {
+    // When a single boardId is provided use the per-board snapshot;
+    // otherwise (no boardId, or multiple) use the org-level snapshot.
+    const snapshotKey =
+      query.boardId && !query.boardId.includes(',')
+        ? query.boardId
+        : ORG_SNAPSHOT_KEY;
+
     const snapshot = await this.doraSnapshotReadService.getSnapshot(
-      query.boardId ?? '',
+      snapshotKey,
       'aggregate',
     );
 
@@ -58,8 +68,13 @@ export class MetricsController {
     @Query() query: DoraTrendQueryDto,
     @Res({ passthrough: true }) res: Response,
   ): Promise<TrendResponse | { status: string; message: string }> {
+    const snapshotKey =
+      query.boardId && !query.boardId.includes(',')
+        ? query.boardId
+        : ORG_SNAPSHOT_KEY;
+
     const snapshot = await this.doraSnapshotReadService.getSnapshot(
-      query.boardId ?? '',
+      snapshotKey,
       'trend',
     );
 
@@ -81,7 +96,9 @@ export class MetricsController {
   })
   @Get('dora/snapshot/status')
   async getSnapshotStatus(): Promise<BoardSnapshotStatus[]> {
-    return this.doraSnapshotReadService.getSnapshotStatus(ALL_BOARD_IDS);
+    const configs = await this.boardConfigRepo.find({ select: ['boardId'] });
+    const boardIds = configs.map((c) => c.boardId);
+    return this.doraSnapshotReadService.getSnapshotStatus(boardIds);
   }
 
   // ---------------------------------------------------------------------------

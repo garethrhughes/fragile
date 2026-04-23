@@ -6,9 +6,9 @@
  */
 
 import { Repository } from 'typeorm';
-import { InProcessSnapshotService } from './in-process-snapshot.service.js';
+import { InProcessSnapshotService, ORG_SNAPSHOT_KEY } from './in-process-snapshot.service.js';
 import { MetricsService } from '../metrics/metrics.service.js';
-import { DoraSnapshot } from '../database/entities/index.js';
+import { BoardConfig, DoraSnapshot } from '../database/entities/index.js';
 import type { OrgDoraResult } from '../metrics/dto/org-dora-response.dto.js';
 
 // ---------------------------------------------------------------------------
@@ -19,6 +19,12 @@ function mockSnapshotRepo(): jest.Mocked<Repository<DoraSnapshot>> {
   return {
     upsert: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<Repository<DoraSnapshot>>;
+}
+
+function mockBoardConfigRepo(boardIds = ['ACC']): jest.Mocked<Repository<BoardConfig>> {
+  return {
+    find: jest.fn().mockResolvedValue(boardIds.map((boardId) => ({ boardId }))),
+  } as unknown as jest.Mocked<Repository<BoardConfig>>;
 }
 
 function mockOrgDoraResult(): OrgDoraResult {
@@ -48,15 +54,18 @@ function makeMockMetricsService(): jest.Mocked<Pick<MetricsService, 'getDoraAggr
 describe('InProcessSnapshotService', () => {
   let service: InProcessSnapshotService;
   let snapshotRepo: jest.Mocked<Repository<DoraSnapshot>>;
+  let boardConfigRepo: jest.Mocked<Repository<BoardConfig>>;
   let metricsService: jest.Mocked<Pick<MetricsService, 'getDoraAggregate' | 'getDoraTrend'>>;
 
   beforeEach(() => {
-    snapshotRepo   = mockSnapshotRepo();
-    metricsService = makeMockMetricsService();
+    snapshotRepo    = mockSnapshotRepo();
+    boardConfigRepo = mockBoardConfigRepo(['ACC', 'BPT']);
+    metricsService  = makeMockMetricsService();
 
     service = new InProcessSnapshotService(
       metricsService as unknown as MetricsService,
       snapshotRepo,
+      boardConfigRepo,
     );
   });
 
@@ -74,16 +83,18 @@ describe('InProcessSnapshotService', () => {
     );
   });
 
-  it('upserts two snapshot rows: aggregate and trend', async () => {
+  it('upserts four snapshot rows: per-board aggregate + trend, org aggregate + trend', async () => {
     await service.computeAndPersist('ACC');
     expect(snapshotRepo.upsert).toHaveBeenCalledTimes(1);
     const [rows] = snapshotRepo.upsert.mock.calls[0] as [
       Array<{ boardId: string; snapshotType: string }>,
       string[],
     ];
-    expect(rows).toHaveLength(2);
-    const types = rows.map((r) => r.snapshotType).sort();
-    expect(types).toEqual(['aggregate', 'trend']);
+    expect(rows).toHaveLength(4);
+    const perBoard = rows.filter((r) => r.boardId === 'ACC');
+    const org      = rows.filter((r) => r.boardId === ORG_SNAPSHOT_KEY);
+    expect(perBoard.map((r) => r.snapshotType).sort()).toEqual(['aggregate', 'trend']);
+    expect(org.map((r) => r.snapshotType).sort()).toEqual(['aggregate', 'trend']);
   });
 
   it('stores the OrgDoraResult payload for the aggregate snapshot', async () => {
