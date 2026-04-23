@@ -105,7 +105,8 @@ export function Sidebar() {
           type="button"
           onClick={() => void triggerSync()}
           disabled={isSyncing}
-          className="mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-text-secondary transition-colors hover:bg-surface-raised disabled:opacity-50"
+          title={isSyncing ? 'Sync in progress — may take up to 2 minutes' : 'Trigger a full Jira sync'}
+          className="mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-text-secondary transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
         >
           <span className="text-text-muted">
             <RefreshCw className={`h-5 w-5 ${isSyncing ? 'animate-spin' : ''}`} />

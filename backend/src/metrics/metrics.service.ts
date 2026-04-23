@@ -188,9 +188,17 @@ export class MetricsService {
     // HTTP request.  TTL is 60 s; this is fine because DORA metrics are computed
     // from historical Jira data that only changes during a background sync.
     // ---------------------------------------------------------------------------
+    // Default to the current calendar quarter when no quarter is specified.
+    // This mirrors the behaviour of the Lambda snapshot handler and the trend
+    // endpoint, and ensures the aggregate period is always a named quarter
+    // rather than a sliding 90-day window.
+    const effectiveQuarter =
+      query.quarter ?? listRecentQuarters(1, this.timezone)[0].label;
+
     const cacheKey = DoraCacheService.buildKey(
       {
         boardId: query.boardId,
+        quarter: effectiveQuarter,
       },
       'aggregate',
     );
@@ -199,7 +207,7 @@ export class MetricsService {
       return cached;
     }
 
-    let { startDate, endDate } = this.resolvePeriod({});
+    let { startDate, endDate } = this.resolvePeriod({ quarter: effectiveQuarter });
     const boardIds = await this.resolveBoardIds(query.boardId);
 
     // RC-6: parallelize all per-board calls using Promise.all over boardIds.

@@ -21,6 +21,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { MetricsService } from '../metrics/metrics.service.js';
 import { BoardConfig, DoraSnapshot } from '../database/entities/index.js';
+import { listRecentQuarters } from '../metrics/period-utils.js';
 
 /** Snapshot key for the org-level (all boards) aggregate and trend. */
 export const ORG_SNAPSHOT_KEY = '__org__';
@@ -38,19 +39,25 @@ export class InProcessSnapshotService {
   ) {}
 
   async computeAndPersist(triggeredBy: string): Promise<void> {
+    // Use the current calendar quarter so the aggregate period matches the
+    // Lambda handler path and the trend endpoint. Without this, resolvePeriod
+    // falls back to a rolling 90-day window which produces different metric
+    // values and shows a non-quarter date range in the board breakdown UI.
+    const currentQuarter = listRecentQuarters(1)[0].label;
+
     // Resolve all configured board IDs for the org-level snapshot.
     const configs = await this.boardConfigRepo.find({ select: ['boardId'] });
     const allBoardIdStr = configs.map((c) => c.boardId).join(',');
 
     // Per-board snapshot for the triggering board.
     const [boardAggregate, boardTrend] = await Promise.all([
-      this.metricsService.getDoraAggregate({ boardId: triggeredBy }),
+      this.metricsService.getDoraAggregate({ boardId: triggeredBy, quarter: currentQuarter }),
       this.metricsService.getDoraTrend({ boardId: triggeredBy, limit: 8 }),
     ]);
 
     // Org-level snapshot covering all boards.
     const [orgAggregate, orgTrend] = await Promise.all([
-      this.metricsService.getDoraAggregate({ boardId: allBoardIdStr }),
+      this.metricsService.getDoraAggregate({ boardId: allBoardIdStr, quarter: currentQuarter }),
       this.metricsService.getDoraTrend({ boardId: allBoardIdStr, limit: 8 }),
     ]);
 

@@ -69,7 +69,7 @@ export interface SprintInfo {
   state: string;
 }
 
-interface SyncStatusItem {
+export interface SyncStatusItem {
   boardId: string;
   lastSync: string | null;
   status: string;
