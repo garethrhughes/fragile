@@ -31,6 +31,13 @@ jest.mock('typeorm', () => {
   };
 });
 
+// Mock Secrets Manager so the handler can resolve a DB password
+const mockGetSecretValueSend = jest.fn().mockResolvedValue({ SecretString: 'test-password' });
+jest.mock('@aws-sdk/client-secrets-manager', () => ({
+  SecretsManagerClient: jest.fn().mockImplementation(() => ({ send: mockGetSecretValueSend })),
+  GetSecretValueCommand: jest.fn().mockImplementation((p: unknown) => p),
+}));
+
 // Stub the TrendDataLoader so it returns a minimal TrendDataSlice
 const mockLoad = jest.fn();
 jest.mock('../metrics/trend-data-loader.service.js', () => ({
@@ -103,12 +110,21 @@ describe('snapshot Lambda handler', () => {
     mockLtCalc.mockClear();
     mockCfrCalc.mockClear();
     mockMttrCalc.mockClear();
-    mockGetRepository.mockReturnValue({ upsert: mockUpsert });
+    mockGetRepository.mockReturnValue({
+      upsert: mockUpsert,
+      find: jest.fn().mockResolvedValue([{ boardId: 'ACC' }]),
+    });
     mockLoad.mockResolvedValue(makeEmptySlice());
 
     // Reset the module-level DataSource singleton state
     mockDataSourceInstance.isInitialized = false;
     mockDataSourceInstance.initialize.mockClear();
+
+    process.env['DB_PASSWORD_SECRET_ARN'] = 'arn:aws:secretsmanager:ap-southeast-2:123:secret:test';
+  });
+
+  afterEach(() => {
+    delete process.env['DB_PASSWORD_SECRET_ARN'];
   });
 
   it('initialises the DataSource on first invocation', async () => {
@@ -125,17 +141,22 @@ describe('snapshot Lambda handler', () => {
     );
   });
 
-  it('upserts two snapshot rows: aggregate and trend', async () => {
+  it('upserts four snapshot rows: per-board trend+aggregate and org trend+aggregate', async () => {
     await handler({ boardId: 'BPT' });
     expect(mockUpsert).toHaveBeenCalledTimes(1);
     const [rows] = mockUpsert.mock.calls[0] as [
       Array<{ boardId: string; snapshotType: string }>,
       string[],
     ];
-    expect(rows).toHaveLength(2);
-    const types = rows.map((r) => r.snapshotType).sort();
-    expect(types).toEqual(['aggregate', 'trend']);
-    expect(rows.every((r) => r.boardId === 'BPT')).toBe(true);
+    expect(rows).toHaveLength(4);
+    const boardRows = rows.filter((r) => r.boardId === 'BPT');
+    const orgRows   = rows.filter((r) => r.boardId === '__org__');
+    expect(boardRows).toHaveLength(2);
+    expect(orgRows).toHaveLength(2);
+    const boardTypes = boardRows.map((r) => r.snapshotType).sort();
+    expect(boardTypes).toEqual(['aggregate', 'trend']);
+    const orgTypes = orgRows.map((r) => r.snapshotType).sort();
+    expect(orgTypes).toEqual(['aggregate', 'trend']);
   });
 
   it('calls all four metric services with the loaded slice', async () => {
@@ -152,7 +173,7 @@ describe('snapshot Lambda handler', () => {
       Array<{ boardId: string; snapshotType: string; payload: unknown[] }>,
       string[],
     ];
-    const trendRow = rows.find((r) => r.snapshotType === 'trend');
+    const trendRow = rows.find((r) => r.snapshotType === 'trend' && r.boardId === 'ACC');
     expect(Array.isArray(trendRow?.payload)).toBe(true);
     expect((trendRow?.payload as unknown[]).length).toBe(4);
   });

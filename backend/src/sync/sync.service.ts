@@ -98,25 +98,14 @@ export class SyncService {
       results.push(result);
     }
 
-    // Invoke DORA snapshot computation sequentially after all boards have synced.
-    // Sequential execution avoids concurrent heavy computation that can exhaust
-    // the App Runner heap (the same reason sprint report generation is sequential).
-    // Lambda mode returns immediately after async invocation; in-process mode
-    // runs the computation here, so keeping it sequential is essential.
-    const invokeAllSnapshots = async () => {
-      for (const boardId of boardIds) {
-        await this.lambdaInvoker.invokeSnapshotWorker(boardId).catch((err: unknown) =>
-          this.logger.warn(
-            `Snapshot invocation failed for ${boardId}: ${err instanceof Error ? err.message : String(err)}`,
-          ),
-        );
-      }
-    };
-    invokeAllSnapshots().catch((err: unknown) =>
-      this.logger.warn(
-        `Snapshot invocation loop failed: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-    );
+    // Await snapshot invocation before syncRoadmaps to prevent concurrent heavy workloads.
+    for (const boardId of boardIds) {
+      await this.lambdaInvoker.invokeSnapshotWorker(boardId).catch((err: unknown) =>
+        this.logger.warn(
+          `Snapshot invocation failed for ${boardId}: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+    }
 
     try {
       await this.syncRoadmaps(fieldConfig);

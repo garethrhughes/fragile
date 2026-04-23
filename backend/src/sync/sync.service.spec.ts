@@ -206,9 +206,6 @@ describe('SyncService', () => {
 
       await service.syncAll();
 
-      // Allow fire-and-forget snapshot invocation loop to settle
-      await new Promise((r) => setImmediate(r));
-
       expect(lambdaInvoker.invokeSnapshotWorker).toHaveBeenCalledWith('PROJ');
     });
 

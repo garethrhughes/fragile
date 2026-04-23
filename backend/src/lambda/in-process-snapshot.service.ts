@@ -21,7 +21,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { MetricsService } from '../metrics/metrics.service.js';
 import { BoardConfig, DoraSnapshot } from '../database/entities/index.js';
-import { listRecentQuarters } from '../metrics/period-utils.js';
 
 /** Snapshot key for the org-level (all boards) aggregate and trend. */
 export const ORG_SNAPSHOT_KEY = '__org__';
@@ -39,23 +38,20 @@ export class InProcessSnapshotService {
   ) {}
 
   async computeAndPersist(triggeredBy: string): Promise<void> {
-    const quarters = listRecentQuarters(8);
-    const latestQuarter = quarters[0];
-
     // Resolve all configured board IDs for the org-level snapshot.
     const configs = await this.boardConfigRepo.find({ select: ['boardId'] });
     const allBoardIdStr = configs.map((c) => c.boardId).join(',');
 
     // Per-board snapshot for the triggering board.
     const [boardAggregate, boardTrend] = await Promise.all([
-      this.metricsService.getDoraAggregate({ boardId: triggeredBy, quarter: latestQuarter.label }),
-      this.metricsService.getDoraTrend({ boardId: triggeredBy, mode: 'quarters', limit: 8 }),
+      this.metricsService.getDoraAggregate({ boardId: triggeredBy }),
+      this.metricsService.getDoraTrend({ boardId: triggeredBy, limit: 8 }),
     ]);
 
     // Org-level snapshot covering all boards.
     const [orgAggregate, orgTrend] = await Promise.all([
-      this.metricsService.getDoraAggregate({ boardId: allBoardIdStr, quarter: latestQuarter.label }),
-      this.metricsService.getDoraTrend({ boardId: allBoardIdStr, mode: 'quarters', limit: 8 }),
+      this.metricsService.getDoraAggregate({ boardId: allBoardIdStr }),
+      this.metricsService.getDoraTrend({ boardId: allBoardIdStr, limit: 8 }),
     ]);
 
     await this.snapshotRepo.upsert(

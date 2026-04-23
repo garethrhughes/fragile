@@ -14,10 +14,13 @@ locals {
 
   # Hash of all Lambda source files — used as the null_resource trigger so
   # the build only reruns when relevant source code changes.
-  source_hash = sha256(join("", [
-    for f in sort(fileset("${local.repo_root}/backend/src", "lambda/**")) :
-    filesha256("${local.repo_root}/backend/src/${f}")
-  ]))
+  source_hash = sha256(join("", concat(
+    [
+      for f in sort(fileset("${local.repo_root}/backend/src", "**/*.ts")) :
+      filesha256("${local.repo_root}/backend/src/${f}")
+    ],
+    [filesha256("${local.repo_root}/backend/package-lock.json")],
+  )))
 }
 
 resource "null_resource" "build_lambda" {
@@ -38,8 +41,10 @@ resource "null_resource" "build_lambda" {
 
       echo "==> Packaging Lambda zip..."
       rm -f backend/dist/snapshot-worker.zip
-      cd backend
-      zip -r dist/snapshot-worker.zip dist/ node_modules/ --quiet
+      cd backend/dist
+      zip -r ../dist/snapshot-worker.zip . --quiet
+      cd ../../backend
+      zip -r dist/snapshot-worker.zip node_modules/ --quiet
       cd ..
 
       echo "==> Lambda zip ready at backend/dist/snapshot-worker.zip"
@@ -136,7 +141,7 @@ resource "aws_lambda_function" "dora_snapshot" {
   package_type  = "Zip"
 
   filename         = local.lambda_zip_path
-  source_code_hash = local.source_hash
+  source_code_hash = fileexists(local.lambda_zip_path) ? filebase64sha256(local.lambda_zip_path) : ""
 
   runtime     = "nodejs20.x"
   handler     = "lambda/snapshot.handler.handler"

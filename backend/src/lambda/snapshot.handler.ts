@@ -15,6 +15,10 @@
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import {
+  SecretsManagerClient,
+  GetSecretValueCommand,
+} from '@aws-sdk/client-secrets-manager';
+import {
   JiraIssue,
   JiraChangelog,
   JiraVersion,
@@ -37,12 +41,57 @@ import { MttrService } from '../metrics/mttr.service.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
 import { listRecentQuarters } from '../metrics/period-utils.js';
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+/**
+ * Org-level snapshot key — must match the value used in
+ * InProcessSnapshotService. Declared here to avoid a circular import at
+ * Lambda runtime.
+ */
+const ORG_SNAPSHOT_KEY = '__org__';
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface SnapshotHandlerEvent {
   boardId: string;
   /** Number of past quarters to compute snapshots for. Defaults to 8. */
   quartersBack?: number;
+}
+
+// ── DB password cache ─────────────────────────────────────────────────────────
+
+let resolvedDbPassword: string | null = null;
+
+async function getDbPassword(): Promise<string> {
+  if (resolvedDbPassword !== null) return resolvedDbPassword;
+
+  const secretArn = process.env['DB_PASSWORD_SECRET_ARN'];
+  if (!secretArn) {
+    throw new Error('DB_PASSWORD_SECRET_ARN environment variable is not set.');
+  }
+
+  const client = new SecretsManagerClient({
+    region: process.env['AWS_REGION'] ?? 'ap-southeast-2',
+  });
+
+  const response = await client.send(
+    new GetSecretValueCommand({ SecretId: secretArn }),
+  );
+
+  const secretString = response.SecretString ?? '';
+
+  // Try parsing as JSON first; fall back to raw string.
+  let parsed: string;
+  try {
+    const obj = JSON.parse(secretString) as Record<string, unknown>;
+    const val = obj['password'] ?? obj['DB_PASSWORD'];
+    parsed = typeof val === 'string' ? val : secretString;
+  } catch {
+    parsed = secretString;
+  }
+
+  resolvedDbPassword = parsed;
+  return resolvedDbPassword;
 }
 
 // ── DataSource (module-level, reused across warm invocations) ────────────────
@@ -52,12 +101,14 @@ let dataSource: DataSource | null = null;
 async function getDataSource(): Promise<DataSource> {
   if (dataSource && dataSource.isInitialized) return dataSource;
 
+  const password = await getDbPassword();
+
   dataSource = new DataSource({
     type: 'postgres',
     host: process.env['DB_HOST'] ?? 'localhost',
     port: parseInt(process.env['DB_PORT'] ?? '5432', 10),
     username: process.env['DB_USERNAME'] ?? 'postgres',
-    password: process.env['DB_PASSWORD'] ?? 'postgres',
+    password,
     database: process.env['DB_DATABASE'] ?? 'ai_starter',
     ssl:
       process.env['DB_SSL'] === 'true' ? { rejectUnauthorized: false } : false,
@@ -135,7 +186,7 @@ export const handler = async (event: SnapshotHandlerEvent): Promise<void> => {
   const rangeStart = quarters[quarters.length - 1].startDate;
   const rangeEnd   = quarters[0].endDate;
 
-  // Load all data in a single bulk pass (4 queries)
+  // Load all data in a single bulk pass (4 queries) for the per-board snapshot
   const slice = await trendLoader.load(boardId, rangeStart, rangeEnd);
 
   // Compute all four metrics for all periods in memory
@@ -161,7 +212,58 @@ export const handler = async (event: SnapshotHandlerEvent): Promise<void> => {
     mttr: mttrService.getMttrObservationsFromData(slice, latestQuarter.startDate, latestQuarter.endDate),
   };
 
-  // Write snapshots (upsert on composite PK)
+  // ── Org-level snapshot ───────────────────────────────────────────────────────
+  // Load all board IDs and merge their slices to produce org-level aggregates.
+  const allBoardConfigs = await boardConfigRepo.find({ select: ['boardId'] });
+  const allBoardIds = allBoardConfigs.map((bc) => bc.boardId);
+
+  if (allBoardIds.length === 0) {
+    console.warn('[snapshot-handler] No board configs found; skipping org-level snapshot.');
+    // Per-board rows were already upserted above — return early.
+    return;
+  }
+
+  // Load slices for all boards and merge into a single org slice
+  const allSlices = await Promise.all(
+    allBoardIds.map((bid) =>
+      bid === boardId
+        ? Promise.resolve({ ...slice, boardId: bid })
+        : trendLoader.load(bid, rangeStart, rangeEnd)
+    ),
+  );
+
+  const orgSlice = allSlices.reduce(
+    (merged, s) => ({
+      ...merged,
+      issues:     [...merged.issues,     ...s.issues],
+      changelogs: [...merged.changelogs, ...s.changelogs],
+      versions:   [...merged.versions,   ...s.versions],
+      issueLinks: [...merged.issueLinks, ...s.issueLinks],
+    }),
+    { ...allSlices[0], issues: [], changelogs: [], versions: [], issueLinks: [] },
+  );
+
+  const orgTrendPayload = quarters.map((q) => ({
+    period:    q.label,
+    startDate: q.startDate,
+    endDate:   q.endDate,
+    df:   dfService.calculateFromData(orgSlice, q.startDate, q.endDate),
+    lt:   ltService.getLeadTimeObservationsFromData(orgSlice, q.startDate, q.endDate),
+    cfr:  cfrService.calculateFromData(orgSlice, q.startDate, q.endDate),
+    mttr: mttrService.getMttrObservationsFromData(orgSlice, q.startDate, q.endDate),
+  }));
+
+  const orgAggregatePayload = {
+    period:    latestQuarter.label,
+    startDate: latestQuarter.startDate,
+    endDate:   latestQuarter.endDate,
+    df:   dfService.calculateFromData(orgSlice, latestQuarter.startDate, latestQuarter.endDate),
+    lt:   ltService.getLeadTimeObservationsFromData(orgSlice, latestQuarter.startDate, latestQuarter.endDate),
+    cfr:  cfrService.calculateFromData(orgSlice, latestQuarter.startDate, latestQuarter.endDate),
+    mttr: mttrService.getMttrObservationsFromData(orgSlice, latestQuarter.startDate, latestQuarter.endDate),
+  };
+
+  // Write snapshots (upsert on composite PK) — 4 rows: per-board + org
   await snapshotRepo.upsert(
     [
       {
@@ -175,6 +277,20 @@ export const handler = async (event: SnapshotHandlerEvent): Promise<void> => {
         boardId,
         snapshotType: 'aggregate' as const,
         payload: aggregatePayload,
+        triggeredBy: boardId,
+        stale: false,
+      },
+      {
+        boardId: ORG_SNAPSHOT_KEY,
+        snapshotType: 'trend' as const,
+        payload: orgTrendPayload,
+        triggeredBy: boardId,
+        stale: false,
+      },
+      {
+        boardId: ORG_SNAPSHOT_KEY,
+        snapshotType: 'aggregate' as const,
+        payload: orgAggregatePayload,
         triggeredBy: boardId,
         stale: false,
       },

@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsInt, Min, Max, IsIn } from 'class-validator';
+import { IsOptional, IsString, IsInt, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -13,15 +13,6 @@ export class DoraTrendQueryDto {
   @IsOptional()
   @IsString()
   boardId?: string;
-
-  @ApiPropertyOptional({
-    description: 'Period mode: quarters (default) or sprints',
-    enum: ['quarters', 'sprints'],
-  })
-  @IsOptional()
-  @IsString()
-  @IsIn(['quarters', 'sprints'])
-  mode?: 'quarters' | 'sprints';
 
   @ApiPropertyOptional({
     description: 'Number of periods to return (default 8, max 20)',

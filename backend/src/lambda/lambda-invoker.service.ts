@@ -29,7 +29,7 @@ export class LambdaInvokerService {
     private readonly config: ConfigService,
     private readonly inProcessSnapshot: InProcessSnapshotService,
   ) {
-    this.useLambda = config.get<string>('USE_LAMBDA') !== 'false';
+    this.useLambda = config.get<string>('USE_LAMBDA') === 'true';
     this.functionName = config.get<string>('DORA_SNAPSHOT_LAMBDA_NAME') ?? null;
 
     if (this.useLambda && this.functionName) {
@@ -40,15 +40,24 @@ export class LambdaInvokerService {
       this.client = null;
       if (this.useLambda && !this.functionName) {
         this.logger.warn(
-          'DORA_SNAPSHOT_LAMBDA_NAME is not set. ' +
-          'Falling back to in-process snapshot computation.',
+          'USE_LAMBDA=true but DORA_SNAPSHOT_LAMBDA_NAME is not set. ' +
+          'Snapshot computation will be skipped to avoid in-process OOM risk.',
         );
       }
     }
   }
 
   async invokeSnapshotWorker(boardId: string): Promise<void> {
-    // If not configured for Lambda, use the in-process fallback.
+    // USE_LAMBDA=true but no function name: skip to avoid OOM risk
+    if (this.useLambda && !this.functionName) {
+      this.logger.warn(
+        `Skipping DORA snapshot for board ${boardId}: ` +
+        `USE_LAMBDA=true but DORA_SNAPSHOT_LAMBDA_NAME is not configured.`,
+      );
+      return;
+    }
+
+    // USE_LAMBDA=false: in-process fallback is intentional
     if (!this.client || !this.functionName) {
       try {
         await this.inProcessSnapshot.computeAndPersist(boardId);
@@ -61,19 +70,18 @@ export class LambdaInvokerService {
       return;
     }
 
+    // Lambda invocation path
     const payload: SnapshotHandlerEvent = { boardId };
-
     try {
       await this.client.send(
         new InvokeCommand({
           FunctionName:   this.functionName,
-          InvocationType: InvocationType.Event, // async fire-and-forget
+          InvocationType: InvocationType.Event,
           Payload:        Buffer.from(JSON.stringify(payload)),
         }),
       );
       this.logger.debug(`Invoked DORA snapshot Lambda for board: ${boardId}`);
     } catch (err) {
-      // Invocation failure is non-fatal: sync has already succeeded.
       this.logger.warn(
         `Failed to invoke DORA snapshot Lambda for board ${boardId}: ` +
         `${err instanceof Error ? err.message : String(err)}`,

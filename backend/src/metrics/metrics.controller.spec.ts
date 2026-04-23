@@ -157,6 +157,25 @@ describe('MetricsController — snapshot-aware endpoints', () => {
 
       expect(res.setHeader).toHaveBeenCalledWith('X-Snapshot-Stale', 'true');
     });
+
+    it('slices the periods array to the requested limit', async () => {
+      const periods = Array.from({ length: 8 }, (_, i) => ({ label: `Q${i + 1}` }));
+      const snapshot: SnapshotResult = {
+        payload: periods as unknown as TrendResponse,
+        ageSeconds: 100,
+        stale: false,
+      };
+      snapshotSvc.getSnapshot.mockResolvedValue(snapshot);
+      const res = mockRes();
+
+      const result = await controller.getDoraTrend(
+        { boardId: 'ACC', limit: 3 } as DoraTrendQueryDto,
+        res as never,
+      );
+
+      expect(Array.isArray(result)).toBe(true);
+      expect((result as unknown[]).length).toBe(3);
+    });
   });
 
   // ── getSnapshotStatus ──────────────────────────────────────────────────────

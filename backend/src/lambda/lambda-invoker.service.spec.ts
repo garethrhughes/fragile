@@ -126,7 +126,7 @@ describe('LambdaInvokerService', () => {
   });
 
   describe('when USE_LAMBDA=true but function name is not set', () => {
-    it('delegates to InProcessSnapshotService', async () => {
+    it('skips computation without calling InProcessSnapshotService', async () => {
       const config = makeConfig({
         USE_LAMBDA: 'true',
         DORA_SNAPSHOT_LAMBDA_NAME: undefined,
@@ -134,9 +134,9 @@ describe('LambdaInvokerService', () => {
       const inProcess = makeInProcessService();
       const service = new LambdaInvokerService(config, inProcess);
 
-      await service.invokeSnapshotWorker('ACC');
+      await expect(service.invokeSnapshotWorker('ACC')).resolves.toBeUndefined();
 
-      expect(inProcess.computeAndPersist).toHaveBeenCalledWith('ACC');
+      expect(inProcess.computeAndPersist).not.toHaveBeenCalled();
       expect(mockSend).not.toHaveBeenCalled();
     });
   });

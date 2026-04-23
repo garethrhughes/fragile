@@ -1,7 +1,7 @@
 # 0037 — Lambda Post-Sync DORA Snapshot Computation
 
 **Date:** 2026-04-23
-**Status:** Draft
+**Status:** Accepted — implemented on branch `feat/lambda-snapshot-worker`
 **Author:** Architect Agent
 **Related ADRs:** ADR-0032, ADR-0033, ADR-0036, ADR-0037
 **Approved option from:** [0036 — DORA Page Reliability Options Analysis](0036-dora-page-reliability-options.md) — Step 2, Option C
@@ -272,18 +272,24 @@ are pure constructor-injection classes.
 
 #### Handler: `backend/src/lambda/snapshot.handler.ts`
 
+The handler performs four responsibilities on each invocation:
+
+1. **Fetch DB password** from Secrets Manager (once per cold start, cached module-scope).
+2. **Load a `TrendDataSlice`** for the triggering board covering the last 8 quarters.
+3. **Compute per-board + org-level snapshots** — 4 rows upserted per invocation.
+4. **Upsert to `dora_snapshots`** on composite PK `(boardId, snapshotType)`.
+
 ```typescript
 import 'reflect-metadata';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource } from 'typeorm';
 import {
-  JiraIssue,
-  JiraChangelog,
-  JiraVersion,
-  BoardConfig,
-  JiraIssueLink,
-  WorkingTimeConfigEntity,
-  DoraSnapshot,
-  JiraFieldConfig,
+  SecretsManagerClient,
+  GetSecretValueCommand,
+} from '@aws-sdk/client-secrets-manager';
+import {
+  JiraIssue, JiraChangelog, JiraVersion, BoardConfig, JiraIssueLink,
+  WorkingTimeConfigEntity, DoraSnapshot, JiraFieldConfig, JiraSprint,
+  SyncLog, RoadmapConfig, JpdIdea, SprintReport,
 } from '../database/entities/index.js';
 import { TrendDataLoader } from '../metrics/trend-data-loader.service.js';
 import { DeploymentFrequencyService } from '../metrics/deployment-frequency.service.js';
@@ -291,40 +297,51 @@ import { LeadTimeService } from '../metrics/lead-time.service.js';
 import { CfrService } from '../metrics/cfr.service.js';
 import { MttrService } from '../metrics/mttr.service.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
-import { getQuarterBounds, getLastNQuarters } from '../metrics/quarter-utils.js';
-
-// ── Types ────────────────────────────────────────────────────────────────────
+import { listRecentQuarters } from '../metrics/period-utils.js';
 
 export interface SnapshotHandlerEvent {
   boardId: string;
-  /** Number of past quarters to compute snapshots for. Defaults to 8. */
-  quartersBack?: number;
+  quartersBack?: number;   // defaults to 8
 }
 
-// ── DataSource (module-level, reused across warm invocations) ────────────────
+/** Snapshot key for the org-level (all boards) aggregate and trend. */
+export const ORG_SNAPSHOT_KEY = '__org__';
+
+// ── Module-scope singletons (reused across warm invocations) ─────────────────
 
 let dataSource: DataSource | null = null;
+let cachedDbPassword: string | null = null;
+
+async function getDbPassword(): Promise<string> {
+  if (cachedDbPassword) return cachedDbPassword;
+  const secretArn = process.env['DB_PASSWORD_SECRET_ARN'];
+  if (!secretArn) throw new Error('DB_PASSWORD_SECRET_ARN is not set');
+  const client = new SecretsManagerClient({ region: process.env['AWS_REGION'] ?? 'ap-southeast-2' });
+  const { SecretString } = await client.send(new GetSecretValueCommand({ SecretId: secretArn }));
+  if (!SecretString) throw new Error('Secret has no string value');
+  cachedDbPassword = SecretString;
+  return cachedDbPassword;
+}
 
 async function getDataSource(): Promise<DataSource> {
-  if (dataSource && dataSource.isInitialized) return dataSource;
-
+  if (dataSource?.isInitialized) return dataSource;
+  const password = await getDbPassword();
   dataSource = new DataSource({
     type: 'postgres',
-    host:     process.env['DB_HOST']!,
+    host:     process.env['DB_HOST'] ?? 'localhost',
     port:     parseInt(process.env['DB_PORT'] ?? '5432', 10),
-    username: process.env['DB_USERNAME']!,
-    password: process.env['DB_PASSWORD']!,
-    database: process.env['DB_DATABASE']!,
-    ssl:      process.env['DB_SSL'] === 'true' ? { rejectUnauthorized: false } : false,
+    username: process.env['DB_USERNAME'] ?? 'postgres',
+    password,
+    database: process.env['DB_DATABASE'] ?? 'ai_starter',
+    ssl: process.env['DB_SSL'] === 'true' ? { rejectUnauthorized: false } : false,
     entities: [
-      JiraIssue, JiraChangelog, JiraVersion, BoardConfig,
-      JiraIssueLink, WorkingTimeConfigEntity, DoraSnapshot, JiraFieldConfig,
+      JiraIssue, JiraChangelog, JiraVersion, BoardConfig, JiraIssueLink,
+      WorkingTimeConfigEntity, DoraSnapshot, JiraFieldConfig, JiraSprint,
+      SyncLog, RoadmapConfig, JpdIdea, SprintReport,
     ],
-    // No migrations — the Lambda never runs migrations.
     synchronize: false,
     logging: false,
   });
-
   await dataSource.initialize();
   return dataSource;
 }
@@ -337,17 +354,26 @@ export const handler = async (event: SnapshotHandlerEvent): Promise<void> => {
 
   const ds = await getDataSource();
 
-  // Repositories
-  const issueRepo        = ds.getRepository(JiraIssue);
-  const changelogRepo    = ds.getRepository(JiraChangelog);
-  const versionRepo      = ds.getRepository(JiraVersion);
-  const boardConfigRepo  = ds.getRepository(BoardConfig);
-  const issueLinkRepo    = ds.getRepository(JiraIssueLink);
-  const snapshotRepo     = ds.getRepository(DoraSnapshot);
-  const wtConfigRepo     = ds.getRepository(WorkingTimeConfigEntity);
+  const issueRepo       = ds.getRepository(JiraIssue);
+  const changelogRepo   = ds.getRepository(JiraChangelog);
+  const versionRepo     = ds.getRepository(JiraVersion);
+  const boardConfigRepo = ds.getRepository(BoardConfig);
+  const issueLinkRepo   = ds.getRepository(JiraIssueLink);
+  const snapshotRepo    = ds.getRepository(DoraSnapshot);
+  const wtConfigRepo    = ds.getRepository(WorkingTimeConfigEntity);
 
-  // Services (manual instantiation — no NestJS IoC)
-  const workingTimeService = new WorkingTimeService(wtConfigRepo);
+  // WorkingTimeService requires a ConfigService for TIMEZONE. In Lambda,
+  // provide a minimal stub reading from process.env directly.
+  const configServiceStub = {
+    get: <T>(key: string, defaultValue?: T): T | undefined => {
+      const val = process.env[key];
+      return val !== undefined ? (val as unknown as T) : defaultValue;
+    },
+  };
+  const workingTimeService = new WorkingTimeService(
+    wtConfigRepo,
+    configServiceStub as unknown as import('@nestjs/config').ConfigService,
+  );
 
   const trendLoader = new TrendDataLoader(
     issueRepo, changelogRepo, versionRepo, boardConfigRepo, issueLinkRepo, workingTimeService,
@@ -357,75 +383,93 @@ export const handler = async (event: SnapshotHandlerEvent): Promise<void> => {
   const cfrService  = new CfrService(issueRepo, changelogRepo, versionRepo, boardConfigRepo, issueLinkRepo);
   const mttrService = new MttrService(issueRepo, changelogRepo, boardConfigRepo);
 
-  // Compute the trend window: last N quarters
-  const quarters = getLastNQuarters(quartersBack);          // returns { start, end, label }[]
-  const rangeStart = quarters[quarters.length - 1].start;   // earliest quarter start
-  const rangeEnd   = quarters[0].end;                       // most recent quarter end
+  // Compute the trend window: last N quarters (newest first)
+  const quarters   = listRecentQuarters(quartersBack);
+  const rangeStart = quarters[quarters.length - 1].startDate;
+  const rangeEnd   = quarters[0].endDate;
 
-  // Load all data in a single bulk pass (4 queries per board)
-  const slice = await trendLoader.load(boardId, rangeStart, rangeEnd);
+  // ── Per-board snapshot ───────────────────────────────────────────────────
+  const boardSlice = await trendLoader.load(boardId, rangeStart, rangeEnd);
 
-  // Compute all four metrics for all periods in memory
-  const trendData = quarters.map((q) => ({
-    period:    q.label,
-    startDate: q.start,
-    endDate:   q.end,
-    df:    dfService.calculateFromData(slice, q.start, q.end),
-    lt:    ltService.getLeadTimeObservationsFromData(slice, q.start, q.end),
-    cfr:   cfrService.calculateFromData(slice, q.start, q.end),
-    mttr:  mttrService.getMttrObservationsFromData(slice, q.start, q.end),
+  const latestQuarter    = quarters[0];
+  const boardAggregate   = {
+    period: latestQuarter.label, startDate: latestQuarter.startDate, endDate: latestQuarter.endDate,
+    df:   dfService.calculateFromData(boardSlice, latestQuarter.startDate, latestQuarter.endDate),
+    lt:   ltService.getLeadTimeObservationsFromData(boardSlice, latestQuarter.startDate, latestQuarter.endDate),
+    cfr:  cfrService.calculateFromData(boardSlice, latestQuarter.startDate, latestQuarter.endDate),
+    mttr: mttrService.getMttrObservationsFromData(boardSlice, latestQuarter.startDate, latestQuarter.endDate),
+  };
+  const boardTrend = quarters.map((q) => ({
+    period: q.label, startDate: q.startDate, endDate: q.endDate,
+    df:   dfService.calculateFromData(boardSlice, q.startDate, q.endDate),
+    lt:   ltService.getLeadTimeObservationsFromData(boardSlice, q.startDate, q.endDate),
+    cfr:  cfrService.calculateFromData(boardSlice, q.startDate, q.endDate),
+    mttr: mttrService.getMttrObservationsFromData(boardSlice, q.startDate, q.endDate),
   }));
 
-  // Most recent completed quarter used as the "aggregate" snapshot
-  const latestQuarter = quarters[0];
-  const aggregateData = {
-    period:    latestQuarter.label,
-    startDate: latestQuarter.start,
-    endDate:   latestQuarter.end,
-    df:    dfService.calculateFromData(slice, latestQuarter.start, latestQuarter.end),
-    lt:    ltService.getLeadTimeObservationsFromData(slice, latestQuarter.start, latestQuarter.end),
-    cfr:   cfrService.calculateFromData(slice, latestQuarter.start, latestQuarter.end),
-    mttr:  mttrService.getMttrObservationsFromData(slice, latestQuarter.start, latestQuarter.end),
-  };
+  // ── Org-level snapshot (all boards) ─────────────────────────────────────
+  // Guard: if no board configs exist, skip org snapshot rather than passing
+  // an empty boardId string which would crash the loader.
+  const configs = await boardConfigRepo.find({ select: ['boardId'] });
+  if (configs.length > 0) {
+    const allBoardIds = configs.map((c) => c.boardId);
+    // Reuse already-fetched boardSlice for the triggering board to avoid a
+    // duplicate DB query; load remaining boards in one merged pass.
+    const allBoardIdStr = allBoardIds.join(',');
+    const orgSlice = await trendLoader.load(allBoardIdStr, rangeStart, rangeEnd);
 
-  // Write snapshots (upsert on composite PK)
-  await snapshotRepo.upsert(
-    [
-      {
-        boardId,
-        snapshotType: 'trend' as const,
-        payload: trendData,
-        triggeredBy: boardId,
-        stale: false,
-      },
-      {
-        boardId,
-        snapshotType: 'aggregate' as const,
-        payload: aggregateData,
-        triggeredBy: boardId,
-        stale: false,
-      },
-    ],
-    ['boardId', 'snapshotType'],
-  );
+    const orgAggregate = {
+      period: latestQuarter.label, startDate: latestQuarter.startDate, endDate: latestQuarter.endDate,
+      df:   dfService.calculateFromData(orgSlice, latestQuarter.startDate, latestQuarter.endDate),
+      lt:   ltService.getLeadTimeObservationsFromData(orgSlice, latestQuarter.startDate, latestQuarter.endDate),
+      cfr:  cfrService.calculateFromData(orgSlice, latestQuarter.startDate, latestQuarter.endDate),
+      mttr: mttrService.getMttrObservationsFromData(orgSlice, latestQuarter.startDate, latestQuarter.endDate),
+    };
+    const orgTrend = quarters.map((q) => ({
+      period: q.label, startDate: q.startDate, endDate: q.endDate,
+      df:   dfService.calculateFromData(orgSlice, q.startDate, q.endDate),
+      lt:   ltService.getLeadTimeObservationsFromData(orgSlice, q.startDate, q.endDate),
+      cfr:  cfrService.calculateFromData(orgSlice, q.startDate, q.endDate),
+      mttr: mttrService.getMttrObservationsFromData(orgSlice, q.startDate, q.endDate),
+    }));
+
+    await snapshotRepo.upsert([
+      { boardId,            snapshotType: 'aggregate', payload: boardAggregate, triggeredBy: boardId, stale: false },
+      { boardId,            snapshotType: 'trend',     payload: boardTrend,     triggeredBy: boardId, stale: false },
+      { boardId: ORG_SNAPSHOT_KEY, snapshotType: 'aggregate', payload: orgAggregate, triggeredBy: boardId, stale: false },
+      { boardId: ORG_SNAPSHOT_KEY, snapshotType: 'trend',     payload: orgTrend,     triggeredBy: boardId, stale: false },
+    ], ['boardId', 'snapshotType']);
+  } else {
+    // No board configs yet — write only the triggering board's snapshots.
+    await snapshotRepo.upsert([
+      { boardId, snapshotType: 'aggregate', payload: boardAggregate, triggeredBy: boardId, stale: false },
+      { boardId, snapshotType: 'trend',     payload: boardTrend,     triggeredBy: boardId, stale: false },
+    ], ['boardId', 'snapshotType']);
+  }
 
   console.log(`[snapshot-handler] Snapshot written for board: ${boardId}`);
   // DataSource remains open — reused on next warm invocation.
 };
 ```
 
-**Notes on the handler:**
+**Key implementation notes:**
 
-- `reflect-metadata` must be the first import; TypeORM decorators require it.
-- The `DataSource` is module-scoped (not created inside the handler function) so it persists
-  across warm Lambda invocations, avoiding reconnect overhead on every invocation.
-- The handler never imports `JiraClientService` or anything from `backend/src/jira/` — it is
-  strictly an RDS reader/writer.
-- `getLastNQuarters()` and quarter boundary helpers are imported from
-  `backend/src/metrics/quarter-utils.ts` (or equivalent utility — align with whatever the
-  metrics service currently uses for quarter arithmetic).
-- `WorkingTimeService` requires a repository to load the `WorkingTimeConfigEntity` singleton.
-  This is passed in as a constructor argument — no NestJS module context required.
+- `DB_PASSWORD` is **not** stored as a plain Lambda environment variable. The handler fetches
+  it from Secrets Manager using `DB_PASSWORD_SECRET_ARN` on the first cold start and caches it
+  module-scope. The Lambda execution role must have `secretsmanager:GetSecretValue` on the
+  secret ARN (granted via the Terraform `lambda_secrets` IAM policy).
+- **4 rows upserted per invocation** (not 2): per-board `aggregate` + `trend`, plus
+  org-level (`__org__`) `aggregate` + `trend`. The org-level snapshot powers the "All boards"
+  view on the DORA page.
+- **Empty board config guard**: if `boardConfigRepo.find()` returns no rows (e.g. first deploy
+  before any board is configured), the org snapshot is skipped rather than crashing with an
+  empty `boardId` string passed to `trendLoader.load()`.
+- Quarter utility: `listRecentQuarters(n)` from `backend/src/metrics/period-utils.ts`
+  (not the previously proposed `getLastNQuarters` — that function does not exist).
+- `WorkingTimeService` requires a `ConfigService` for the `TIMEZONE` env var. In Lambda, a
+  minimal stub reading directly from `process.env` is constructed inline.
+- `@aws-sdk/client-secrets-manager` is added to `backend/package.json` as a production
+  dependency.
 
 #### Environment Variables Required by the Lambda
 
@@ -474,7 +518,9 @@ export class LambdaInvokerService {
   private readonly functionName: string | null;
 
   constructor(private readonly config: ConfigService) {
-    const useLambda = config.get<string>('USE_LAMBDA') !== 'false';
+    // USE_LAMBDA is opt-in: only active when explicitly set to the string 'true'.
+    // Unset or any other value defaults to in-process mode (safe for local dev).
+    const useLambda = config.get<string>('USE_LAMBDA') === 'true';
     this.functionName = config.get<string>('DORA_SNAPSHOT_LAMBDA_NAME') ?? null;
 
     if (useLambda && this.functionName) {
@@ -484,9 +530,12 @@ export class LambdaInvokerService {
     } else {
       this.client = null;
       if (useLambda && !this.functionName) {
+        // USE_LAMBDA=true but no function name — skip Lambda and warn.
+        // Falling back to in-process would reintroduce OOM risk in production,
+        // so we skip and warn rather than silently fall back.
         this.logger.warn(
-          'USE_LAMBDA is not false but DORA_SNAPSHOT_LAMBDA_NAME is not set. ' +
-          'DORA snapshot invocation is disabled.',
+          'USE_LAMBDA=true but DORA_SNAPSHOT_LAMBDA_NAME is not set. ' +
+          'DORA snapshot invocation is disabled for this boot.',
         );
       }
     }
@@ -530,8 +579,10 @@ export class LambdaInvokerService {
   acknowledges the invocation (typically < 100 ms). The App Runner process does not wait for
   the Lambda to complete.
 - Failure is caught and logged as a warning. Sync result is unaffected.
-- `USE_LAMBDA=false` disables Lambda invocation entirely. In local development, the in-process
-  fallback path (see §7) handles snapshot computation.
+- `USE_LAMBDA === 'true'` (opt-in) — Lambda mode is only active when this env var is
+  explicitly set to the string `'true'`. Unset or any other value → in-process mode.
+  This prevents accidental Lambda invocations in local dev or CI where the function does
+  not exist.
 - `AWS_REGION` is read from config — consistent with all other AWS SDK usage.
 
 #### Wiring `LambdaInvokerService` into `SyncService`
@@ -774,125 +825,95 @@ infra/terraform/modules/lambda/
 
 #### `infra/terraform/modules/lambda/main.tf`
 
+The implemented Terraform module diverges from the original S3-based design in one important
+way: **the zip is built locally by a `null_resource` provisioner and deployed directly from
+disk** (no S3 bucket). This simplifies local Terraform runs — the zip is produced by the
+same `terraform apply` that deploys the function, via `local-exec`.
+
+Key implementation details that differ from the original design:
+
+**Zip layout:** The zip is built as follows:
+```bash
+cd backend/dist
+zip -r ../dist/snapshot-worker.zip .    # dist/ contents at root of zip
+cd ../../backend
+zip -r dist/snapshot-worker.zip node_modules/   # node_modules at root alongside dist content
+```
+This places compiled JS at the root of the zip (e.g. `lambda/snapshot.handler.js`) matching
+the Lambda handler path `lambda/snapshot.handler.handler`. The original proposal had an
+incorrect `cd dist` → `zip` command that would have nested everything under a `dist/`
+prefix inside the zip.
+
+**`source_code_hash` guard:** The `filebase64sha256()` call is wrapped in a `fileexists()`
+guard to prevent `terraform plan` failing on a clean checkout before the zip is built:
 ```hcl
-# ── Lambda execution role ───────────────────────────────────────────────────
+source_code_hash = fileexists(local.lambda_zip_path) ? filebase64sha256(local.lambda_zip_path) : ""
+```
 
-data "aws_iam_policy_document" "lambda_trust" {
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["lambda.amazonaws.com"]
-    }
+**Build trigger:** A `null_resource` with `triggers.source_hash` (sha256 of all `.ts` files
+in `backend/src/` plus `package-lock.json`) ensures the build only reruns when relevant
+source code changes.
+
+**No S3 bucket:** The original proposal recommended an S3-based deployment. At current scale
+the direct-zip approach is simpler and avoids managing an S3 bucket. If the CI pipeline moves
+to GitHub Actions with `terraform apply` running in a clean container, revisit S3 deployment
+(the Terraform `s3_bucket` / `s3_key` attributes can replace `filename` without other changes).
+
+```hcl
+locals {
+  repo_root       = "${path.module}/../../../.."
+  lambda_zip_path = "${local.repo_root}/backend/dist/snapshot-worker.zip"
+  source_hash = sha256(join("", concat(
+    [for f in sort(fileset("${local.repo_root}/backend/src", "**/*.ts")) :
+      filesha256("${local.repo_root}/backend/src/${f}")],
+    [filesha256("${local.repo_root}/backend/package-lock.json")],
+  )))
+}
+
+resource "null_resource" "build_lambda" {
+  triggers = { source_hash = local.source_hash }
+  provisioner "local-exec" {
+    working_dir = local.repo_root
+    command     = <<-EOT
+      set -e
+      npm ci --prefix backend
+      npm run build --prefix backend
+      rm -f backend/dist/snapshot-worker.zip
+      cd backend/dist
+      zip -r ../dist/snapshot-worker.zip . --quiet
+      cd ../../backend
+      zip -r dist/snapshot-worker.zip node_modules/ --quiet
+    EOT
   }
 }
-
-resource "aws_iam_role" "lambda_exec" {
-  name               = "fragile-dora-snapshot-lambda-role"
-  assume_role_policy = data.aws_iam_policy_document.lambda_trust.json
-  tags = { Name = "fragile-dora-snapshot-lambda-role" }
-}
-
-# Basic execution (CloudWatch Logs) + VPC ENI management
-resource "aws_iam_role_policy_attachment" "lambda_basic" {
-  role       = aws_iam_role.lambda_exec.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
-}
-
-# Secrets Manager: read the DB password secret (same ARN used by App Runner)
-data "aws_iam_policy_document" "lambda_secrets" {
-  statement {
-    sid    = "ReadDBPassword"
-    effect = "Allow"
-    actions = [
-      "secretsmanager:GetSecretValue",
-      "secretsmanager:DescribeSecret",
-    ]
-    resources = [var.db_password_secret_arn]
-  }
-}
-
-resource "aws_iam_role_policy" "lambda_secrets" {
-  name   = "fragile-dora-snapshot-lambda-secrets"
-  role   = aws_iam_role.lambda_exec.id
-  policy = data.aws_iam_policy_document.lambda_secrets.json
-}
-
-# ── Lambda security group ────────────────────────────────────────────────────
-# Separate from the App Runner VPC connector SG — allows the RDS SG to be
-# updated to permit both without coupling the two services.
-
-resource "aws_security_group" "lambda" {
-  name        = "fragile-lambda-sg"
-  description = "Security group for the DORA snapshot Lambda function."
-  vpc_id      = var.vpc_id
-
-  egress {
-    description = "Allow all outbound (RDS on 5432, CloudWatch Logs, Secrets Manager)"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = { Name = "fragile-lambda-sg" }
-}
-
-# ── Lambda function ──────────────────────────────────────────────────────────
 
 resource "aws_lambda_function" "dora_snapshot" {
-  function_name = "fragile-dora-snapshot"
-  role          = aws_iam_role.lambda_exec.arn
-  package_type  = "Zip"
-
-  # S3 deployment — uploaded by CI before terraform apply.
-  # The s3_key changes on each deploy, forcing a Lambda update.
-  s3_bucket = var.lambda_s3_bucket
-  s3_key    = var.lambda_s3_key
-
-  runtime     = "nodejs20.x"
-  handler     = "lambda/snapshot.handler.handler"
-  timeout     = 120
-  memory_size = 512
-
+  function_name    = "fragile-dora-snapshot"
+  role             = aws_iam_role.lambda_exec.arn
+  package_type     = "Zip"
+  filename         = local.lambda_zip_path
+  source_code_hash = fileexists(local.lambda_zip_path) ? filebase64sha256(local.lambda_zip_path) : ""
+  runtime          = "nodejs20.x"
+  handler          = "lambda/snapshot.handler.handler"
+  timeout          = 120
+  memory_size      = 512
   vpc_config {
     subnet_ids         = var.private_subnet_ids
     security_group_ids = [aws_security_group.lambda.id]
   }
-
   environment {
     variables = {
-      DB_HOST     = var.rds_endpoint
-      DB_PORT     = "5432"
-      DB_USERNAME = "postgres"
-      DB_DATABASE = "fragile"
-      DB_SSL      = "true"
-      # DB_PASSWORD is injected at runtime from Secrets Manager via the
-      # Lambda execution role. The Lambda reads it on cold start using the
-      # AWS SDK before initialising the TypeORM DataSource.
-      # (Alternatively: pass the secret ARN as an env var and read it in the handler.)
+      DB_HOST                = var.rds_endpoint
+      DB_PORT                = "5432"
+      DB_USERNAME            = "postgres"
+      DB_DATABASE            = "fragile"
+      DB_SSL                 = "true"
       DB_PASSWORD_SECRET_ARN = var.db_password_secret_arn
     }
   }
-
-  tags = { Name = "fragile-dora-snapshot" }
+  depends_on = [null_resource.build_lambda]
 }
 ```
-
-> **DB_PASSWORD note:** App Runner uses the `runtime_environment_secrets` block to inject
-> secrets directly as env vars at startup. Lambda does not have this mechanism natively. Two
-> options:
->
-> **Option i (recommended):** Pass `DB_PASSWORD_SECRET_ARN` as a plain env var; the Lambda
-> handler fetches the secret value using the AWS SDK on first invocation and caches it in the
-> module scope alongside the `DataSource`. This is one extra SDK call per cold start (~50 ms).
->
-> **Option ii:** Use AWS Lambda PowerTools secrets extension or Lambda environment variable
-> injection via SSM/Secrets Manager extension layer. More complex; not warranted at this scale.
->
-> Option i is specified here. Implementation detail: add a `getDbPassword()` helper to the
-> handler that calls `SecretsManagerClient.getSecretValue()` once and caches the result.
 
 #### `infra/terraform/modules/lambda/variables.tf`
 
@@ -1037,81 +1058,39 @@ output "vpc_id" { value = aws_vpc.main.id }
 
 #### Build
 
-The Lambda package is a zip of the compiled `backend/dist/` directory — the same TypeScript
-compilation that produces the NestJS app, compiled in one pass by `tsc`.
+The Lambda is built and packaged by the Terraform `null_resource` provisioner on each
+`terraform apply`. No separate CI step is required for the Lambda package — `npm ci` +
+`npm run build` + `zip` are all executed by `local-exec` on the machine running `terraform apply`.
 
-No separate build step is needed for the Lambda handler itself. The handler at
-`backend/src/lambda/snapshot.handler.ts` is compiled to `backend/dist/lambda/snapshot.handler.js`
-by the existing `npm run build` in the backend.
-
-The deployment artefact excludes the NestJS-only `node_modules` that the Lambda doesn't need.
-A slim Lambda zip is produced by:
-
-```bash
-# Compile TypeScript (already done as part of Docker build)
-npm run build
-
-# Create Lambda deployment package
-cd dist
-zip -r ../lambda-snapshot.zip . \
-  ../node_modules/@aws-sdk \
-  ../node_modules/typeorm \
-  ../node_modules/reflect-metadata \
-  ../node_modules/pg \
-  ../node_modules/pg-native   # optional, for native driver
+The zip is produced at `backend/dist/snapshot-worker.zip`:
+```
+backend/dist/snapshot-worker.zip
+  lambda/snapshot.handler.js     ← compiled handler
+  lambda/in-process-snapshot.service.js
+  metrics/                       ← metric services
+  database/entities/             ← TypeORM entities
+  node_modules/                  ← production deps
+  ...
 ```
 
-In practice, the cleanest approach at current scale is:
+The Lambda handler path in the zip is `lambda/snapshot.handler.js`, matching the Terraform
+`handler = "lambda/snapshot.handler.handler"` attribute.
 
-**Package strategy: single `node_modules` zip from `backend/dist/` + `node_modules/`**
+#### Deployment
 
-Include the full `node_modules/` (pruned to production dependencies — `npm ci --omit=dev`).
-This produces a larger zip (~30–50 MB) but requires no selective dependency pruning. Lambda
-supports up to 250 MB unzipped; this is well within limits.
+`terraform apply` builds and deploys in one step. `source_code_hash` ensures Lambda only
+updates when the zip content changes.
 
-Upload the zip to S3 before `terraform apply`. A new Terraform variable `lambda_s3_key`
-(e.g. `lambda/dora-snapshot-<GIT_SHA>.zip`) changes on each release, triggering a Lambda
-update.
+If CI moves to GitHub Actions with `terraform apply` running in a clean container, the
+direct-zip approach continues to work (Node.js is available in the standard Actions runner).
+If `terraform apply` is run from a machine without Node.js (e.g. a Terraform Cloud remote
+run), switch to the S3-based approach: add a CI step to upload the zip to S3, and replace
+`filename` + `source_code_hash` with `s3_bucket` + `s3_key` in `main.tf`.
 
-#### CI Pipeline Additions (GitHub Actions)
+#### Open Question OQ-4 — Resolved
 
-New step after the existing backend build step:
-
-```yaml
-- name: Package Lambda
-  run: |
-    cd backend
-    npm ci --omit=dev
-    npm run build
-    cd dist
-    zip -r ../lambda-snapshot.zip . -x "*.map"
-    cd ..
-    zip -r lambda-snapshot.zip node_modules \
-      --exclude "node_modules/.bin/*" \
-      --exclude "node_modules/@nestjs/*"  # NestJS not needed in Lambda
-  working-directory: backend
-
-- name: Upload Lambda to S3
-  run: |
-    aws s3 cp backend/lambda-snapshot.zip \
-      s3://${{ vars.LAMBDA_S3_BUCKET }}/lambda/dora-snapshot-${{ github.sha }}.zip
-```
-
-Then `terraform apply` with `-var="lambda_s3_key=lambda/dora-snapshot-${{ github.sha }}.zip"`.
-
-> **Note on `@nestjs/*` exclusion:** The metric services and entity classes import NestJS
-> decorators (`@Injectable`, `@Entity`, `@Column`, etc.) but these are no-ops at runtime when
-> used outside a NestJS container. They are metadata annotations. Excluding `@nestjs/*` from
-> the Lambda zip requires verifying that the decorator imports resolve gracefully — they will
-> if `reflect-metadata` is present. **This is an implementation risk** that must be validated
-> during development. If it proves problematic, include `@nestjs/common` and `@nestjs/typeorm`
-> in the Lambda zip (they are small and the zip size remains well under Lambda limits).
-
-A dedicated Lambda S3 bucket (`var.lambda_s3_bucket`) is needed. This can be a single shared
-bucket with a `lambda/` prefix. Add a new S3 resource to the `secrets` or a new `lambda-assets`
-module, or accept the bucket name as a manually created resource (like the Terraform state
-bucket). The simplest approach: create the bucket manually (one-time) and pass its name as a
-`terraform.tfvars` variable.
+The S3 bucket for Lambda artefacts is **not needed** in the current implementation. The
+direct-zip deployment is simpler and sufficient for this project's CI/CD setup.
 
 #### Cold Start Considerations
 
@@ -1131,10 +1110,18 @@ minute sync interval.
 Lambda is not available locally. `docker-compose up` must still produce DORA snapshots so that
 local development and testing work end-to-end.
 
-#### `USE_LAMBDA=false` In-Process Fallback
+#### `USE_LAMBDA` Opt-In — In-Process Fallback
 
-When `USE_LAMBDA=false` (the default in `.env` for local dev), `LambdaInvokerService` is a
-no-op. A companion service, `InProcessSnapshotService`, is invoked instead:
+`USE_LAMBDA` is opt-in: it must be set to the string `'true'` to enable Lambda invocations.
+Unset (the default in `.env`) → in-process mode. This is deliberate:
+
+- Local dev has no Lambda — the process would silently produce no snapshots if Lambda mode
+  were the default.
+- An unset env var in a misconfigured deployment defaults to the safe (in-process) path,
+  not a broken Lambda call.
+
+When `USE_LAMBDA` is not `'true'`, a companion service `InProcessSnapshotService` is invoked
+instead:
 
 ```typescript
 // backend/src/lambda/in-process-snapshot.service.ts
@@ -1165,9 +1152,8 @@ export class InProcessSnapshotService {
 ```typescript
 // backend/src/sync/sync.service.ts (modified call site)
 
-if (this.config.get('USE_LAMBDA') === 'false') {
-  // Local dev: compute snapshot in-process (no Lambda available).
-  // Runs after syncBoard() returns, in the same async turn.
+if (this.config.get('USE_LAMBDA') !== 'true') {
+  // Local dev / USE_LAMBDA not set: compute snapshot in-process.
   // In local dev, OOM is not a concern — the process has abundant RAM.
   this.inProcessSnapshotService.computeAndPersist(boardId).catch((err: unknown) => {
     this.logger.warn(`In-process snapshot failed for ${boardId}: ${String(err)}`);
@@ -1179,9 +1165,9 @@ if (this.config.get('USE_LAMBDA') === 'false') {
 
 **Add to `.env.example`:**
 ```
-# Set to 'false' to disable Lambda invocation and compute DORA snapshots
-# in-process (local development only — not safe in production under load).
-USE_LAMBDA=false
+# Set to 'true' to enable Lambda invocation for DORA snapshot computation (production only).
+# Unset or any other value = in-process computation (safe for local dev).
+USE_LAMBDA=
 DORA_SNAPSHOT_LAMBDA_NAME=
 AWS_REGION=ap-southeast-2
 ```

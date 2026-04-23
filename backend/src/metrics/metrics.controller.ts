@@ -88,7 +88,11 @@ export class MetricsController {
     }
     res.setHeader('X-Snapshot-Age', String(snapshot.ageSeconds));
 
-    return snapshot.payload as TrendResponse;
+    const payload = snapshot.payload as TrendResponse;
+    if (query.limit !== undefined && Array.isArray(payload)) {
+      return payload.slice(0, query.limit) as TrendResponse;
+    }
+    return payload;
   }
 
   @ApiOperation({

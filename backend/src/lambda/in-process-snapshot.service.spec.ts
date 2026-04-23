@@ -79,7 +79,7 @@ describe('InProcessSnapshotService', () => {
   it('calls getDoraTrend for the requested board', async () => {
     await service.computeAndPersist('ACC');
     expect(metricsService.getDoraTrend).toHaveBeenCalledWith(
-      expect.objectContaining({ boardId: 'ACC', mode: 'quarters' }),
+      expect.objectContaining({ boardId: 'ACC' }),
     );
   });
 
