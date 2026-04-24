@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, Loader2 } from 'lucide-react'
 import { useReplaceParams } from '@/hooks/use-page-params'
 import { useDebounce } from '@/hooks/use-debounce'
 import {
@@ -21,6 +21,7 @@ import type {
 import {
   getDoraAggregate,
   getDoraTrend,
+  SnapshotPendingError,
   type OrgDoraResult,
   type TrendPoint,
 } from '@/lib/api'
@@ -40,6 +41,7 @@ import { MetricHelp, type MetricDefinition } from '@/components/ui/metric-help'
 type PageState =
   | { status: 'idle' }
   | { status: 'loading' }
+  | { status: 'pending' }
   | { status: 'error'; message: string }
   | { status: 'ready'; aggregate: OrgDoraResult; trend: TrendPoint[] }
 
@@ -55,18 +57,6 @@ function abbreviateQuarter(label: string): string {
   const numMatch = label.match(/(\d+)/)
   if (numMatch) return `SP ${numMatch[1]}`
   return label.length > 8 ? label.slice(0, 8) : label
-}
-
-/**
- * Returns the current calendar quarter label in YYYY-QN format (e.g. "2026-Q2").
- * Used to align the headline aggregate with the rightmost trend chart point so
- * that both values are always computed over the same time window.
- * (Proposal 0031 — fix for MTTR headline / chart discrepancy.)
- */
-function currentQuarterLabel(): string {
-  const now = new Date()
-  const q = Math.floor(now.getMonth() / 3) + 1
-  return `${now.getFullYear()}-Q${q}`
 }
 
 // ---------------------------------------------------------------------------
@@ -259,16 +249,6 @@ function DoraPageInner() {
     }
   }, [sprintModeAvailable, periodType, replaceParams])
 
-  const toggleBoard = useCallback(
-    (boardId: string) => {
-      const next = selectedBoards.includes(boardId)
-        ? selectedBoards.filter((b) => b !== boardId)
-        : [...selectedBoards, boardId]
-      replaceParams({ boards: next.join(',') })
-    },
-    [selectedBoards, replaceParams],
-  )
-
   // Main data fetch — fires on filter change or retry
   useEffect(() => {
     let cancelled = false
@@ -282,28 +262,22 @@ function DoraPageInner() {
       try {
         // Fetch trend first so we can align the aggregate window to the rightmost
         // chart point using the server's timezone, not the browser's local date.
-        const trend = await getDoraTrend({
-          boardId,
-          mode: periodType === 'sprint' ? 'sprints' : 'quarters',
-          limit: 8,
-        })
+        const trend = await getDoraTrend({ boardId, limit: 8 })
         if (cancelled) return
-        // Use the last trend label as the aggregate quarter when it is a
-        // quarter label (server timezone aligned). Fall back to the
-        // browser-derived label when trend data is empty or in sprint mode.
-        const lastLabel = trend.length > 0 ? trend[trend.length - 1].label : undefined
-        const aggregateQuarter =
-          lastLabel?.match(/^\d{4}-Q[1-4]$/) != null ? lastLabel : currentQuarterLabel()
-        const aggregate = await getDoraAggregate({ boardId, quarter: aggregateQuarter })
+        const aggregate = await getDoraAggregate({ boardId })
         if (!cancelled) {
           setPageState({ status: 'ready', aggregate, trend })
         }
       } catch (err: unknown) {
         if (!cancelled) {
-          setPageState({
-            status: 'error',
-            message: err instanceof Error ? err.message : 'Failed to load metrics',
-          })
+          if (err instanceof SnapshotPendingError) {
+            setPageState({ status: 'pending' })
+          } else {
+            setPageState({
+              status: 'error',
+              message: err instanceof Error ? err.message : 'Failed to load metrics',
+            })
+          }
         }
       }
     }
@@ -311,7 +285,7 @@ function DoraPageInner() {
     return () => {
       cancelled = true
     }
-  }, [debouncedBoards, periodType, retryKey])
+  }, [debouncedBoards, retryKey])
 
   // RC-5: extract sparklines from TrendPoint[] per metric
   const dfSparkline = useMemo(
@@ -363,19 +337,17 @@ function DoraPageInner() {
 
       {/* Filters */}
       <div className="space-y-4 rounded-xl border border-border bg-card p-4">
-        {/* Board selector */}
+        {/* Board selector — single select with All option */}
         <div>
-          <div className="mb-2 flex items-center justify-between">
-            <label className="text-sm font-medium text-muted">Boards</label>
-            <button
-              type="button"
-              onClick={() => replaceParams({ boards: allBoards.join(',') })}
-              className="text-xs text-blue-600 hover:underline"
-            >
-              Select all
-            </button>
-          </div>
+          <label className="mb-2 block text-sm font-medium text-muted">Board</label>
           <div className="flex flex-wrap gap-2">
+            {/* All option */}
+            <BoardChip
+              boardId="All"
+              selected={selectedBoards.length === allBoards.length || selectedBoards.length === 0}
+              onClick={() => replaceParams({ boards: '' })}
+            />
+            {/* Individual boards */}
             {allBoards.map((boardId) => {
               const isKanban = kanbanBoardIds.has(boardId)
               const disabledForSprint = periodType === 'sprint' && isKanban
@@ -383,10 +355,13 @@ function DoraPageInner() {
                 <BoardChip
                   key={boardId}
                   boardId={boardId}
-                  selected={selectedBoards.includes(boardId)}
+                  selected={selectedBoards.length < allBoards.length && selectedBoards.includes(boardId)}
                   disabled={disabledForSprint}
                   onClick={() => {
-                    if (!disabledForSprint) toggleBoard(boardId)
+                    if (!disabledForSprint) {
+                      // Single select: clicking a board selects only that board
+                      replaceParams({ boards: boardId })
+                    }
                   }}
                 />
               )
@@ -419,7 +394,7 @@ function DoraPageInner() {
           )}
           {periodType === 'sprint' && selectedBoards.length === 1 && (
             <p className="mt-1 text-xs text-muted">
-              Showing last 8 sprints for {selectedBoards[0]}
+              Showing last 8 periods for {selectedBoards[0]}
             </p>
           )}
         </div>
@@ -493,6 +468,29 @@ function DoraPageInner() {
             className="mt-2 text-sm font-medium text-red-700 underline hover:no-underline"
           >
             Try again
+          </button>
+        </div>
+      )}
+
+      {/* Pending — snapshot not yet computed (first sync still running) */}
+      {pageState.status === 'pending' && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-6 py-8 text-center">
+          <div className="flex justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+          </div>
+          <p className="mt-4 text-sm font-semibold text-blue-800">
+            Computing DORA metrics&hellip;
+          </p>
+          <p className="mt-1 text-sm text-blue-700">
+            DORA snapshots are being computed. This usually takes under a minute
+            after the first sync.
+          </p>
+          <button
+            type="button"
+            onClick={reload}
+            className="mt-4 rounded-lg border border-blue-300 bg-white px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
+          >
+            Check again
           </button>
         </div>
       )}

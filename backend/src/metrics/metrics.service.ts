@@ -188,12 +188,17 @@ export class MetricsService {
     // HTTP request.  TTL is 60 s; this is fine because DORA metrics are computed
     // from historical Jira data that only changes during a background sync.
     // ---------------------------------------------------------------------------
+    // Default to the current calendar quarter when no quarter is specified.
+    // This mirrors the behaviour of the Lambda snapshot handler and the trend
+    // endpoint, and ensures the aggregate period is always a named quarter
+    // rather than a sliding 90-day window.
+    const effectiveQuarter =
+      query.quarter ?? listRecentQuarters(1, this.timezone)[0].label;
+
     const cacheKey = DoraCacheService.buildKey(
       {
         boardId: query.boardId,
-        quarter: query.quarter,
-        sprintId: query.sprintId,
-        period: query.period,
+        quarter: effectiveQuarter,
       },
       'aggregate',
     );
@@ -202,19 +207,8 @@ export class MetricsService {
       return cached;
     }
 
-    let { startDate, endDate } = this.resolvePeriod(query);
+    let { startDate, endDate } = this.resolvePeriod({ quarter: effectiveQuarter });
     const boardIds = await this.resolveBoardIds(query.boardId);
-
-    // If sprintId is provided, resolve dates from the sprint record
-    if (query.sprintId) {
-      const sprint = await this.sprintRepo.findOne({
-        where: { id: query.sprintId },
-      });
-      if (sprint?.startDate && sprint?.endDate) {
-        startDate = sprint.startDate;
-        endDate = sprint.endDate;
-      }
-    }
 
     // RC-6: parallelize all per-board calls using Promise.all over boardIds.
     // Each board runs its four service calls in an inner Promise.all.
@@ -283,7 +277,6 @@ export class MetricsService {
     const trendCacheKey = DoraCacheService.buildKey(
       {
         boardId: query.boardId,
-        mode: query.mode,
         limit: query.limit,
       },
       'trend',
@@ -294,75 +287,9 @@ export class MetricsService {
     }
 
     const limit = query.limit ?? 8;
-    const mode = query.mode ?? 'quarters';
     const boardIds = await this.resolveBoardIds(query.boardId);
 
-    if (mode === 'sprints') {
-      // RC-8: throw BadRequestException if the board is Kanban.
-      const boardIdStr = query.boardId;
-      if (!boardIdStr) {
-        throw new BadRequestException(
-          'Sprint trend mode requires a single boardId.',
-        );
-      }
-      const boardId = boardIdStr.split(',')[0].trim();
-      const boardConfig = await this.boardConfigRepo.findOne({
-        where: { boardId },
-      });
-      if (boardConfig?.boardType === 'kanban') {
-        throw new BadRequestException(
-          `Sprint trend mode requires a Scrum board. ${boardId} is a Kanban board.`,
-        );
-      }
-
-      const sprints = (await this.sprintRepo.find({
-        where: { boardId, state: 'closed' },
-        order: { endDate: 'DESC' },
-        take: limit,
-      })).filter((s) => s.startDate !== null && s.endDate !== null);
-
-      if (sprints.length === 0) return [];
-
-      // Determine full date range spanning all sprints
-      const rangeStart = sprints[sprints.length - 1].startDate as Date;
-      const rangeEnd   = sprints[0].endDate as Date;
-
-      // Sprint trend is always single-board: load data only for the board whose
-      // sprints were fetched.  Using the full resolved boardIds list here would
-      // mix multi-board data into an org aggregate while the sprint list itself
-      // is scoped to a single board, producing incorrect trend results.
-      const slices = await Promise.all(
-        [boardId].map((bid) => this.trendDataLoader.load(bid, rangeStart, rangeEnd)),
-      );
-
-      const points = sprints.map((sprint): TrendPoint => {
-        const periodStart = sprint.startDate as Date;
-        const periodEnd   = sprint.endDate as Date;
-        const agg = this.buildOrgDoraResultFromData(slices, periodStart, periodEnd);
-        return {
-          label: sprint.name,
-          start: periodStart.toISOString(),
-          end:   periodEnd.toISOString(),
-          deploymentsPerDay:    agg.orgDeploymentFrequency.deploymentsPerDay,
-          medianLeadTimeDays:   agg.orgLeadTime.medianDays,
-          changeFailureRate:    agg.orgChangeFailureRate.changeFailureRate,
-          mttrMedianHours:      agg.orgMttr.medianHours,
-          orgBands: {
-            deploymentFrequency: agg.orgDeploymentFrequency.band,
-            leadTime:            agg.orgLeadTime.band,
-            changeFailureRate:   agg.orgChangeFailureRate.band,
-            mttr:                agg.orgMttr.band,
-          },
-        };
-      });
-
-      // Return oldest → newest; sprints are historical by definition
-      const sprintTrend = points.reverse();
-      this.doraCache.set(trendCacheKey, sprintTrend, DoraCacheService.HISTORICAL_TTL_MS);
-      return sprintTrend;
-    }
-
-    // Quarter mode (default)
+    // Quarter mode
     const quarters = listRecentQuarters(limit, this.timezone); // newest first
 
     // Determine full date range spanning all quarters

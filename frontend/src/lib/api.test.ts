@@ -72,7 +72,7 @@ describe('getDoraAggregate', () => {
   });
 
   it('passes next.revalidate: 60 to fetch for cache-friendly reads', async () => {
-    await getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+    await getDoraAggregate({ boardId: 'ACC' });
 
     const [, options] = mockFetch.mock.calls[0] as [string, RequestInit & { next?: { revalidate?: number } }];
     expect(options.next?.revalidate).toBe(60);
@@ -89,7 +89,7 @@ describe('getDoraTrend', () => {
   });
 
   it('passes next.revalidate: 60 to fetch for cache-friendly reads', async () => {
-    await getDoraTrend({ boardId: 'ACC', mode: 'quarters', limit: 8 });
+    await getDoraTrend({ boardId: 'ACC', limit: 8 });
 
     const [, options] = mockFetch.mock.calls[0] as [string, RequestInit & { next?: { revalidate?: number } }];
     expect(options.next?.revalidate).toBe(60);

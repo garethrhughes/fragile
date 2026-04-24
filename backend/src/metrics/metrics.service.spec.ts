@@ -292,7 +292,7 @@ describe('MetricsService', () => {
 
   describe('getDoraAggregate', () => {
     it('returns org-level aggregated DORA metrics', async () => {
-      const result = await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+      const result = await service.getDoraAggregate({ boardId: 'ACC' });
 
       expect(result.orgDeploymentFrequency.totalDeployments).toBe(4);
       expect(result.orgLeadTime.sampleSize).toBe(3);
@@ -312,7 +312,7 @@ describe('MetricsService', () => {
         .mockResolvedValueOnce({ recoveryHours: [2], openIncidentCount: 0, anomalyCount: 0 })
         .mockResolvedValueOnce({ recoveryHours: [4], openIncidentCount: 0, anomalyCount: 0 });
 
-      const result = await service.getDoraAggregate({ quarter: '2026-Q1' });
+      const result = await service.getDoraAggregate({});
 
       // 2 boards × 4 deployments = 8 total
       expect(result.orgDeploymentFrequency.totalDeployments).toBe(8);
@@ -321,24 +321,14 @@ describe('MetricsService', () => {
       expect(result.boardBreakdowns).toHaveLength(2);
     });
 
-    it('resolves period from sprint when sprintId provided', async () => {
-      sprintRepo.findOne.mockResolvedValue({
-        id: 'sprint-1',
-        boardId: 'ACC',
-        name: 'Sprint 1',
-        state: 'closed',
-        startDate: new Date('2026-01-01T00:00:00Z'),
-        endDate: new Date('2026-01-14T23:59:59Z'),
-      } as unknown as JiraSprint);
-
-      const result = await service.getDoraAggregate({ boardId: 'ACC', sprintId: 'sprint-1' });
-      expect(sprintRepo.findOne).toHaveBeenCalled();
+    it('returns org-level result when only boardId is provided (no period)', async () => {
+      const result = await service.getDoraAggregate({ boardId: 'ACC' });
       expect(result.orgDeploymentFrequency).toBeDefined();
     });
 
     it('includes boardType in board breakdowns (default scrum)', async () => {
       boardConfigRepo.findOne.mockResolvedValue(null); // no config → default scrum
-      const result = await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+      const result = await service.getDoraAggregate({ boardId: 'ACC' });
       expect(result.boardBreakdowns[0].boardType).toBe('scrum');
     });
 
@@ -348,7 +338,7 @@ describe('MetricsService', () => {
         boardType: 'kanban',
       } as unknown as BoardConfig);
 
-      const result = await service.getDoraAggregate({ boardId: 'PLAT', quarter: '2026-Q1' });
+      const result = await service.getDoraAggregate({ boardId: 'PLAT' });
       expect(result.boardBreakdowns[0].boardType).toBe('kanban');
     });
 
@@ -369,7 +359,7 @@ describe('MetricsService', () => {
         periodDays: 90,
       });
 
-      const result = await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+      const result = await service.getDoraAggregate({ boardId: 'ACC' });
       expect(result.orgChangeFailureRate.changeFailureRate).toBe(0);
     });
 
@@ -383,17 +373,16 @@ describe('MetricsService', () => {
         usingDefaultConfig: true,
       });
 
-      const result = await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+      const result = await service.getDoraAggregate({ boardId: 'ACC' });
       expect(result.anyBoardUsingDefaultConfig).toBe(true);
       expect(result.boardsUsingDefaultConfig).toContain('ACC');
     });
 
-    it('uses explicit period range when period format is YYYY-MM-DD:YYYY-MM-DD', async () => {
+    it('returns a period in the result', async () => {
       const result = await service.getDoraAggregate({
         boardId: 'ACC',
-        period: '2026-01-01:2026-03-31',
       });
-      expect(result.period.start).toContain('2026-01-01');
+      expect(result.period.start).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
   });
 
@@ -411,77 +400,45 @@ describe('MetricsService', () => {
       expect(starts[0]).toBeLessThan(starts[starts.length - 1]);
     });
 
-    it('returns trend in sprint mode when mode=sprints', async () => {
-      // sprintRepo.find returns DESC order (most recent first) as the real DB would
-      sprintRepo.find.mockResolvedValue([
-        {
-          id: 's2',
-          boardId: 'ACC',
-          name: 'Sprint 2',
-          state: 'closed',
-          startDate: new Date('2026-01-15T00:00:00Z'),
-          endDate: new Date('2026-01-28T00:00:00Z'),
-        } as unknown as JiraSprint,
-        {
-          id: 's1',
-          boardId: 'ACC',
-          name: 'Sprint 1',
-          state: 'closed',
-          startDate: new Date('2026-01-01T00:00:00Z'),
-          endDate: new Date('2026-01-14T00:00:00Z'),
-        } as unknown as JiraSprint,
-      ]);
-
-      const points = await service.getDoraTrend({ boardId: 'ACC', mode: 'sprints', limit: 2 });
+    it('returns trend points for a single board (quarter mode only)', async () => {
+      const points = await service.getDoraTrend({ boardId: 'ACC', limit: 2 });
       expect(points).toHaveLength(2);
-      expect(points[0].label).toBe('Sprint 1'); // oldest first after reverse
+      expect(points[0].label).toMatch(/^\d{4}-Q\d$/); // quarter label format
     });
 
-    it('sprint mode loads data only for the single requested board, not all resolved boards', async () => {
-      sprintRepo.find.mockResolvedValue([
-        {
-          id: 's1',
-          boardId: 'ACC',
-          name: 'Sprint 1',
-          state: 'closed',
-          startDate: new Date('2026-01-01T00:00:00Z'),
-          endDate: new Date('2026-01-14T00:00:00Z'),
-        } as unknown as JiraSprint,
-      ]);
-      // Even if boardConfigRepo returns multiple boards, sprint mode must only
-      // load data for the single board whose sprints were fetched.
+    it('loads data only for the single requested board when boardId is specified', async () => {
       boardConfigRepo.find.mockResolvedValue([
         { boardId: 'ACC' } as BoardConfig,
         { boardId: 'BPT' } as BoardConfig,
       ]);
 
-      await service.getDoraTrend({ boardId: 'ACC', mode: 'sprints', limit: 1 });
+      await service.getDoraTrend({ boardId: 'ACC', limit: 1 });
 
       const loadCalls = trendDataLoader.load.mock.calls;
       expect(loadCalls.every(([bid]) => bid === 'ACC')).toBe(true);
     });
 
-    it('throws BadRequestException in sprint mode without boardId', async () => {
-      await expect(
-        service.getDoraTrend({ mode: 'sprints', limit: 4 }),
-      ).rejects.toThrow(BadRequestException);
+    it('returns quarter-mode trend when no mode specified (no boardId required)', async () => {
+      boardConfigRepo.find.mockResolvedValue([{ boardId: 'ACC' } as BoardConfig]);
+      const points = await service.getDoraTrend({ limit: 2 });
+      expect(points).toHaveLength(2);
     });
 
-    it('throws BadRequestException in sprint mode for a Kanban board', async () => {
+    it('returns quarter-mode trend for a Kanban board', async () => {
       boardConfigRepo.findOne.mockResolvedValue({
         boardId: 'PLAT',
         boardType: 'kanban',
       } as unknown as BoardConfig);
 
-      await expect(
-        service.getDoraTrend({ boardId: 'PLAT', mode: 'sprints', limit: 4 }),
-      ).rejects.toThrow(BadRequestException);
+      // Kanban boards are fine in quarter mode
+      const points = await service.getDoraTrend({ boardId: 'PLAT', limit: 2 });
+      expect(points).toHaveLength(2);
     });
 
-    it('returns empty array when sprint mode has no closed sprints', async () => {
-      sprintRepo.find.mockResolvedValue([]);
-      const points = await service.getDoraTrend({ boardId: 'ACC', mode: 'sprints', limit: 4 });
-      expect(points).toEqual([]);
+    it('returns quarter-mode trend even when loader returns minimal data', async () => {
+      trendDataLoader.load.mockResolvedValue({ ...MOCK_SLICE, boardId: 'ACC' });
+      const points = await service.getDoraTrend({ boardId: 'ACC', limit: 2 });
+      expect(points).toHaveLength(2);
     });
 
     it('trend points contain expected fields', async () => {
@@ -639,11 +596,11 @@ describe('MetricsService', () => {
   describe('getDoraAggregate (caching)', () => {
     it('returns the same result on second call without hitting DB services again', async () => {
       // First call — services invoked
-      const result1 = await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+      const result1 = await service.getDoraAggregate({ boardId: 'ACC' });
       const firstCallCount = dfService.calculate.mock.calls.length;
 
       // Second call — should be served from cache
-      const result2 = await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+      const result2 = await service.getDoraAggregate({ boardId: 'ACC' });
 
       expect(dfService.calculate.mock.calls.length).toBe(firstCallCount); // no new DB calls
       expect(result2.orgDeploymentFrequency.totalDeployments).toBe(
@@ -652,28 +609,28 @@ describe('MetricsService', () => {
     });
 
     it('calls DB services again after cache is manually cleared', async () => {
-      await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+      await service.getDoraAggregate({ boardId: 'ACC' });
       const countAfterFirst = dfService.calculate.mock.calls.length;
 
       doraCache.clear();
 
-      await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+      await service.getDoraAggregate({ boardId: 'ACC' });
       expect(dfService.calculate.mock.calls.length).toBeGreaterThan(countAfterFirst);
     });
 
-    it('does not share cache entries between different quarters', async () => {
-      await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+    it('does not share cache entries between different boardId values (second call)', async () => {
+      await service.getDoraAggregate({ boardId: 'ACC' });
       const countAfterFirst = dfService.calculate.mock.calls.length;
 
-      await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q2' });
+      await service.getDoraAggregate({ boardId: 'BPT' });
       expect(dfService.calculate.mock.calls.length).toBeGreaterThan(countAfterFirst);
     });
 
     it('does not share cache entries between different boardId values', async () => {
-      await service.getDoraAggregate({ boardId: 'ACC', quarter: '2026-Q1' });
+      await service.getDoraAggregate({ boardId: 'ACC' });
       const countAfterFirst = dfService.calculate.mock.calls.length;
 
-      await service.getDoraAggregate({ boardId: 'PLAT', quarter: '2026-Q1' });
+      await service.getDoraAggregate({ boardId: 'PLAT' });
       expect(dfService.calculate.mock.calls.length).toBeGreaterThan(countAfterFirst);
     });
   });

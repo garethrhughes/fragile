@@ -3,6 +3,7 @@ import {
   Get,
   Param,
   Query,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { PlanningService } from './planning.service.js';
@@ -19,9 +20,11 @@ export class PlanningController {
   })
   @Get('accuracy')
   async getAccuracy(@Query() query: PlanningQueryDto) {
-    const boardId = query.boardId ?? 'ACC';
+    if (!query.boardId) {
+      throw new BadRequestException('boardId is required');
+    }
     return this.planningService.getAccuracy(
-      boardId,
+      query.boardId,
       query.sprintId,
       query.quarter,
     );
@@ -30,7 +33,10 @@ export class PlanningController {
   @ApiOperation({ summary: 'Get available sprints for a board' })
   @Get('sprints')
   async getSprints(@Query('boardId') boardId: string) {
-    return this.planningService.getSprints(boardId ?? 'ACC');
+    if (!boardId) {
+      throw new BadRequestException('boardId is required');
+    }
+    return this.planningService.getSprints(boardId);
   }
 
   @ApiOperation({ summary: 'Get available quarters derived from sprint data' })

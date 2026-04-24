@@ -21,6 +21,7 @@ import type {
   JiraIssueLink as JiraIssueLinkType,
 } from '../jira/jira.types.js';
 import { SprintReportService } from '../sprint-report/sprint-report.service.js';
+import { LambdaInvokerService } from '../lambda/lambda-invoker.service.js';
 
 /**
  * Resolved snapshot of JiraFieldConfig used throughout a single sync run.
@@ -75,6 +76,7 @@ export class SyncService {
     private readonly sprintReportService: SprintReportService,
     @InjectRepository(JiraFieldConfig)
     private readonly jiraFieldConfigRepo: Repository<JiraFieldConfig>,
+    private readonly lambdaInvoker: LambdaInvokerService,
   ) {}
 
   @Cron('0 */30 * * * *')
@@ -94,6 +96,15 @@ export class SyncService {
     for (const boardId of boardIds) {
       const result = await this.syncBoard(boardId, fieldConfig);
       results.push(result);
+    }
+
+    // Await snapshot invocation before syncRoadmaps to prevent concurrent heavy workloads.
+    for (const boardId of boardIds) {
+      await this.lambdaInvoker.invokeSnapshotWorker(boardId).catch((err: unknown) =>
+        this.logger.warn(
+          `Snapshot invocation failed for ${boardId}: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
     }
 
     try {
