@@ -2,10 +2,8 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart3, Target, Map, Settings, Timer, RefreshCw, AlertCircle, Sun, Moon } from 'lucide-react'
-import { useEffect } from 'react'
+import { BarChart3, Target, Map, Settings, Timer, AlertCircle, Sun, Moon } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useSyncStore } from '@/store/sync-store'
 import { useDarkMode } from '@/hooks/use-dark-mode'
 
 interface NavItem {
@@ -28,35 +26,10 @@ const SETTINGS_ITEM: NavItem = {
   icon: <Settings className="h-5 w-5" />,
 }
 
-function formatRelativeTime(isoDate: string): string {
-  const diff = Date.now() - new Date(isoDate).getTime()
-  const seconds = Math.floor(diff / 1000)
-
-  if (seconds < 60) return 'just now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`
-  const days = Math.floor(hours / 24)
-  return `${days} day${days === 1 ? '' : 's'} ago`
-}
-
-function latestSync(lastSynced: Record<string, string>): string | null {
-  const dates = Object.values(lastSynced).filter(Boolean)
-  if (dates.length === 0) return null
-  return dates.reduce((a, b) => (a > b ? a : b))
-}
-
 export function Sidebar() {
   const pathname = usePathname()
-  const { lastSynced, isSyncing, triggerSync, fetchStatus } = useSyncStore()
   const { dark, toggle: toggleDark } = useDarkMode()
 
-  useEffect(() => {
-    void fetchStatus()
-  }, [fetchStatus])
-
-  const latest = latestSync(lastSynced)
   const settingsActive = pathname.startsWith(SETTINGS_ITEM.href)
 
   return (
@@ -93,27 +66,8 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* Bottom pinned section — sync + settings */}
+      {/* Bottom pinned section — settings */}
       <div className="border-t border-border px-3 pb-4 pt-3">
-        {/* Last synced timestamp */}
-        <p className="mb-2 px-3 text-xs text-text-muted">
-          {latest ? <>Synced {formatRelativeTime(latest)}</> : 'Not yet synced'}
-        </p>
-
-        {/* Sync button */}
-        <button
-          type="button"
-          onClick={() => void triggerSync()}
-          disabled={isSyncing}
-          title={isSyncing ? 'Sync in progress — may take up to 2 minutes' : 'Trigger a full Jira sync'}
-          className="mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-text-secondary transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <span className="text-text-muted">
-            <RefreshCw className={`h-5 w-5 ${isSyncing ? 'animate-spin' : ''}`} />
-          </span>
-          {isSyncing ? 'Syncing…' : 'Sync Now'}
-        </button>
-
         {/* Dark mode toggle */}
         <button
           type="button"

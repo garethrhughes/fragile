@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Save, Loader2, CheckCircle, XCircle, Plus, Trash2, RefreshCw, X } from 'lucide-react';
+import { Save, Loader2, CheckCircle, XCircle, Plus, Trash2, RefreshCw, X, AlertTriangle } from 'lucide-react';
 import {
   getBoards,
   getBoardConfig,
@@ -12,12 +12,12 @@ import {
   createRoadmapConfig,
   updateRoadmapConfig,
   deleteRoadmapConfig,
-  triggerRoadmapSync,
   type BoardConfig,
   type RoadmapConfig,
   ApiError,
 } from '@/lib/api'
 import { useBoardsStore } from '@/store/boards-store'
+import { useSyncStore } from '@/store/sync-store'
 
 // ---------------------------------------------------------------------------
 // Toast helper
@@ -143,11 +143,17 @@ export default function SettingsPage() {
   // Global store refresh
   const refreshBoards = useBoardsStore((s) => s.refreshBoards);
 
+  // Jira data sync
+  const { isSyncing, lastSynced, triggerSync, fetchStatus } = useSyncStore();
+
+  useEffect(() => {
+    void fetchStatus();
+  }, [fetchStatus]);
+
   // JPD / Roadmap config
   const [jpdConfigs, setJpdConfigs] = useState<RoadmapConfig[]>([]);
   const [jpdConfigsLoading, setJpdConfigsLoading] = useState(false);
   const [newJpdKey, setNewJpdKey] = useState('');
-  const [jpdSyncing, setJpdSyncing] = useState(false);
   const [jpdAdding, setJpdAdding] = useState(false);
   // Per-config field-ID draft values: configId → { startDateFieldId, targetDateFieldId }
   const [fieldIdDrafts, setFieldIdDrafts] = useState<
@@ -303,6 +309,38 @@ export default function SettingsPage() {
           Manage board configurations
         </p>
       </div>
+
+      {/* Data Sync section */}
+      <section className="rounded-xl border border-border bg-card p-6">
+        <h2 className="mb-1 text-lg font-semibold">Data Sync</h2>
+        <p className="mb-4 text-sm text-muted">
+          Trigger an immediate sync of all Jira board data.
+        </p>
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Sync runs automatically every 30 minutes. Use this button to trigger an immediate sync.</span>
+        </div>
+        <div className="flex items-center gap-4">
+          <button
+            type="button"
+            onClick={() => void triggerSync()}
+            disabled={isSyncing}
+            title={isSyncing ? 'Sync in progress — may take up to 2 minutes' : 'Trigger a full Jira sync'}
+            className="inline-flex items-center gap-2 rounded-lg border border-border px-5 py-2.5 text-sm font-medium transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
+            {isSyncing ? 'Syncing…' : 'Sync Now'}
+          </button>
+          {Object.keys(lastSynced).length > 0 && (
+            <p className="text-sm text-muted">
+              Last synced:{' '}
+              {new Date(
+                Object.values(lastSynced).reduce((a, b) => (a > b ? a : b)),
+              ).toLocaleString()}
+            </p>
+          )}
+        </div>
+      </section>
 
       {/* Board config section */}
       <section className="rounded-xl border border-border bg-card p-6">
@@ -752,32 +790,7 @@ export default function SettingsPage() {
               </button>
             </div>
 
-            {/* Sync button */}
-            <div className="flex justify-end pt-2">
-              <button
-                type="button"
-                disabled={jpdSyncing}
-                onClick={() => {
-                  setJpdSyncing(true);
-                  triggerRoadmapSync()
-                    .then((res) => {
-                      show('success', res.message ?? 'Roadmap sync triggered');
-                    })
-                    .catch(() => {
-                      show('error', 'Failed to trigger roadmap sync');
-                    })
-                    .finally(() => setJpdSyncing(false));
-                }}
-                className="inline-flex items-center gap-2 rounded-lg border border-border px-5 py-2.5 text-sm font-medium transition-colors hover:bg-gray-50 disabled:opacity-50"
-              >
-                {jpdSyncing ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4" />
-                )}
-                {jpdSyncing ? 'Syncing…' : 'Sync Roadmaps'}
-              </button>
-            </div>
+            {/* Sync button removed — roadmap sync is handled automatically */}
           </div>
         )}
       </section>
