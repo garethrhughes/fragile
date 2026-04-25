@@ -20,8 +20,8 @@ resource "aws_internet_gateway" "main" {
   }
 }
 
-# ── Public subnet (NAT Gateway lives here) ────────────────────────────────────
-# One AZ is sufficient — NAT Gateway is a managed, highly available service.
+# ── Public subnets ────────────────────────────────────────────────────────────
+# Two AZs required for the ECS Express-managed ALB.
 
 resource "aws_subnet" "public_a" {
   vpc_id                  = aws_vpc.main.id
@@ -35,10 +35,21 @@ resource "aws_subnet" "public_a" {
   }
 }
 
+resource "aws_subnet" "public_b" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.3.0/24"
+  availability_zone       = "${var.aws_region}b"
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "fragile-public-b"
+    Tier = "public"
+  }
+}
+
 # ── NAT Gateway ───────────────────────────────────────────────────────────────
-# Allows the private subnets (and the App Runner VPC connector) to initiate
-# outbound connections to the internet (e.g. Jira API) while remaining
-# unreachable from the internet themselves.
+# Allows the private subnets (and ECS tasks) to initiate outbound connections
+# to the internet (e.g. Jira API) while remaining unreachable from the internet.
 
 resource "aws_eip" "nat" {
   domain = "vpc"
@@ -79,6 +90,11 @@ resource "aws_route_table_association" "public_a" {
   route_table_id = aws_route_table.public.id
 }
 
+resource "aws_route_table_association" "public_b" {
+  subnet_id      = aws_subnet.public_b.id
+  route_table_id = aws_route_table.public.id
+}
+
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.main.id
 
@@ -102,7 +118,7 @@ resource "aws_route_table_association" "private_b" {
   route_table_id = aws_route_table.private.id
 }
 
-# ── Private subnets (2 AZs — required by RDS subnet group) ───────────────────
+# ── Private subnets (2 AZs -- required by RDS subnet group) ───────────────────
 
 resource "aws_subnet" "private_a" {
   vpc_id                  = aws_vpc.main.id
@@ -128,12 +144,13 @@ resource "aws_subnet" "private_b" {
   }
 }
 
-# ── Security group: App Runner VPC connector ──────────────────────────────────
-# App Runner attaches this SG to the ENIs it places in the private subnets.
+# ── Security group: ECS backend tasks ────────────────────────────────────────
+# Attached to backend ECS tasks running in private subnets. Allows all outbound
+# traffic (RDS on 5432 + internet via NAT for Jira API).
 
-resource "aws_security_group" "apprunner_connector" {
-  name        = "fragile-apprunner-connector-sg"
-  description = "Security group attached to the App Runner VPC connector ENIs."
+resource "aws_security_group" "ecs_backend" {
+  name        = "fragile-ecs-backend-sg"
+  description = "Security group for backend ECS tasks (RDS + outbound internet)."
   vpc_id      = aws_vpc.main.id
 
   egress {
@@ -145,7 +162,28 @@ resource "aws_security_group" "apprunner_connector" {
   }
 
   tags = {
-    Name = "fragile-apprunner-connector-sg"
+    Name = "fragile-ecs-backend-sg"
+  }
+}
+
+# ── Security group: ECS frontend tasks ───────────────────────────────────────
+# Attached to frontend ECS tasks. Egress-only — no VPC dependencies.
+
+resource "aws_security_group" "ecs_frontend" {
+  name        = "fragile-ecs-frontend-sg"
+  description = "Security group for frontend ECS tasks (egress-only, no VPC dependencies)."
+  vpc_id      = aws_vpc.main.id
+
+  egress {
+    description = "Allow all outbound traffic"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "fragile-ecs-frontend-sg"
   }
 }
 
@@ -156,10 +194,10 @@ resource "aws_security_group" "apprunner_connector" {
 
 resource "aws_security_group" "rds" {
   name        = "fragile-rds-sg"
-  description = "Allow inbound PostgreSQL from the App Runner VPC connector only."
+  description = "Allow inbound PostgreSQL from ECS backend tasks only."
   vpc_id      = aws_vpc.main.id
 
-  # Inline ingress/egress intentionally omitted — all rules are managed as
+  # Inline ingress/egress intentionally omitted -- all rules are managed as
   # separate aws_security_group_rule resources. Mixing inline blocks with
   # standalone rules causes Terraform to remove externally-added rules on
   # every apply.
@@ -169,13 +207,13 @@ resource "aws_security_group" "rds" {
   }
 }
 
-resource "aws_security_group_rule" "rds_ingress_apprunner" {
+resource "aws_security_group_rule" "rds_ingress_ecs_backend" {
   type                     = "ingress"
-  description              = "PostgreSQL from App Runner VPC connector"
+  description              = "PostgreSQL from ECS backend tasks"
   from_port                = 5432
   to_port                  = 5432
   protocol                 = "tcp"
-  source_security_group_id = aws_security_group.apprunner_connector.id
+  source_security_group_id = aws_security_group.ecs_backend.id
   security_group_id        = aws_security_group.rds.id
 }
 
@@ -187,24 +225,4 @@ resource "aws_security_group_rule" "rds_egress_all" {
   protocol          = "-1"
   cidr_blocks       = ["0.0.0.0/0"]
   security_group_id = aws_security_group.rds.id
-}
-
-# ── App Runner VPC connector ──────────────────────────────────────────────────
-# Attached to the backend App Runner service so it can reach RDS in the VPC.
-# Outbound internet traffic (Jira API etc.) routes via the NAT Gateway.
-# The frontend service does NOT use a VPC connector.
-
-resource "aws_apprunner_vpc_connector" "main" {
-  vpc_connector_name = "fragile-vpc-connector"
-
-  subnets = [
-    aws_subnet.private_a.id,
-    aws_subnet.private_b.id,
-  ]
-
-  security_groups = [aws_security_group.apprunner_connector.id]
-
-  tags = {
-    Name = "fragile-vpc-connector"
-  }
 }

@@ -86,7 +86,7 @@ resource "aws_acm_certificate_validation" "frontend" {
   validation_record_fqdns = [for r in aws_route53_record.frontend_validation : r.fqdn]
 }
 
-# ── CloudFront — backend API ──────────────────────────────────────────────────
+# ── CloudFront -- backend API ──────────────────────────────────────────────────
 # Caching is fully disabled. All methods, headers, query strings, and cookies
 # are forwarded so the API behaves identically to a direct connection.
 
@@ -97,7 +97,7 @@ resource "aws_cloudfront_distribution" "backend" {
   web_acl_id      = var.web_acl_arn
 
   origin {
-    origin_id   = "apprunner-backend"
+    origin_id   = "ecs-backend"
     domain_name = replace(var.backend_service_url, "https://", "")
 
     custom_origin_config {
@@ -109,7 +109,7 @@ resource "aws_cloudfront_distribution" "backend" {
   }
 
   default_cache_behavior {
-    target_origin_id       = "apprunner-backend"
+    target_origin_id       = "ecs-backend"
     viewer_protocol_policy = "redirect-to-https"
 
     allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
@@ -118,11 +118,11 @@ resource "aws_cloudfront_distribution" "backend" {
     # CachingDisabled managed policy — no caching at the edge for API traffic.
     cache_policy_id = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
 
-    # AllViewerExceptHostHeader — forwards all headers, query strings, and
-    # cookies except Host. CloudFront then sends the App Runner origin URL as
-    # the Host header, which App Runner recognises. Sending the viewer's Host
-    # (e.g. fragile.<your-domain>) causes App Runner to return 404
-    # because it only serves its own default *.awsapprunner.com hostname.
+    # AllViewerExceptHostHeader -- forwards all headers, query strings, and
+    # cookies except Host. CloudFront then sends the ECS Express origin URL as
+    # the Host header, which the ALB recognises. Sending the viewer's Host
+    # (e.g. fragile.<your-domain>) causes the ALB to return 404
+    # because it only serves its own default *.ecs.{region}.on.aws hostname.
     origin_request_policy_id = "b689b0a8-53d0-40ab-baf2-68738e2966ac"
   }
 
@@ -143,7 +143,7 @@ resource "aws_cloudfront_distribution" "backend" {
   }
 }
 
-# ── CloudFront — frontend ─────────────────────────────────────────────────────
+# ── CloudFront -- frontend ─────────────────────────────────────────────────────
 # Default behaviour: caching disabled (Next.js standalone is a Node server).
 # Static assets under /_next/static/* get long-lived caching since Next.js
 # includes a content hash in those paths.
@@ -155,7 +155,7 @@ resource "aws_cloudfront_distribution" "frontend" {
   web_acl_id      = var.web_acl_arn
 
   origin {
-    origin_id   = "apprunner-frontend"
+    origin_id   = "ecs-frontend"
     domain_name = replace(var.frontend_service_url, "https://", "")
 
     custom_origin_config {
@@ -166,10 +166,10 @@ resource "aws_cloudfront_distribution" "frontend" {
     }
   }
 
-  # Static assets — hashed filenames mean content never changes at a given URL.
+  # Static assets -- hashed filenames mean content never changes at a given URL.
   ordered_cache_behavior {
     path_pattern           = "/_next/static/*"
-    target_origin_id       = "apprunner-frontend"
+    target_origin_id       = "ecs-frontend"
     viewer_protocol_policy = "redirect-to-https"
 
     allowed_methods = ["GET", "HEAD"]
@@ -181,7 +181,7 @@ resource "aws_cloudfront_distribution" "frontend" {
 
   # Everything else — server-rendered, no caching.
   default_cache_behavior {
-    target_origin_id       = "apprunner-frontend"
+    target_origin_id       = "ecs-frontend"
     viewer_protocol_policy = "redirect-to-https"
 
     allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]

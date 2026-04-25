@@ -14,12 +14,12 @@ variable "backend_subdomain" {
 }
 
 variable "backend_service_url" {
-  description = "Default App Runner URL for the backend (e.g. https://<id>.ap-southeast-2.awsapprunner.com). Used as the CloudFront origin."
+  description = "ECS Express service URL for the backend (e.g. https://fragile-backend.ecs.ap-southeast-2.on.aws). Used as the CloudFront origin."
   type        = string
 }
 
 variable "frontend_service_url" {
-  description = "Default App Runner URL for the frontend. Used as the CloudFront origin."
+  description = "ECS Express service URL for the frontend. Used as the CloudFront origin."
   type        = string
 }
 

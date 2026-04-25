@@ -71,8 +71,8 @@ resolve_ecr_urls() {
   fi
 }
 
-# NEXT_PUBLIC_API_URL is baked into the Next.js JS bundle at docker build time —
-# it cannot be injected at runtime via App Runner environment variables.
+# NEXT_PUBLIC_API_URL is baked into the Next.js JS bundle at docker build time --
+# it cannot be injected at runtime via ECS environment variables.
 # Read it from the Terraform backend_custom_domain output so the correct URL is
 # always used, with an env override for exceptional cases.
 resolve_api_url() {
@@ -151,7 +151,7 @@ fi
 if [[ "$BUILD_FRONTEND" == "true" ]]; then
   # NEXT_PUBLIC_API_URL is resolved from Terraform outputs by resolve_api_url()
   # above (or from the env override). It is baked into the JS bundle at build
-  # time via --build-arg — the App Runner runtime env var has no effect for
+  # time via --build-arg -- the ECS runtime env var has no effect for
   # Next.js NEXT_PUBLIC_ variables.
   build_and_push \
     "frontend" \
@@ -162,7 +162,7 @@ fi
 
 echo
 echo "==> Done. Trigger a deployment with:"
-echo "    aws apprunner start-deployment --service-arn <backend-service-arn>"
-echo "    aws apprunner start-deployment --service-arn <frontend-service-arn>"
+echo "    aws ecs update-service --cluster fragile --service fragile-backend --force-new-deployment"
+echo "    aws ecs update-service --cluster fragile --service fragile-frontend --force-new-deployment"
 echo
 echo "    Or run: make deploy  (once that target is added to the Makefile)"

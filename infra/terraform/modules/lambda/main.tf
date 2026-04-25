@@ -51,7 +51,7 @@ resource "aws_iam_role_policy_attachment" "lambda_basic" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
-# Secrets Manager: read the DB password secret (same ARN used by App Runner)
+# Secrets Manager: read the DB password secret (same ARN used by ECS tasks)
 data "aws_iam_policy_document" "lambda_secrets" {
   statement {
     sid    = "ReadDBPassword"
@@ -71,7 +71,7 @@ resource "aws_iam_role_policy" "lambda_secrets" {
 }
 
 # ── Lambda security group ────────────────────────────────────────────────────
-# Separate from the App Runner VPC connector SG — allows the RDS SG to be
+# Separate from the ECS backend SG -- allows the RDS SG to be
 # updated to permit both without coupling the two services.
 
 resource "aws_security_group" "lambda" {

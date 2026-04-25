@@ -3,8 +3,13 @@ output "vpc_id" {
   value       = aws_vpc.main.id
 }
 
+output "public_subnet_ids" {
+  description = "List of public subnet IDs (two AZs, used by ECS Express-managed ALB)."
+  value       = [aws_subnet.public_a.id, aws_subnet.public_b.id]
+}
+
 output "private_subnet_ids" {
-  description = "List of private subnet IDs (one per AZ, used by RDS subnet group and VPC connector)."
+  description = "List of private subnet IDs (one per AZ, used by RDS subnet group and ECS tasks)."
   value       = [aws_subnet.private_a.id, aws_subnet.private_b.id]
 }
 
@@ -19,16 +24,16 @@ output "private_subnet_b_id" {
 }
 
 output "rds_security_group_id" {
-  description = "ID of the RDS security group (allows inbound 5432 from App Runner connector only)."
+  description = "ID of the RDS security group (allows inbound 5432 from ECS backend tasks only)."
   value       = aws_security_group.rds.id
 }
 
-output "apprunner_connector_security_group_id" {
-  description = "ID of the App Runner VPC connector security group."
-  value       = aws_security_group.apprunner_connector.id
+output "ecs_backend_security_group_id" {
+  description = "ID of the ECS backend task security group."
+  value       = aws_security_group.ecs_backend.id
 }
 
-output "vpc_connector_arn" {
-  description = "ARN of the App Runner VPC connector (attached to backend service)."
-  value       = aws_apprunner_vpc_connector.main.arn
+output "ecs_frontend_security_group_id" {
+  description = "ID of the ECS frontend task security group."
+  value       = aws_security_group.ecs_frontend.id
 }

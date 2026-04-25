@@ -45,7 +45,7 @@ resource "aws_secretsmanager_secret_version" "jira_api_token_placeholder" {
 }
 
 # ── SSM Parameters (Standard tier — no cost) ─────────────────────────────────
-# Non-sensitive configuration injected into the backend App Runner service.
+# Non-sensitive configuration injected into the backend ECS task.
 # Values are placeholder strings; the operator fills them in after first apply.
 
 resource "aws_ssm_parameter" "jira_base_url" {

@@ -17,30 +17,40 @@ variable "frontend_image_uri" {
 
 # ── IAM roles ─────────────────────────────────────────────────────────────────
 
-variable "backend_execution_role_arn" {
-  description = "ARN of the IAM role App Runner uses to pull the backend image from ECR."
+variable "ecs_execution_role_arn" {
+  description = "ARN of the ECS execution role (ECR pull + secrets read)."
   type        = string
 }
 
-variable "frontend_execution_role_arn" {
-  description = "ARN of the IAM role App Runner uses to pull the frontend image from ECR."
+variable "backend_task_role_arn" {
+  description = "ARN of the IAM role granted to the running backend container."
   type        = string
 }
 
-variable "backend_instance_role_arn" {
-  description = "ARN of the IAM role granted to the running backend container (task role)."
+variable "frontend_task_role_arn" {
+  description = "ARN of the IAM role granted to the running frontend container."
   type        = string
 }
 
-variable "frontend_instance_role_arn" {
-  description = "ARN of the IAM role granted to the running frontend container (task role)."
+variable "ecs_infrastructure_role_arn" {
+  description = "ARN of the ECS Express infrastructure role (manages ALB, target groups, listeners)."
   type        = string
 }
 
 # ── Network ───────────────────────────────────────────────────────────────────
 
-variable "vpc_connector_arn" {
-  description = "ARN of the App Runner VPC connector (attached to the backend service only)."
+variable "private_subnet_ids" {
+  description = "List of private subnet IDs where ECS tasks run."
+  type        = list(string)
+}
+
+variable "backend_security_group_id" {
+  description = "ID of the security group for backend ECS tasks."
+  type        = string
+}
+
+variable "frontend_security_group_id" {
+  description = "ID of the security group for frontend ECS tasks."
   type        = string
 }
 
@@ -81,13 +91,8 @@ variable "timezone_param_arn" {
 
 # ── URLs (for cross-service env vars) ────────────────────────────────────────
 
-variable "backend_url" {
-  description = "The stable backend custom domain URL (e.g. https://api.example.com). Set as NEXT_PUBLIC_API_URL on the frontend."
-  type        = string
-}
-
 variable "frontend_url" {
-  description = "The stable frontend custom domain URL (e.g. https://dashboard.example.com). Used for informational purposes."
+  description = "The stable frontend custom domain URL (e.g. https://dashboard.example.com). Used as CORS allowed-origin."
   type        = string
 }
 
