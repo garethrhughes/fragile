@@ -1,6 +1,6 @@
 import { SyncService } from './sync.service.js';
 import { JiraClientService } from '../jira/jira-client.service.js';
-import { Repository } from 'typeorm';
+import { DataSource, QueryRunner, Repository } from 'typeorm';
 import {
   JiraSprint,
   JiraIssue,
@@ -41,6 +41,18 @@ function mockJiraClient(): jest.Mocked<JiraClientService> {
     getProjectVersions: jest.fn(),
     getJpdIdeas: jest.fn(),
   } as unknown as jest.Mocked<JiraClientService>;
+}
+
+function mockDataSource(): jest.Mocked<DataSource> {
+  const mockQueryRunner: jest.Mocked<QueryRunner> = {
+    connect: jest.fn().mockResolvedValue(undefined),
+    query: jest.fn().mockResolvedValue([{ pg_try_advisory_lock: true }]),
+    release: jest.fn().mockResolvedValue(undefined),
+  } as unknown as jest.Mocked<QueryRunner>;
+
+  return {
+    createQueryRunner: jest.fn().mockReturnValue(mockQueryRunner),
+  } as unknown as jest.Mocked<DataSource>;
 }
 
 /** Minimal raw Jira issue value for mapJiraIssue tests */
@@ -92,6 +104,7 @@ describe('SyncService', () => {
   let sprintReportService: jest.Mocked<SprintReportService>;
   let jiraFieldConfigRepo: jest.Mocked<Repository<JiraFieldConfig>>;
   let lambdaInvoker: jest.Mocked<LambdaInvokerService>;
+  let dataSource: jest.Mocked<DataSource>;
 
   beforeEach(() => {
     jiraClient = mockJiraClient();
@@ -112,7 +125,9 @@ describe('SyncService', () => {
     jiraFieldConfigRepo.findOne.mockResolvedValue(defaultFieldConfig);
     lambdaInvoker = {
       invokeSnapshotWorker: jest.fn().mockResolvedValue(undefined),
+      invokeOrgSnapshot: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<LambdaInvokerService>;
+    dataSource = mockDataSource();
 
     service = new SyncService(
       jiraClient,
@@ -128,6 +143,7 @@ describe('SyncService', () => {
       sprintReportService,
       jiraFieldConfigRepo,
       lambdaInvoker,
+      dataSource,
     );
   });
 
@@ -191,7 +207,7 @@ describe('SyncService', () => {
       expect(result.results).toHaveLength(1);
     });
 
-    it('invokes Lambda snapshot worker for each board after all syncs complete', async () => {
+    it('invokes Lambda snapshot worker for each board and then invokes org snapshot after all syncs complete', async () => {
       boardConfigRepo.find.mockResolvedValue([
         { boardId: 'PROJ' } as BoardConfig,
       ]);
@@ -207,6 +223,7 @@ describe('SyncService', () => {
       await service.syncAll();
 
       expect(lambdaInvoker.invokeSnapshotWorker).toHaveBeenCalledWith('PROJ');
+      expect(lambdaInvoker.invokeOrgSnapshot).toHaveBeenCalledTimes(1);
     });
 
     it('continues with other boards when one throws, and swallows syncRoadmaps error', async () => {

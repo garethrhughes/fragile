@@ -29,7 +29,7 @@ function mockBoardConfigRepo(boardIds = ['ACC']): jest.Mocked<Repository<BoardCo
 
 function mockOrgDoraResult(): OrgDoraResult {
   return {
-    period: { start: '2026-01-01T00:00:00.000Z', end: '2026-03-31T23:59:59.999Z' },
+    period: { label: '2026-Q1', start: '2026-01-01T00:00:00.000Z', end: '2026-03-31T23:59:59.999Z' },
     orgDeploymentFrequency: { totalDeployments: 5, deploymentsPerDay: 0.05, band: 'low', periodDays: 90, contributingBoards: 1 },
     orgLeadTime: { medianDays: 3, p95Days: 10, band: 'high', sampleSize: 10, contributingBoards: 1, anomalyCount: 0 },
     orgChangeFailureRate: { totalDeployments: 5, failureCount: 0, changeFailureRate: 0, band: 'elite', contributingBoards: 1, anyBoardUsingDefaultConfig: false, boardsUsingDefaultConfig: [] },
@@ -83,17 +83,18 @@ describe('InProcessSnapshotService', () => {
     );
   });
 
-  it('upserts four snapshot rows: per-board aggregate + trend, org aggregate + trend', async () => {
+  it('upserts five snapshot rows: per-board aggregate + trend + trend-display, org aggregate + trend', async () => {
     await service.computeAndPersist('ACC');
-    expect(snapshotRepo.upsert).toHaveBeenCalledTimes(1);
-    const [rows] = snapshotRepo.upsert.mock.calls[0] as [
-      Array<{ boardId: string; snapshotType: string }>,
-      string[],
-    ];
-    expect(rows).toHaveLength(4);
-    const perBoard = rows.filter((r) => r.boardId === 'ACC');
-    const org      = rows.filter((r) => r.boardId === ORG_SNAPSHOT_KEY);
-    expect(perBoard.map((r) => r.snapshotType).sort()).toEqual(['aggregate', 'trend']);
+    // computeAndPersist calls computeBoard then computeOrg — two separate upserts
+    expect(snapshotRepo.upsert).toHaveBeenCalledTimes(2);
+
+    const allRows = (snapshotRepo.upsert.mock.calls as [Array<{ boardId: string; snapshotType: string }>, string[]][])
+      .flatMap(([rows]) => rows);
+
+    expect(allRows).toHaveLength(5);
+    const perBoard = allRows.filter((r) => r.boardId === 'ACC');
+    const org      = allRows.filter((r) => r.boardId === ORG_SNAPSHOT_KEY);
+    expect(perBoard.map((r) => r.snapshotType).sort()).toEqual(['aggregate', 'trend', 'trend-display']);
     expect(org.map((r) => r.snapshotType).sort()).toEqual(['aggregate', 'trend']);
   });
 
@@ -103,11 +104,9 @@ describe('InProcessSnapshotService', () => {
 
     await service.computeAndPersist('ACC');
 
-    const [rows] = snapshotRepo.upsert.mock.calls[0] as [
-      Array<{ snapshotType: string; payload: unknown }>,
-      string[],
-    ];
-    const aggregateRow = rows.find((r) => r.snapshotType === 'aggregate');
+    const allRows = (snapshotRepo.upsert.mock.calls as [Array<{ snapshotType: string; payload: unknown }>, string[]][])
+      .flatMap(([rows]) => rows);
+    const aggregateRow = allRows.find((r) => r.snapshotType === 'aggregate');
     expect(aggregateRow?.payload).toBe(aggregate);
   });
 
