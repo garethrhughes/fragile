@@ -111,11 +111,12 @@ per-board comparison rows within the trend view.
 ### 4. `GET /api/metrics/dora/trend` selects snapshot type by query
 
 - **Single-board query** (`?boardId=ACC`) → reads `trend-display` for `ACC`.
-- **Multi-board or org query** (`?boardId=__org__` or no boardId) → reads `trend-display`
-  for `__org__`.
+- **Multi-board or org query** (`?boardId=__org__` or no boardId) → reads `trend` for
+  `__org__`.
 
-The `trend` snapshot type is never returned to an API consumer; it is an internal
-Lambda-to-Lambda data bus only.
+In the current implementation, the org-level payload stored under `trend` is already
+display-shaped for API consumption, so multi-board/org trend responses are served from
+that snapshot type. `trend-display` remains the per-board display snapshot.
 
 ### 5. Trend arrays are stored oldest-to-newest; sort enforced at named write points
 
