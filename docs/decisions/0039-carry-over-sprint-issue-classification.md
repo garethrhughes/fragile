@@ -66,3 +66,68 @@ continuation of prior commitment rather than new scope.
 - The `scopeChangePercent` figure will be lower for sprints that use carry-over,
   giving a more accurate representation of genuine in-sprint scope change.
 - No schema changes, no API contract changes, no additional Jira API calls.
+
+## Amendment (2026-04-25) — Future-sprint carry-over fix
+
+### Problem with the original decision
+
+The original `isCarryOverFromSprint` check (`fromValue !== currentSprintName`) was
+**incomplete**: it treated any non-null `fromValue` as evidence of a carry-over,
+regardless of the *state* of the sprint referenced in `fromValue`.
+
+An issue moved from a **future** or **groomed** sprint (e.g. "Sprint 7" or a
+"Backlog — Groomed" sprint) into the current sprint is **not** a carry-over — it
+is a deliberate mid-sprint scope addition by the team. The previous logic
+incorrectly classified such issues as committed, understating `added` and
+overstating `commitment`.
+
+### Corrected rule
+
+> An issue is a carry-over **only** if the sprint named in `fromValue` has
+> `state = 'closed'` in the database. Issues moved from any sprint that is
+> not closed (future, active, or groomed) are classified as **added**.
+
+### Implementation
+
+Both `PlanningService` and `SprintDetailService` now load closed sprint names
+once per `getAccuracy` / `getDetail` call:
+
+```typescript
+const closedSprints = await this.sprintRepo.find({ where: { boardId, state: 'closed' } });
+const closedSprintNames = new Set(closedSprints.map((s) => s.name));
+```
+
+The `closedSprintNames` set is passed into `isCarryOverFromSprint`, which now
+requires the from-sprint name to be present in that set:
+
+```typescript
+function isCarryOverFromSprint(
+  fromValue: string | null,
+  currentSprintName: string,
+  closedSprintNames: Set<string>,
+): boolean {
+  if (!fromValue) return false;
+  return fromValue.split(',').some((s) => {
+    const name = s.trim();
+    return name !== '' && name !== currentSprintName && closedSprintNames.has(name);
+  });
+}
+```
+
+In `PlanningService.getAccuracy`, the closed-sprints query is hoisted to run
+before the sprint-list branching so that it can serve double duty: building
+`closedSprintNames` **and** providing the sprint list for the no-filter path
+(eliminating a duplicate query).
+
+### Consequences of the amendment
+
+- Issues pulled from future/groomed sprints are now correctly counted as `added`,
+  not `commitment`, giving accurate scope-change reporting.
+- One additional `sprintRepo.find` query is issued per `getAccuracy` / `getDetail`
+  call when there are sprints to process. In `getAccuracy`, the no-filter path
+  reuses the closed-sprints query for both the sprint list and carry-over names
+  (no extra query); the `sprintId` and `quarter` paths add one closed-sprint
+  query, but only when they return at least one sprint. In `getDetail`, the
+  closed-sprints query is deferred to inside the `if (sprintStart)` block and
+  only executed when there are issues and changelogs to classify.
+- No schema changes, no API contract changes.

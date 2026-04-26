@@ -240,6 +240,17 @@ describe('SprintDetailService', () => {
       cancelledStatusNames: ['Cancelled'],
     } as unknown as BoardConfig);
 
+    // Sprint 0 must be in closedSprintNames for carry-over detection to work.
+    sprintRepo.find.mockResolvedValueOnce([{
+      id: 'sprint-0',
+      name: 'Sprint 0',
+      state: 'closed',
+      boardId: 'ACC',
+      startDate: new Date('2025-12-01'),
+      endDate: new Date('2026-01-05'),
+      goal: '',
+    }] as JiraSprint[]);
+
     issueRepo.find.mockResolvedValue([
       {
         key: 'ACC-1',
@@ -325,6 +336,93 @@ describe('SprintDetailService', () => {
     const acc3 = result.issues.find((i) => i.key === 'ACC-3');
     expect(acc2?.addedMidSprint).toBe(false);
     expect(acc3?.addedMidSprint).toBe(true);
+  });
+
+  it('issues moved from future sprints are classified as added', async () => {
+    // Sprint 2 (future/groomed) has an issue pulled into the active Sprint 1.
+    // Sprint 2 is NOT in closedSprintNames, so the issue must be classified
+    // as addedMidSprint rather than committed (carry-over).
+    const sprint: JiraSprint = {
+      ...SPRINT,
+      startDate: new Date('2026-01-05T12:00:00Z'),
+      endDate: new Date('2026-01-19T00:00:00Z'),
+    };
+    sprintRepo.findOne.mockResolvedValue(sprint);
+    boardConfigRepo.findOne.mockResolvedValue({
+      boardId: 'ACC',
+      boardType: 'scrum',
+      doneStatusNames: ['Done'],
+      failureIssueTypes: [],
+      failureLabels: [],
+      incidentIssueTypes: [],
+      incidentLabels: [],
+      cancelledStatusNames: ['Cancelled'],
+    } as unknown as BoardConfig);
+
+    // No closed sprints — Sprint 2 (future) is therefore not in closedSprintNames.
+    sprintRepo.find.mockResolvedValueOnce([] as JiraSprint[]);
+
+    issueRepo.find.mockResolvedValue([
+      {
+        key: 'ACC-1',
+        boardId: 'ACC',
+        issueType: 'Story',
+        summary: 'Committed from start',
+        status: 'In Progress',
+        sprintId: 'sprint-1',
+        epicKey: null,
+        labels: [],
+        points: null,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      } as unknown as JiraIssue,
+      {
+        key: 'ACC-2',
+        boardId: 'ACC',
+        issueType: 'Story',
+        summary: 'Pulled from future Sprint 2',
+        status: 'To Do',
+        sprintId: 'sprint-1',
+        epicKey: null,
+        labels: [],
+        points: null,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      } as unknown as JiraIssue,
+    ]);
+    roadmapConfigRepo.find.mockResolvedValue([]);
+
+    let qbCallCount = 0;
+    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
+      qbCallCount++;
+      if (qbCallCount === 1) {
+        return makeQb([
+          // ACC-1: committed before sprint start
+          {
+            issueKey: 'ACC-1',
+            field: 'Sprint',
+            toValue: 'Sprint 1',
+            fromValue: null,
+            changedAt: new Date('2026-01-04T10:00:00Z'),
+          },
+          // ACC-2: moved from future Sprint 2 mid-sprint — must be 'added', not carry-over
+          {
+            issueKey: 'ACC-2',
+            field: 'Sprint',
+            toValue: 'Sprint 1',
+            fromValue: 'Sprint 2',              // future sprint, not in closedSprintNames
+            changedAt: new Date('2026-01-08T10:00:00Z'),
+          },
+        ]);
+      }
+      return makeQb([]);
+    });
+
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    expect(result.summary.committedCount).toBe(1);      // ACC-1 only
+    expect(result.summary.addedMidSprintCount).toBe(1); // ACC-2 is added, not carry-over
+
+    const acc2 = result.issues.find((i) => i.key === 'ACC-2');
+    expect(acc2?.addedMidSprint).toBe(true);
   });
 
   // ---------------------------------------------------------------------------
