@@ -252,7 +252,17 @@ export class SprintDetailService {
     };
 
     // -----------------------------------------------------------------------
-    // Query 3: Load all board issues (needed to replay changelogs correctly)
+    // Query 3: Load closed sprint names for carry-over detection.
+    // Only issues moved from a closed sprint are genuine carry-overs.
+    // Issues moved from future/groomed sprints are mid-sprint scope additions.
+    // -----------------------------------------------------------------------
+    const closedSprintsForBoard = await this.sprintRepo.find({
+      where: { boardId, state: 'closed' },
+    });
+    const closedSprintNames = new Set(closedSprintsForBoard.map((s) => s.name));
+
+    // -----------------------------------------------------------------------
+    // Query 4: Load all board issues (needed to replay changelogs correctly)
     // Cannot rely on sprintId column — it stores only the last-synced sprint.
     // -----------------------------------------------------------------------
     const allBoardIssues = await this.issueRepo.find({
@@ -274,7 +284,7 @@ export class SprintDetailService {
     );
 
     // -----------------------------------------------------------------------
-    // Query 4: Bulk-load Sprint-field changelogs for all board issue keys
+    // Query 5: Bulk-load Sprint-field changelogs for all board issue keys
     // -----------------------------------------------------------------------
     const sprintChangelogs = await this.changelogRepo
       .createQueryBuilder('cl')
@@ -355,7 +365,7 @@ export class SprintDetailService {
 
           if (sprintValueContains(cl.toValue, sprintName)) {
             if (!inSprintAtEnd && !wasAtStart) {
-              if (isCarryOverFromSprint(cl.fromValue, sprintName)) {
+              if (isCarryOverFromSprint(cl.fromValue, sprintName, closedSprintNames)) {
                 wasCarryOver = true;
               } else {
                 wasAddedDuringSprint = true;
@@ -401,7 +411,7 @@ export class SprintDetailService {
     }
 
     // -----------------------------------------------------------------------
-    // Query 5: Bulk-load status-field changelogs for sprint member issues
+    // Query 6: Bulk-load status-field changelogs for sprint member issues
     // -----------------------------------------------------------------------
     const finalKeys = [...finalIssueKeys];
     const statusChangelogs = await this.changelogRepo
@@ -420,7 +430,7 @@ export class SprintDetailService {
     }
 
     // -----------------------------------------------------------------------
-    // failureLinkTypes AND-gate: bulk causal-link query (Query 5b)
+    // failureLinkTypes AND-gate: bulk causal-link query (Query 6b)
     //
     // When failureLinkTypes is non-empty, only issues with a matching causal
     // link (e.g. 'caused by') are classified as failures.  When
@@ -709,25 +719,30 @@ function sprintValueContains(
 }
 
 /**
- * Returns true when a Sprint-field changelog `fromValue` indicates that the
- * issue was carried over from a different sprint — i.e. it was moved from
- * another sprint into the current one rather than added from the backlog.
+ * Returns true when a Sprint-field changelog `fromValue` indicates that
+ * the issue was carried over from a **closed** sprint — i.e. it was moved
+ * from a completed sprint into the current one via Jira's "Complete Sprint"
+ * carry-over flow.
+ *
+ * Issues moved from future/groomed sprints (not in closedSprintNames) are
+ * NOT carry-overs — they are mid-sprint scope additions.
  *
  * When Jira's "Complete Sprint" carry-over runs, the changelog entry has:
  *   fromValue: "<previous sprint name>"
  *   toValue:   "<current sprint name>"
  *
  * A backlog addition has fromValue = null or "".
- * See proposal 0038.
+ * See ADR 0039.
  */
 function isCarryOverFromSprint(
   fromValue: string | null,
   currentSprintName: string,
+  closedSprintNames: Set<string>,
 ): boolean {
   if (!fromValue) return false;
   return fromValue.split(',').some((s) => {
     const name = s.trim();
-    return name !== '' && name !== currentSprintName;
+    return name !== '' && name !== currentSprintName && closedSprintNames.has(name);
   });
 }
 

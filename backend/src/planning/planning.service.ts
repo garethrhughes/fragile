@@ -96,6 +96,16 @@ export class PlanningService {
       );
     }
 
+    // Fetch all closed sprints for this board upfront.
+    // 1. Used as the list of closed sprints to process (no-filter path, reused below).
+    // 2. Provides the closed sprint names needed for carry-over detection so that
+    //    issues moved from future/groomed sprints are NOT misclassified as carry-overs.
+    const closedSprints = await this.sprintRepo.find({
+      where: { boardId, state: 'closed' },
+      order: { startDate: 'DESC' },
+    });
+    const closedSprintNames = new Set(closedSprints.map((s) => s.name));
+
     // Get sprints to analyze
     let sprints: JiraSprint[];
 
@@ -115,22 +125,19 @@ export class PlanningService {
         .orderBy('s.startDate', 'ASC')
         .getMany();
     } else {
-      // Return all non-future sprints: active first, then closed descending
+      // Return all non-future sprints: active first, then closed descending.
+      // Reuse closedSprints — no second query needed.
       const active = await this.sprintRepo.find({
         where: { boardId, state: 'active' },
         order: { startDate: 'DESC' },
       });
-      const closed = await this.sprintRepo.find({
-        where: { boardId, state: 'closed' },
-        order: { startDate: 'DESC' },
-      });
-      sprints = [...active, ...closed];
+      sprints = [...active, ...closedSprints];
     }
 
     const results: SprintAccuracy[] = [];
 
     for (const sprint of sprints) {
-      const accuracy = await this.calculateSprintAccuracy(sprint);
+      const accuracy = await this.calculateSprintAccuracy(sprint, closedSprintNames);
       results.push(accuracy);
     }
 
@@ -139,6 +146,7 @@ export class PlanningService {
 
   private async calculateSprintAccuracy(
     sprint: JiraSprint,
+    closedSprintNames: Set<string>,
   ): Promise<SprintAccuracy> {
     if (!sprint.startDate) {
       return this.emptyAccuracy(sprint);
@@ -243,7 +251,7 @@ export class PlanningService {
 
         if (this.sprintValueContains(cl.toValue, sprintName)) {
           if (!inSprintAtEnd && !wasAtStart) {
-            if (this.isCarryOverFromSprint(cl.fromValue, sprintName)) {
+            if (this.isCarryOverFromSprint(cl.fromValue, sprintName, closedSprintNames)) {
               wasCarryOver = true;
             } else {
               wasAddedDuringSprint = true;
@@ -460,24 +468,29 @@ export class PlanningService {
 
   /**
    * Returns true when a Sprint-field changelog `fromValue` indicates that
-   * the issue was carried over from a different sprint — i.e. it was moved
-   * from another sprint into the current one rather than added from the backlog.
+   * the issue was carried over from a **closed** sprint — i.e. it was moved
+   * from a completed sprint into the current one via Jira's "Complete Sprint"
+   * carry-over flow.
+   *
+   * Issues moved from future or groomed sprints (not in closedSprintNames) are
+   * NOT carry-overs — they are mid-sprint scope additions.
    *
    * When Jira's "Complete Sprint" carry-over runs, the changelog entry has:
    *   fromValue: "<previous sprint name>"
    *   toValue:   "<current sprint name>"
    *
    * A backlog addition has fromValue = null or "".
-   * See proposal 0038.
+   * See ADR 0039.
    */
   private isCarryOverFromSprint(
     fromValue: string | null,
     currentSprintName: string,
+    closedSprintNames: Set<string>,
   ): boolean {
     if (!fromValue) return false;
     return fromValue.split(',').some((s) => {
       const name = s.trim();
-      return name !== '' && name !== currentSprintName;
+      return name !== '' && name !== currentSprintName && closedSprintNames.has(name);
     });
   }
 

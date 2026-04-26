@@ -86,10 +86,10 @@ describe('PlanningService', () => {
         goal: '',
       } as JiraSprint;
 
-      // find is called twice: once for active sprints (empty), once for closed sprints
+      // find is called twice: first for closed sprints (closedSprintNames), then for active sprints
       sprintRepo.find
-        .mockResolvedValueOnce([])         // active sprints
-        .mockResolvedValueOnce([sprint]);  // closed sprints
+        .mockResolvedValueOnce([sprint])   // closed sprints (used for both closedSprintNames AND list)
+        .mockResolvedValueOnce([]);        // active sprints
 
       // All board issues (includes issues from this sprint)
       issueRepo.find.mockResolvedValue([
@@ -179,10 +179,10 @@ describe('PlanningService', () => {
         goal: '',
       } as JiraSprint;
 
-      // find is called twice: once for active sprints (empty), once for closed sprints
+      // find is called twice: first for closed sprints (closedSprintNames), then for active sprints
       sprintRepo.find
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([sprint]);
+        .mockResolvedValueOnce([sprint])   // closed sprints (used for both closedSprintNames AND list)
+        .mockResolvedValueOnce([]);        // active sprints
 
       issueRepo.find.mockResolvedValue([
         { key: 'ACC-10', sprintId: 'sprint-2', status: 'Done', boardId: 'ACC', issueType: 'Story', points: null, createdAt: new Date('2025-01-01') },
@@ -259,9 +259,19 @@ describe('PlanningService', () => {
         goal: '',
       } as JiraSprint;
 
+      // find is called twice: first for closed sprints (closedSprintNames), then for active sprints.
+      // Sprint 1 must be in closedSprintNames for carry-over detection to work.
       sprintRepo.find
-        .mockResolvedValueOnce([sprint])  // active sprints
-        .mockResolvedValueOnce([]);       // closed sprints
+        .mockResolvedValueOnce([{             // closed sprints (provides closedSprintNames)
+          id: 'sprint-1',
+          name: 'Sprint 1',
+          state: 'closed',
+          boardId: 'ACC',
+          startDate: new Date('2025-01-15'),
+          endDate: new Date('2025-02-01T12:00:00Z'),
+          goal: '',
+        }])
+        .mockResolvedValueOnce([sprint]);    // active sprints
 
       issueRepo.find.mockResolvedValue([
         // Committed at sprint start
@@ -364,8 +374,8 @@ describe('PlanningService', () => {
       } as JiraSprint;
 
       sprintRepo.find
-        .mockResolvedValueOnce([])           // active sprints
-        .mockResolvedValueOnce([sprint]);    // closed sprints
+        .mockResolvedValueOnce([sprint])     // closed sprints (used for both closedSprintNames AND list)
+        .mockResolvedValueOnce([]);          // active sprints
 
       issueRepo.find.mockResolvedValue([
         // Added 90 seconds after startDate — within 5-minute grace → committed
@@ -429,6 +439,95 @@ describe('PlanningService', () => {
 
       expect(result[0].commitment).toBe(1); // ACC-20 only
       expect(result[0].added).toBe(1);      // ACC-21 only
+    });
+
+    it('should treat issues moved from future sprints as added, not carry-over', async () => {
+      // Scenario: Sprint 3 (a future/groomed sprint) has an issue moved into the
+      // active Sprint 2. This is NOT a carry-over — it is a mid-sprint scope addition.
+      const sprint: JiraSprint = {
+        id: 'sprint-2',
+        name: 'Sprint 2',
+        boardId: 'ACC',
+        state: 'active',
+        startDate: new Date('2025-02-01T12:00:00Z'),
+        endDate: new Date('2025-02-15T00:00:00Z'),
+        goal: '',
+      } as JiraSprint;
+
+      // closed sprints: only Sprint 1 — Sprint 3 (future) is NOT in closedSprintNames
+      sprintRepo.find
+        .mockResolvedValueOnce([{
+          id: 'sprint-1',
+          name: 'Sprint 1',
+          state: 'closed',
+          boardId: 'ACC',
+          startDate: new Date('2025-01-15'),
+          endDate: new Date('2025-02-01T11:00:00Z'),
+          goal: '',
+        }])                    // closed sprints (Sprint 1 only, not Sprint 3)
+        .mockResolvedValueOnce([sprint]); // active sprints
+
+      issueRepo.find.mockResolvedValue([
+        {
+          key: 'ACC-10',
+          sprintId: 'sprint-2',
+          status: 'In Progress',
+          boardId: 'ACC',
+          issueType: 'Story',
+          points: null,
+          createdAt: new Date('2025-01-01'),
+        },
+        // Moved from future Sprint 3 — should be classified as added, not committed
+        {
+          key: 'ACC-11',
+          sprintId: 'sprint-2',
+          status: 'To Do',
+          boardId: 'ACC',
+          issueType: 'Story',
+          points: null,
+          createdAt: new Date('2025-01-01'),
+        },
+      ] as unknown as JiraIssue[]);
+
+      let qbCallCount = 0;
+      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
+        qbCallCount++;
+        const qb = {
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          orderBy: jest.fn().mockReturnThis(),
+          getMany: jest.fn(),
+        };
+
+        if (qbCallCount === 1) {
+          qb.getMany.mockResolvedValue([
+            // ACC-10: committed at sprint start
+            {
+              issueKey: 'ACC-10',
+              field: 'Sprint',
+              toValue: 'Sprint 2',
+              fromValue: null,
+              changedAt: new Date('2025-01-30T10:00:00Z'),
+            },
+            // ACC-11: moved from future Sprint 3 mid-sprint — should be 'added'
+            {
+              issueKey: 'ACC-11',
+              field: 'Sprint',
+              toValue: 'Sprint 2',
+              fromValue: 'Sprint 3',              // future sprint, not in closedSprintNames
+              changedAt: new Date('2025-02-05T10:00:00Z'),
+            },
+          ]);
+        } else {
+          qb.getMany.mockResolvedValue([]);
+        }
+        return qb;
+      });
+
+      const result = await service.getAccuracy('ACC');
+
+      expect(result[0].commitment).toBe(1); // ACC-10 only
+      expect(result[0].added).toBe(1);      // ACC-11 is added, not committed
     });
   });
 
