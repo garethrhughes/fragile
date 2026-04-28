@@ -5,23 +5,28 @@ on:
     branches: [main]
     paths: ['apps/mcp/**']
 
-permissions:
-  contents: read
-  id-token: write   # required for npm provenance
-
 jobs:
   publish:
+    name: Build and publish @fragile.app/mcp
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required for npm OIDC trusted publisher
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+
       - run: npm ci
         working-directory: apps/mcp
+
       - run: npm run build
         working-directory: apps/mcp
+
       - id: check-version
         run: |
           PACKAGE_NAME=$(node -p "require('./package.json').name")
@@ -32,6 +37,7 @@ jobs:
             echo "should_publish=true" >> "$GITHUB_OUTPUT"
           fi
         working-directory: apps/mcp
-      - run: npm publish --provenance --access public
+
+      - run: npm publish
         if: steps.check-version.outputs.should_publish == 'true'
         working-directory: apps/mcp
