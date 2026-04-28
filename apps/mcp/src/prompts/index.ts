@@ -40,7 +40,7 @@ async function fetchJsonSafe<T>(path: string, params?: Record<string, string | u
   }
 }
 
-/** Returns null if the response is 202 (pending), throws on error, returns data otherwise. */
+/** Returns `'pending'` if the response is 202, `null` if the request throws any error, or the response data otherwise. */
 async function fetchJsonOrPending<T>(path: string, params?: Record<string, string | undefined>): Promise<T | 'pending' | null> {
   try {
     const result = await apiGet<T>(path, params);

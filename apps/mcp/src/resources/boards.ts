@@ -1,4 +1,5 @@
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { apiGet } from '../client.js';
 
 export function registerBoardsResource(
@@ -39,7 +40,7 @@ export function registerBoardsResource(
     async (uri, variables) => {
       const boardId = variables['boardId'];
       if (!boardId) {
-        throw new Error('boardId is required');
+        throw new McpError(ErrorCode.InvalidParams, 'boardId is required');
       }
       const result = await apiGet(`/api/boards/${encodeURIComponent(String(boardId))}/config`);
       return {

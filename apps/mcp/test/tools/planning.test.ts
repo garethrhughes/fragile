@@ -46,9 +46,10 @@ describe('Planning tools', () => {
         new McpError(-32603, 'HTTP 400: Planning accuracy is not available for Kanban boards'),
       );
       const server = makeServer();
-      await expect(callTool(server, 'get_planning_accuracy', { boardId: 'PLAT' })).rejects.toThrow(
-        McpError,
-      );
+      const result = await callTool(server, 'get_planning_accuracy', { boardId: 'PLAT' });
+      // The SDK surfaces tool-thrown McpErrors as isError content rather than rejecting
+      expect((result as unknown as { isError: boolean }).isError).toBe(true);
+      expect(result.content[0]?.text).toContain('Planning accuracy is not available for Kanban boards');
     });
   });
 

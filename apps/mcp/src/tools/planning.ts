@@ -28,7 +28,10 @@ export function registerPlanningTools(server: McpServer): void {
           ],
         };
       } catch (err) {
-        if (err instanceof McpError && err.message.includes('HTTP 400')) {
+        if (
+          err instanceof McpError &&
+          err.message.includes('Planning accuracy is not available for Kanban boards')
+        ) {
           throw new McpError(
             ErrorCode.InvalidParams,
             'Planning accuracy is not available for Kanban boards.',

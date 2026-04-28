@@ -12,10 +12,12 @@ import { registerGapsTools } from './tools/gaps.js';
 import { registerBoardsResource } from './resources/boards.js';
 import { registerPrompts } from './prompts/index.js';
 
+const MCP_SERVER_VERSION = process.env['npm_package_version'] ?? '0.0.0';
+
 export function createServer(): McpServer {
   const server = new McpServer({
     name: 'fragile',
-    version: '1.0.0',
+    version: MCP_SERVER_VERSION,
   });
 
   // Register all tools

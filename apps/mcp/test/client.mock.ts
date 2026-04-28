@@ -6,10 +6,6 @@ export const mockApiGet = vi.fn<
   Promise<ApiResponse<unknown>>
 >();
 
-vi.mock('../src/client.js', () => ({
-  apiGet: mockApiGet,
-}));
-
 export function mockSuccess<T>(data: T, status = 200): ApiResponse<T> {
   return { status, data };
 }

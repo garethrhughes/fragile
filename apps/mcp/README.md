@@ -113,16 +113,23 @@ npm test        # run Vitest unit tests
 ## Publishing
 
 The package is published automatically via GitHub Actions on every push to `main` that
-changes files under `apps/mcp/`. The workflow uses npm provenance for cryptographic
-supply-chain verification.
+changes files under `apps/mcp/**`. Publishing is skipped if the current version in
+`package.json` is already present on npm, so a version bump is required to trigger a
+new release.
 
-To publish manually:
+To publish a new version:
+1. Bump the version in `apps/mcp/package.json` (`npm version patch`, `minor`, or `major`).
+2. Commit and push to `main` (or merge a PR that includes the version bump).
+
+GitHub Actions will detect the new version, build the package, and publish it to npm.
+
 ```bash
-npm version patch   # or minor / major
-git push --follow-tags
+# example — bump patch version locally before opening a PR
+cd apps/mcp
+npm version patch
 ```
 
-The GitHub Actions workflow will pick up the tag and publish to npm.
+The GitHub Actions workflow will publish once the version-bumped commit lands on `main`.
 
 ### Required GitHub secret
 
