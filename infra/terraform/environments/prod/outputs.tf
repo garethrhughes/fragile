@@ -1,10 +1,10 @@
 output "backend_service_url" {
-  description = "The ECS Express backend service URL."
+  description = "ALB DNS name (used as CloudFront origin for the backend)."
   value       = module.ecs.backend_service_url
 }
 
 output "frontend_service_url" {
-  description = "The ECS Express frontend service URL."
+  description = "ALB DNS name (used as CloudFront origin for the frontend)."
   value       = module.ecs.frontend_service_url
 }
 

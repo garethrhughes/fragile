@@ -212,7 +212,7 @@ resource "aws_security_group" "ecs_frontend" {
 
 resource "aws_security_group" "rds" {
   name        = "fragile-rds-sg"
-  description = "Allow inbound PostgreSQL from ECS backend tasks only."
+  description = "Allow inbound PostgreSQL from the App Runner VPC connector only."
   vpc_id      = aws_vpc.main.id
 
   # Inline ingress/egress intentionally omitted -- all rules are managed as
@@ -226,13 +226,14 @@ resource "aws_security_group" "rds" {
 }
 
 resource "aws_security_group_rule" "rds_ingress_ecs_backend" {
-  type                     = "ingress"
-  description              = "PostgreSQL from ECS backend tasks"
-  from_port                = 5432
-  to_port                  = 5432
-  protocol                 = "tcp"
-  source_security_group_id = aws_security_group.ecs_backend.id
-  security_group_id        = aws_security_group.rds.id
+  type        = "ingress"
+  description = "PostgreSQL from ECS backend tasks (VPC CIDR - ECS Express Gateway manages task SGs)"
+  from_port   = 5432
+  to_port     = 5432
+  protocol    = "tcp"
+  cidr_blocks = [aws_vpc.main.cidr_block]
+
+  security_group_id = aws_security_group.rds.id
 }
 
 resource "aws_security_group_rule" "rds_egress_all" {

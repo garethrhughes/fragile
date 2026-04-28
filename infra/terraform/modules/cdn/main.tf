@@ -86,6 +86,36 @@ resource "aws_acm_certificate_validation" "frontend" {
   validation_record_fqdns = [for r in aws_route53_record.frontend_validation : r.fqdn]
 }
 
+# ── CloudFront VPC Origin ─────────────────────────────────────────────────────
+# ECS Express Gateway creates an *internal* ALB — not resolvable from the public
+# internet. CloudFront VPC Origins allow CloudFront edge nodes to reach
+# resources inside a VPC directly without the ALB needing a public IP.
+# One VPC Origin covers both the backend and frontend distributions because
+# they share the same ALB; the Host header routes to the correct target group.
+
+resource "aws_cloudfront_vpc_origin" "alb" {
+  vpc_origin_endpoint_config {
+    name                   = "fragile-ecs-express-alb-https"
+    arn                    = var.alb_arn
+    http_port              = 80
+    https_port             = 443
+    origin_protocol_policy = "https-only"
+
+    origin_ssl_protocols {
+      items    = ["TLSv1.2"]
+      quantity = 1
+    }
+  }
+
+  tags = {
+    Name = "fragile-ecs-express-alb-vpc-origin"
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 # ── CloudFront -- backend API ──────────────────────────────────────────────────
 # Caching is fully disabled. All methods, headers, query strings, and cookies
 # are forwarded so the API behaves identically to a direct connection.
@@ -98,13 +128,19 @@ resource "aws_cloudfront_distribution" "backend" {
 
   origin {
     origin_id   = "ecs-backend"
-    domain_name = replace(var.backend_service_url, "https://", "")
+    domain_name = var.alb_dns_name
 
-    custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = "https-only"
-      origin_ssl_protocols   = ["TLSv1.2"]
+    # Secret header used by the ALB listener rule to route to the backend TG.
+    # Both distributions share the same ALB DNS name; this header distinguishes them.
+    custom_header {
+      name  = "X-Fragile-Service"
+      value = "backend"
+    }
+
+    vpc_origin_config {
+      vpc_origin_id            = aws_cloudfront_vpc_origin.alb.id
+      origin_keepalive_timeout = 5
+      origin_read_timeout      = 30
     }
   }
 
@@ -156,13 +192,18 @@ resource "aws_cloudfront_distribution" "frontend" {
 
   origin {
     origin_id   = "ecs-frontend"
-    domain_name = replace(var.frontend_service_url, "https://", "")
+    domain_name = var.alb_dns_name
 
-    custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = "https-only"
-      origin_ssl_protocols   = ["TLSv1.2"]
+    # Secret header used by the ALB listener rule to route to the frontend TG.
+    custom_header {
+      name  = "X-Fragile-Service"
+      value = "frontend"
+    }
+
+    vpc_origin_config {
+      vpc_origin_id            = aws_cloudfront_vpc_origin.alb.id
+      origin_keepalive_timeout = 5
+      origin_read_timeout      = 30
     }
   }
 

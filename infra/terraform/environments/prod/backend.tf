@@ -35,8 +35,8 @@ terraform {
     # Must match the region where the bucket was created
     region = "ap-southeast-2"
 
-    # TODO: Replace with your DynamoDB table name (created manually during bootstrap)
-    dynamodb_table = "fragile-terraform-locks-TODO"
+    # Native S3 locking — no DynamoDB table required (Terraform >= 1.10)
+    use_lockfile = true
 
     encrypt = true
   }

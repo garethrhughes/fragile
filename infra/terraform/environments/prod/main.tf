@@ -14,7 +14,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.50"
+      version = "~> 6.0"
     }
   }
 }
@@ -105,7 +105,7 @@ module "lambda" {
   db_password_secret_arn = module.secrets.db_password_secret_arn
 }
 
-# ── ECS Express ───────────────────────────────────────────
+# ── ECS ───────────────────────────────────────────────────
 module "ecs" {
   source      = "../../modules/ecs"
   environment = var.environment
@@ -113,14 +113,18 @@ module "ecs" {
   backend_image_uri  = "${module.ecr.backend_repository_url}:${var.backend_image_tag}"
   frontend_image_uri = "${module.ecr.frontend_repository_url}:${var.frontend_image_tag}"
 
-  ecs_execution_role_arn     = module.iam.ecs_execution_role_arn
-  backend_task_role_arn      = module.iam.backend_task_role_arn
-  frontend_task_role_arn     = module.iam.frontend_task_role_arn
-  ecs_infrastructure_role_arn = module.iam.ecs_infrastructure_role_arn
+  ecs_execution_role_arn = module.iam.ecs_execution_role_arn
+  backend_task_role_arn  = module.iam.backend_task_role_arn
+  frontend_task_role_arn = module.iam.frontend_task_role_arn
 
   private_subnet_ids         = module.network.private_subnet_ids
+  vpc_id                     = module.network.vpc_id
   backend_security_group_id  = module.network.ecs_backend_security_group_id
   frontend_security_group_id = module.network.ecs_frontend_security_group_id
+
+  # TG ARNs for the ALB rules that CloudFront routes to.
+  backend_target_group_arn  = var.backend_target_group_arn
+  frontend_target_group_arn = var.frontend_target_group_arn
 
   rds_endpoint = module.rds.db_endpoint
 
@@ -165,8 +169,8 @@ module "cdn" {
   frontend_subdomain = var.frontend_subdomain
   backend_subdomain  = var.backend_subdomain
 
-  backend_service_url  = module.ecs.backend_service_url
-  frontend_service_url = module.ecs.frontend_service_url
+  alb_dns_name = module.ecs.alb_dns_name
+  alb_arn      = module.ecs.alb_arn
 
   web_acl_arn = module.waf.web_acl_arn
 }

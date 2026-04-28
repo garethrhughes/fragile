@@ -13,13 +13,13 @@ variable "backend_subdomain" {
   type        = string
 }
 
-variable "backend_service_url" {
-  description = "ECS Express service URL for the backend (e.g. https://fragile-backend.ecs.ap-southeast-2.on.aws). Used as the CloudFront origin."
+variable "alb_dns_name" {
+  description = "DNS name of the internal ALB. Used as the CloudFront VPC origin domain for both distributions."
   type        = string
 }
 
-variable "frontend_service_url" {
-  description = "ECS Express service URL for the frontend. Used as the CloudFront origin."
+variable "alb_arn" {
+  description = "ARN of the internal ALB created by ECS Express Gateway. Used to create a CloudFront VPC Origin so CloudFront can reach the internal ALB."
   type        = string
 }
 

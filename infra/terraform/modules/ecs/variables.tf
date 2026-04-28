@@ -32,12 +32,12 @@ variable "frontend_task_role_arn" {
   type        = string
 }
 
-variable "ecs_infrastructure_role_arn" {
-  description = "ARN of the ECS Express infrastructure role (manages ALB, target groups, listeners)."
+# ── Network ───────────────────────────────────────────────────────────────────
+
+variable "vpc_id" {
+  description = "VPC ID (unused directly but kept for consistency with network module outputs)."
   type        = string
 }
-
-# ── Network ───────────────────────────────────────────────────────────────────
 
 variable "private_subnet_ids" {
   description = "List of private subnet IDs where ECS tasks run."
@@ -45,12 +45,24 @@ variable "private_subnet_ids" {
 }
 
 variable "backend_security_group_id" {
-  description = "ID of the security group for backend ECS tasks."
+  description = "ID of the security group for backend ECS tasks (allows inbound 3001 from ALB)."
   type        = string
 }
 
 variable "frontend_security_group_id" {
-  description = "ID of the security group for frontend ECS tasks."
+  description = "ID of the security group for frontend ECS tasks (allows inbound 3000 from ALB)."
+  type        = string
+}
+
+# ── Target Groups ─────────────────────────────────────────────────────────────
+
+variable "backend_target_group_arn" {
+  description = "ARN of the ALB target group for the backend service."
+  type        = string
+}
+
+variable "frontend_target_group_arn" {
+  description = "ARN of the ALB target group for the frontend service."
   type        = string
 }
 
@@ -102,6 +114,7 @@ variable "dora_snapshot_lambda_name" {
 }
 
 variable "aws_region" {
-  description = "AWS region. Injected as AWS_REGION env var on the backend service."
+  description = "AWS region. Injected as AWS_REGION env var and used for CloudWatch Logs config."
   type        = string
 }
+

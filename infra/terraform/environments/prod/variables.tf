@@ -45,3 +45,18 @@ variable "allowed_cidrs" {
   type        = list(string)
   # No default — must be supplied in terraform.tfvars.
 }
+
+# ── ECS ALB Target Group ARNs ─────────────────────────────────────────────────
+# The ECS Express Gateway creates and owns these TGs. We pass their ARNs in
+# so that the standard aws_ecs_service load_balancer blocks can reference them,
+# enabling ECS to auto-update registrations when tasks are replaced.
+
+variable "backend_target_group_arn" {
+  description = "ARN of the ALB target group for the backend ECS service (created by ECS Express Gateway)."
+  type        = string
+}
+
+variable "frontend_target_group_arn" {
+  description = "ARN of the ALB target group for the frontend ECS service (created by ECS Express Gateway)."
+  type        = string
+}
