@@ -9,7 +9,7 @@
 # ============================================================
 
 terraform {
-  required_version = ">= 1.7"
+  required_version = ">= 1.10"
 
   required_providers {
     aws = {
@@ -186,4 +186,31 @@ module "dns" {
   backend_cloudfront_domain  = module.cdn.backend_cloudfront_domain
   frontend_cloudfront_domain = module.cdn.frontend_cloudfront_domain
   cloudfront_hosted_zone_id  = module.cdn.cloudfront_hosted_zone_id
+}
+
+# ── ECS task SG ingress rules ──────────────────────────────
+# Defined here (not in module.network) to avoid a dependency cycle:
+#   module.network SGs → module.ecs services → module.ecs ALB data → ALB SG
+#                    ↖──────────────────────────────────────────────────────┘
+# By placing these rules in the root module, both the SG IDs (network) and
+# the ALB SG ID (ecs) are available with no cycle.
+
+resource "aws_security_group_rule" "ecs_backend_ingress_alb" {
+  type                     = "ingress"
+  description              = "Allow inbound traffic from Express-managed ALB on backend container port"
+  from_port                = 3001
+  to_port                  = 3001
+  protocol                 = "tcp"
+  source_security_group_id = module.ecs.alb_security_group_id
+  security_group_id        = module.network.ecs_backend_security_group_id
+}
+
+resource "aws_security_group_rule" "ecs_frontend_ingress_alb" {
+  type                     = "ingress"
+  description              = "Allow inbound traffic from Express-managed ALB on frontend container port"
+  from_port                = 3000
+  to_port                  = 3000
+  protocol                 = "tcp"
+  source_security_group_id = module.ecs.alb_security_group_id
+  security_group_id        = module.network.ecs_frontend_security_group_id
 }

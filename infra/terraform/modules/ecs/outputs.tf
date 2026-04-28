@@ -1,3 +1,8 @@
+output "alb_security_group_id" {
+  description = "ID of the first security group attached to the Express-managed ALB. Pass to module.network.alb_security_group_id on subsequent applies to tighten task SG ingress."
+  value       = tolist(data.aws_lb.express_gateway.security_groups)[0]
+}
+
 output "cluster_name" {
   description = "Name of the ECS cluster."
   value       = aws_ecs_cluster.this.name

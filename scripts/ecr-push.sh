@@ -162,7 +162,7 @@ fi
 
 echo
 echo "==> Done. Trigger a deployment with:"
-echo "    aws ecs update-service --cluster fragile --service fragile-backend --force-new-deployment"
-echo "    aws ecs update-service --cluster fragile --service fragile-frontend --force-new-deployment"
+echo "    aws ecs update-service --cluster fragile --service fragile-backend-svc --force-new-deployment"
+echo "    aws ecs update-service --cluster fragile --service fragile-frontend-svc --force-new-deployment"
 echo
 echo "    Or run: make deploy  (once that target is added to the Makefile)"

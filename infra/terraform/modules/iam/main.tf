@@ -156,7 +156,7 @@ data "aws_iam_policy_document" "backend_task_permissions" {
       "logs:PutLogEvents",
       "logs:DescribeLogStreams",
     ]
-    resources = ["arn:aws:logs:${local.region}:${local.account_id}:log-group:/aws/ecs/fragile-backend*"]
+    resources = ["arn:aws:logs:${local.region}:${local.account_id}:log-group:/ecs/fragile/backend*"]
   }
 
   # Lambda invocation -- for DORA snapshot post-sync computation
@@ -197,7 +197,7 @@ data "aws_iam_policy_document" "frontend_task_permissions" {
       "logs:PutLogEvents",
       "logs:DescribeLogStreams",
     ]
-    resources = ["arn:aws:logs:${local.region}:${local.account_id}:log-group:/aws/ecs/fragile-frontend*"]
+    resources = ["arn:aws:logs:${local.region}:${local.account_id}:log-group:/ecs/fragile/frontend*"]
   }
 }
 

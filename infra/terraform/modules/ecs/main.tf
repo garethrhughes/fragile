@@ -51,8 +51,8 @@ resource "aws_ecs_task_definition" "backend" {
   family                   = "fragile-backend"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = "512"
-  memory                   = "1024"
+  cpu                      = "1024"
+  memory                   = "2048"
   execution_role_arn       = var.ecs_execution_role_arn
   task_role_arn            = var.backend_task_role_arn
 
