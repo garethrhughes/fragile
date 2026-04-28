@@ -12,9 +12,9 @@ to the Jira API and takes several minutes to complete. The sync endpoint was ori
 implemented as `async triggerSync() { return this.syncService.syncAll(); }`, meaning
 the HTTP response was held open until the entire sync completed.
 
-With CloudFront in front of App Runner (ADR-0033), this pattern is incompatible:
+With CloudFront in front of the ECS Fargate backend (ADR-0033), this pattern is incompatible:
 CloudFront enforces a 60-second origin response timeout. A sync that takes more than
-60 seconds receives a `504 Gateway Timeout` from CloudFront even if the App Runner
+60 seconds receives a `504 Gateway Timeout` from CloudFront even if the ECS Fargate
 service is still working correctly. The client would receive an error even on a
 successful sync.
 
@@ -96,9 +96,9 @@ with the CloudFront timeout.
 ### Risks
 
 - The unhandled-rejection handler at the top level of `triggerSync()` logs errors to
-  `console.error`. If the logging infrastructure is unavailable (e.g. CloudWatch agent
-  not configured), these errors are lost. Ensure App Runner stdout is forwarded to
-  CloudWatch Logs.
+  `console.error`. If the logging infrastructure is unavailable (e.g. ECS CloudWatch
+  log group not configured), these errors are lost. Ensure ECS task stdout is forwarded
+  to CloudWatch Logs (`/ecs/fragile/backend`).
 
 ---
 

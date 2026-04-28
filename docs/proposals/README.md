@@ -28,7 +28,7 @@
 | [0024](0024-unplanned-done-tickets-report.md) | Unplanned Done Tickets Report | Accepted | 2026-04-14 |
 | [0025](0025-unplanned-done-in-sprint-reports.md) | Never-Boarded Tickets in Sprint Reports and Kanban Equivalents | Proposed | 2026-04-14 |
 | [0026](0026-metric-fixes-validation-report.md) | Metric Calculation Fixes: Post-Implementation Validation Report | Informational | 2026-04-14 |
-| [0027](0027-aws-terraform-infrastructure.md) | AWS Terraform Infrastructure | Draft | 2026-04-14 |
+| [0027](0027-aws-terraform-infrastructure.md) | AWS Terraform Infrastructure | Superseded by [0039](0039-migrate-from-app-runner-to-ecs-express.md) | 2026-04-14 |
 | [0028](0028-jira-field-id-externalisation.md) | Jira Field ID and Instance-Specific Value Externalisation | Accepted | 2026-04-15 |
 | [0029](0029-working-time-service.md) | Working-Time Service: Exclude Weekends from Flow Metrics | Accepted | 2026-04-15 |
 | [0030](0030-metrics-correctness-second-audit-fixes.md) | Metrics Correctness: Second Audit Fix Batch | Draft | 2026-04-15 |
@@ -40,3 +40,4 @@
 | [0036](0036-dora-page-reliability-options.md) | DORA Page Reliability in AWS Environment: Options Analysis (revised — OOM constraint) | Draft | 2026-04-23 |
 | [0037](0037-lambda-post-sync-dora-computation.md) | Lambda Post-Sync DORA Snapshot Computation | Accepted | 2026-04-23 |
 | [0038](0038-carry-over-sprint-issue-classification.md) | Carry-Over Sprint Issue Classification Fix | Accepted | 2026-04-24 |
+| [0039](0039-migrate-from-app-runner-to-ecs-express.md) | Migrate from AWS App Runner to ECS Fargate | Accepted | 2026-04-25 |

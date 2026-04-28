@@ -1,10 +1,16 @@
 # 0027 — AWS Terraform Infrastructure
 
 **Date:** 2026-04-14
-**Status:** Draft
+**Status:** Superseded by [0039](0039-migrate-from-app-runner-to-ecs-express.md)
 **Author:** Architect Agent
 **Supersedes:** [0019](0019-aws-hosting-low-cost.md) (AWS Hosting — Minimum Cost)
 **Related ADRs:** None yet — will be created on acceptance
+
+> **Historical note:** This proposal designed the initial Terraform infrastructure around
+> AWS App Runner. That infrastructure was subsequently replaced by ECS Fargate in proposal
+> 0039. The App Runner design documented here is preserved for historical reference.
+> The live Terraform implementation is under `infra/terraform/modules/ecs/` and the
+> `modules/apprunner/` module referenced throughout this proposal no longer exists.
 
 ---
 

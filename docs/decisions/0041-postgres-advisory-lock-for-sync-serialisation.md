@@ -6,14 +6,14 @@
 
 ## Context
 
-App Runner can run multiple container instances simultaneously (horizontal scaling) and
-restarts instances during deployments, resulting in a window where two instances are
-live concurrently. With a scheduled cron sync (`@Cron('0 */30 * * * *')`) running on
-every instance, two `syncAll()` calls can overlap:
+ECS Fargate can run multiple task instances simultaneously (horizontal scaling or
+rolling deployments), with a window where two tasks are live concurrently. With a
+scheduled cron sync (`@Cron('0 */30 * * * *')`) running on every task, two `syncAll()`
+calls can overlap:
 
 - **Same-cron overlap** — both instances fire their cron at the same 30-minute mark.
-- **Deployment overlap** — the old instance is still running a sync when the new
-  instance starts and triggers its startup sync or the next cron fires.
+- **Deployment overlap** — the old task is still running a sync when the new task
+  starts and triggers its startup sync or the next cron fires.
 
 Two concurrent `syncAll()` runs produce redundant Jira API calls (doubling rate-limit
 consumption), redundant bulk upserts (wasted write I/O), and — critically — two
@@ -56,7 +56,7 @@ acquired and `false` if another session holds it — it is non-blocking (unlike
 `pg_advisory_lock`). The lock is held for the duration of the sync and released with
 `pg_advisory_unlock` (or automatically on connection close).
 
-Because all App Runner instances connect to the same RDS PostgreSQL instance, this
+Because all ECS Fargate tasks connect to the same RDS PostgreSQL instance, this
 achieves distributed mutual exclusion without any additional infrastructure.
 
 ---
@@ -118,7 +118,7 @@ deadlock.
 
 ### Positive
 
-- Concurrent `syncAll()` calls across App Runner instances are serialised without any
+- Concurrent `syncAll()` calls across ECS Fargate tasks are serialised without any
   new infrastructure.
 - Redundant Jira API calls and Lambda invocations during deployment rollovers are
   eliminated.
@@ -133,7 +133,7 @@ deadlock.
   (~30–120 seconds). At current connection budgets this is immaterial.
 - `pg_advisory_lock` is PostgreSQL-specific. A future migration away from PostgreSQL
   (unlikely given ADR-0002) would require replacing this mechanism.
-- If the App Runner process crashes mid-sync (e.g. OOM kill, which ADR-0040 mitigates),
+- If the ECS Fargate task crashes mid-sync (e.g. OOM kill, which ADR-0040 mitigates),
   the session lock is released by PostgreSQL automatically when the connection closes.
   No manual intervention is needed.
 

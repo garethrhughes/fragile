@@ -43,14 +43,15 @@ a new ADR is created for the replacement decision.
 | [0029](0029-mit-license.md) | MIT License | Accepted | 2026-04-15 |
 | [0030](0030-multi-stage-docker-builds.md) | Multi-stage Docker builds for backend and frontend | Accepted | 2026-04-23 |
 | [0031](0031-nextjs-standalone-output.md) | Next.js standalone output mode | Accepted | 2026-04-23 |
-| [0032](0032-nodejs-heap-cap-and-apprunner-instance-sizing.md) | Node.js heap cap and App Runner instance sizing for memory management | Accepted | 2026-04-23 |
-| [0033](0033-cloudfront-as-public-entry-point.md) | CloudFront distributions as the public entry point for both services | Accepted | 2026-04-23 |
+| [0032](0032-nodejs-heap-cap-and-apprunner-instance-sizing.md) | Node.js heap cap and ECS Fargate task sizing for memory management | Accepted | 2026-04-23 |
+| [0033](0033-cloudfront-as-public-entry-point.md) | CloudFront + VPC Origin + ALB as the public entry point for both services | Accepted | 2026-04-23 |
 | [0034](0034-cloudfront-waf-ip-allowlist.md) | CloudFront-scoped WAF IP allowlist as sole access-control layer | Accepted | 2026-04-23 |
-| [0035](0035-nat-gateway-for-apprunner-outbound-internet.md) | NAT Gateway for App Runner outbound internet access | Accepted | 2026-04-23 |
+| [0035](0035-nat-gateway-for-apprunner-outbound-internet.md) | NAT Gateway for ECS Fargate outbound internet access | Accepted | 2026-04-23 |
 | [0036](0036-sync-endpoint-fire-and-forget-http-202.md) | `POST /api/sync` as fire-and-forget returning HTTP 202 | Accepted | 2026-04-23 |
 | [0037](0037-typeorm-column-projection-for-metric-queries.md) | TypeORM column projection as standard pattern for metric service queries | Accepted | 2026-04-23 |
-| [0038](0038-frontend-health-endpoint.md) | Dedicated frontend health endpoint for App Runner health checks | Accepted | 2026-04-23 |
+| [0038](0038-frontend-health-endpoint.md) | Dedicated frontend health endpoint for ECS ALB health checks | Accepted | 2026-04-23 |
 | [0039](0039-carry-over-sprint-issue-classification.md) | Carry-over sprint issues classified as committed, not added | Accepted | 2026-04-24 |
 | [0040](0040-lambda-post-sync-dora-snapshot-computation.md) | Lambda post-sync DORA snapshot computation | Accepted | 2026-04-25 |
 | [0041](0041-postgres-advisory-lock-for-sync-serialisation.md) | PostgreSQL advisory lock for distributed sync serialisation | Accepted | 2026-04-25 |
 | [0042](0042-trend-display-snapshot-type-and-org-merge-strategy.md) | `trend-display` snapshot type, org-merge-from-per-board strategy, and trend array direction | Accepted | 2026-04-25 |
+| [0043](0043-ecs-fargate-replaces-app-runner.md) | ECS Fargate replaces App Runner as compute platform | Accepted | 2026-04-28 |

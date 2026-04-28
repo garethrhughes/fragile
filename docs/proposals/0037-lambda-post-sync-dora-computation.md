@@ -10,6 +10,11 @@
 
 ## Problem Statement
 
+> **Platform note:** This proposal was written while the backend ran on AWS App Runner. The
+> compute platform has since been migrated to ECS Fargate (proposal 0039 / ADR-0043). The
+> memory problem, Lambda solution, and all application-level decisions documented here remain
+> accurate. Wherever "App Runner" appears below, read "ECS Fargate backend task".
+
 The DORA metrics page crashes the App Runner backend process with OOM kills (exit 137) when
 metric computation runs in the same Node.js heap as a Jira sync. The two workloads — sync
 (Jira API responses + bulk entity arrays) and computation (`TrendDataLoader` bulk reads across

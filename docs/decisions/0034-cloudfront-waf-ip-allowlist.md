@@ -1,7 +1,7 @@
 # 0034 — CloudFront-Scoped WAF IP Allowlist as Sole Access-Control Layer
 
 **Date:** 2026-04-23
-**Status:** Accepted
+**Status:** Accepted (platform updated — see ADR-0043)
 **Deciders:** Architect Agent
 
 ## Context
@@ -13,24 +13,26 @@ documented there is insufficient on its own for an internet-facing deployment be
 CORS is a browser hint only and does not block non-browser clients.
 
 A network-layer access control is needed that sits in front of both the frontend and
-backend services and is enforced at the edge before requests reach App Runner.
+backend services and is enforced at the edge before requests reach the ECS Fargate tasks.
 
 ---
 
 ## Options Considered
 
-### Option A — Security Group / NACl on App Runner
+### Option A — Security Group / NACL on ECS tasks
 
-- Restrict inbound traffic to allowed CIDRs at the VPC network layer.
+- Restrict inbound traffic to allowed CIDRs at the VPC network layer on the ECS task
+  security groups.
 - **Pros:** Infrastructure-level enforcement; no per-request cost.
-- **Cons:** App Runner does not expose security group controls on the public-facing
-  ingress. VPC connectors only apply to outbound traffic from the service. Ruled out.
+- **Cons:** ECS Fargate tasks are not directly internet-facing; they sit behind the
+  internal ALB. IP allowlisting at the task SG level would only be effective if the
+  ALB were internet-facing (which it is not). Ruled out.
 
 ### Option B — Application-level API key authentication
 
 - Require a header token on every request, validated by the backend.
 - **Pros:** No infrastructure dependency; works for any deployment.
-- **Cons:** The frontend is a separate Next.js App Runner service that cannot share
+- **Cons:** The frontend is a separate Next.js ECS service that cannot share
   a session or API key with the browser in a secure way without a proper authentication
   layer. ADR-0020 explicitly superseded API key auth. Ruled out.
 
@@ -43,8 +45,9 @@ backend services and is enforced at the edge before requests reach App Runner.
   `web_acl_id`.
 - The WAF and its WebACL must be provisioned in `us-east-1` (CloudFront WAF requirement).
 - **Pros:** All HTTP/HTTPS traffic is evaluated at the CloudFront edge before reaching
-  App Runner; non-browser clients are blocked at the network layer; no application code
-  changes required; allowed CIDRs are managed in Terraform variables (`allowed_cidrs`).
+  the ECS Fargate tasks; non-browser clients are blocked at the network layer; no
+  application code changes required; allowed CIDRs are managed in Terraform variables
+  (`allowed_cidrs`).
 - **Cons:** CloudFront WAF resources must live in `us-east-1` regardless of the primary
   deployment region; requires the same `us-east-1` provider alias already introduced
   for ACM certificates (ADR-0033). WAF adds a per-request cost (~$0.60/million requests
@@ -63,11 +66,12 @@ backend services and is enforced at the edge before requests reach App Runner.
 
 ## Rationale
 
-CloudFront WAF is the earliest feasible enforcement point for an App Runner deployment.
-It evaluates every request at the CloudFront edge (before the request reaches App Runner),
-blocking non-browser and browser clients alike from disallowed networks. The CIDR-based
-approach is appropriate for an internal tool accessed from known office/VPN networks.
-Managing CIDRs in a Terraform variable keeps the allowlist in version control and auditable.
+CloudFront WAF is the earliest feasible enforcement point for this deployment topology.
+It evaluates every request at the CloudFront edge (before the request reaches the
+internal ALB or ECS Fargate tasks), blocking non-browser and browser clients alike
+from disallowed networks. The CIDR-based approach is appropriate for an internal tool
+accessed from known office/VPN networks. Managing CIDRs in a Terraform variable keeps
+the allowlist in version control and auditable.
 
 ---
 
@@ -76,7 +80,7 @@ Managing CIDRs in a Terraform variable keeps the allowlist in version control an
 ### Positive
 
 - All traffic from disallowed IPs is blocked at the CloudFront edge with a 403 response.
-  App Runner never receives these requests.
+  ECS Fargate tasks never receive these requests.
 - CloudWatch metrics and sampled request logging are enabled on both the WebACL and the
   `AllowVPN` rule, providing visibility into blocked requests.
 - Adding or removing allowed CIDRs requires only a `terraform apply`; no application

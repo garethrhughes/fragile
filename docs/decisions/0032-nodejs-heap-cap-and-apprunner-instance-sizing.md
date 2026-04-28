@@ -1,18 +1,19 @@
-# 0032 — Node.js Heap Cap and App Runner Instance Sizing for Memory Management
+# 0032 — Node.js Heap Cap and ECS Fargate Task Sizing for Memory Management
 
 **Date:** 2026-04-23
-**Status:** Accepted
+**Status:** Accepted (platform updated — see ADR-0043)
 **Deciders:** Architect Agent
 
 ## Context
 
-The backend App Runner service was originally configured with 512 mCPU / 1024 MB. During
-production operation, the process was being killed with exit code 137 (SIGKILL from the
-OOM killer) when processing large boards. The root cause is that Node.js / V8 does not
-trigger a garbage collection cycle until heap usage approaches its internal limit, which
-defaults to ~1.5 GB on 64-bit systems. If the process memory ceiling imposed by the
-container runtime (App Runner's hard limit) is reached before V8's internal GC threshold,
-the process is killed rather than collecting and reclaiming memory.
+The backend service was originally configured with 512 mCPU / 1024 MB, first on App Runner
+and subsequently on ECS Fargate (ADR-0043). During production operation, the process was
+being killed with exit code 137 (SIGKILL from the OOM killer) when processing large boards.
+The root cause is that Node.js / V8 does not trigger a garbage collection cycle until heap
+usage approaches its internal limit, which defaults to ~1.5 GB on 64-bit systems. If the
+process memory ceiling imposed by the container runtime (the Fargate task's hard limit) is
+reached before V8's internal GC threshold, the process is killed rather than collecting and
+reclaiming memory.
 
 A second related issue is that sprint report generation was triggered concurrently for all
 boards after each sync, creating a peak memory spike when multiple boards' reports were
@@ -24,11 +25,11 @@ computed simultaneously on a fresh deployment.
 
 ### Option A — Raise instance memory only (no heap cap)
 
-- Increase App Runner instance to 2 GB and rely on V8's default GC behaviour.
+- Increase ECS Fargate task to 2 GB and rely on V8's default GC behaviour.
 - **Pros:** No code change required.
 - **Cons:** V8's default GC threshold may still lag behind actual memory usage on large
   boards; the OOM-kill race condition persists, just at a higher memory level. The 2 GB
-  limit is also the maximum for a single App Runner instance on the 1 vCPU tier.
+  limit is also the maximum memory for the 1 vCPU Fargate task definition.
 
 ### Option B — Set `--max-old-space-size` below the container limit (selected for backend)
 
@@ -56,7 +57,7 @@ computed simultaneously on a fresh deployment.
 ## Decision
 
 > The backend Dockerfile uses `CMD ["node", "--max-old-space-size=1800", "dist/main"]`
-> to cap the V8 old-generation heap at 1800 MB. The App Runner backend instance is
+> to cap the V8 old-generation heap at 1800 MB. The ECS Fargate backend task is
 > sized at 1024 mCPU / 2048 MB. Sprint report generation after sync is made sequential
 > across boards (not concurrent) to avoid peak memory spikes at deployment time.
 
@@ -67,7 +68,7 @@ measures, while query projection (ADR-0037) is the primary memory reduction.
 
 ## Rationale
 
-Raising the instance size from 1 vCPU/1 GB to 1 vCPU/2 GB provides the headroom needed
+Raising the task size from 1 vCPU/1 GB to 1 vCPU/2 GB provides the headroom needed
 for large board syncs. Setting `--max-old-space-size=1800` ensures V8 GCs aggressively
 before the container ceiling is hit, converting silent OOM kills into observable heap
 errors. Making sprint report generation sequential after sync prevents the compounding
@@ -81,14 +82,14 @@ first deployment when all boards' reports are generated in the same window.
 ### Positive
 
 - OOM kills (exit 137) are replaced by in-process heap exhaustion errors with stack traces,
-  making failures observable in App Runner logs.
+  making failures observable in ECS CloudWatch logs (`/ecs/fragile/backend`).
 - Sequential post-sync report generation reduces peak RSS significantly on fresh deployments.
-- The instance sizing decision is encoded in Terraform (`apprunner` module), making it
+- The task sizing decision is encoded in Terraform (`ecs` module), making it
   reproducible and reviewable via version control.
 
 ### Negative / Trade-offs
 
-- 1 vCPU / 2048 MB is the most expensive single-instance tier for App Runner. Cost
+- 1 vCPU / 2048 MB is the selected Fargate task size for the backend. Cost
   increases roughly 2× compared to the previous 512 mCPU / 1024 MB configuration.
 - Sequential sprint report generation increases total post-sync wall time. For 5 boards
   this adds minutes compared to fully concurrent generation. Acceptable given the
@@ -101,8 +102,8 @@ first deployment when all boards' reports are generated in the same window.
 
 - The 248 MB gap between the heap cap (1800 MB) and container limit (2048 MB) may be
   insufficient if off-heap native buffers (e.g. `pg` wire protocol buffers) are unusually
-  large during a sync of many boards simultaneously. Monitor `container_memory_utilization`
-  in App Runner CloudWatch metrics.
+  large during a sync of many boards simultaneously. Monitor `MemoryUtilization`
+  in ECS CloudWatch metrics for the backend service.
 
 ---
 

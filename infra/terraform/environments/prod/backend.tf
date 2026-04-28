@@ -16,13 +16,7 @@
 #     --bucket <TODO: replace with your state bucket name> \
 #     --server-side-encryption-configuration \
 #       '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
-#
-#   aws dynamodb create-table \
-#     --table-name <TODO: replace with your lock table name> \
-#     --attribute-definitions AttributeName=LockID,AttributeType=S \
-#     --key-schema AttributeName=LockID,KeyType=HASH \
-#     --billing-mode PAY_PER_REQUEST \
-#     --region ap-southeast-2
+
 
 terraform {
   backend "s3" {
@@ -35,8 +29,8 @@ terraform {
     # Must match the region where the bucket was created
     region = "ap-southeast-2"
 
-    # TODO: Replace with your DynamoDB table name (created manually during bootstrap)
-    dynamodb_table = "fragile-terraform-locks-TODO"
+    # Native S3 locking — no DynamoDB table required (Terraform >= 1.10)
+    use_lockfile = true
 
     encrypt = true
   }

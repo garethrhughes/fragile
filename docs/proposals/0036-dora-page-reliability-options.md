@@ -1,9 +1,15 @@
 # 0036 — DORA Page Reliability in AWS Environment: Options Analysis
 
 **Date:** 2026-04-23
-**Status:** Draft (revised — OOM constraint added)
+**Status:** Accepted (Option C implemented — see ADR-0040)
 **Author:** Architect Agent
-**Related ADRs:** ADR-0032, ADR-0033, ADR-0036, ADR-0037
+**Related ADRs:** ADR-0032, ADR-0033, ADR-0040, ADR-0041
+
+> **Platform note:** This proposal was written while the backend ran on AWS App Runner. The
+> compute platform has since been migrated to ECS Fargate (proposal 0039 / ADR-0043). The
+> memory problem and Lambda solution described here remain accurate; only the platform name
+> has changed. Wherever "App Runner" appears below, read "ECS Fargate backend task". The
+> heap cap, container memory limit (2048 MB), and CloudFront 60-second timeout are unchanged.
 
 ---
 

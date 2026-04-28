@@ -6,11 +6,11 @@
 
 ## Context
 
-The project is deployed to AWS App Runner via ECR-hosted container images. Both the
-backend (NestJS) and frontend (Next.js) are Node.js applications that require a
-compile step (`tsc`/`next build`) before they can run. Building and running in a
-single Dockerfile layer leaves dev-only tooling, source files, and test fixtures
-in the production image, increasing image size and attack surface.
+The project is deployed to AWS via ECR-hosted container images running on ECS Fargate
+(ADR-0043). Both the backend (NestJS) and frontend (Next.js) are Node.js applications
+that require a compile step (`tsc`/`next build`) before they can run. Building and
+running in a single Dockerfile layer leaves dev-only tooling, source files, and test
+fixtures in the production image, increasing image size and attack surface.
 
 ---
 
@@ -51,8 +51,8 @@ in the production image, increasing image size and attack surface.
 
 Multi-stage builds are the industry-standard pattern for containerising compiled Node.js
 applications. The reduction in image size directly improves ECR push/pull latency and
-App Runner cold-start time. Excluding dev dependencies eliminates an entire class of
-supply-chain vulnerability from the production image.
+ECS Fargate task cold-start time. Excluding dev dependencies eliminates an entire class
+of supply-chain vulnerability from the production image.
 
 ---
 

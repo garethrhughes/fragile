@@ -17,30 +17,52 @@ variable "frontend_image_uri" {
 
 # ── IAM roles ─────────────────────────────────────────────────────────────────
 
-variable "backend_execution_role_arn" {
-  description = "ARN of the IAM role App Runner uses to pull the backend image from ECR."
+variable "ecs_execution_role_arn" {
+  description = "ARN of the ECS execution role (ECR pull + secrets read)."
   type        = string
 }
 
-variable "frontend_execution_role_arn" {
-  description = "ARN of the IAM role App Runner uses to pull the frontend image from ECR."
+variable "backend_task_role_arn" {
+  description = "ARN of the IAM role granted to the running backend container."
   type        = string
 }
 
-variable "backend_instance_role_arn" {
-  description = "ARN of the IAM role granted to the running backend container (task role)."
-  type        = string
-}
-
-variable "frontend_instance_role_arn" {
-  description = "ARN of the IAM role granted to the running frontend container (task role)."
+variable "frontend_task_role_arn" {
+  description = "ARN of the IAM role granted to the running frontend container."
   type        = string
 }
 
 # ── Network ───────────────────────────────────────────────────────────────────
 
-variable "vpc_connector_arn" {
-  description = "ARN of the App Runner VPC connector (attached to the backend service only)."
+variable "vpc_id" {
+  description = "VPC ID (unused directly but kept for consistency with network module outputs)."
+  type        = string
+}
+
+variable "private_subnet_ids" {
+  description = "List of private subnet IDs where ECS tasks run."
+  type        = list(string)
+}
+
+variable "backend_security_group_id" {
+  description = "ID of the security group for backend ECS tasks (allows inbound 3001 from ALB)."
+  type        = string
+}
+
+variable "frontend_security_group_id" {
+  description = "ID of the security group for frontend ECS tasks (allows inbound 3000 from ALB)."
+  type        = string
+}
+
+# ── Target Groups ─────────────────────────────────────────────────────────────
+
+variable "backend_target_group_arn" {
+  description = "ARN of the ALB target group for the backend service."
+  type        = string
+}
+
+variable "frontend_target_group_arn" {
+  description = "ARN of the ALB target group for the frontend service."
   type        = string
 }
 
@@ -81,13 +103,8 @@ variable "timezone_param_arn" {
 
 # ── URLs (for cross-service env vars) ────────────────────────────────────────
 
-variable "backend_url" {
-  description = "The stable backend custom domain URL (e.g. https://api.example.com). Set as NEXT_PUBLIC_API_URL on the frontend."
-  type        = string
-}
-
 variable "frontend_url" {
-  description = "The stable frontend custom domain URL (e.g. https://dashboard.example.com). Used for informational purposes."
+  description = "The stable frontend custom domain URL (e.g. https://dashboard.example.com). Used as CORS allowed-origin."
   type        = string
 }
 
@@ -97,6 +114,7 @@ variable "dora_snapshot_lambda_name" {
 }
 
 variable "aws_region" {
-  description = "AWS region. Injected as AWS_REGION env var on the backend service."
+  description = "AWS region. Injected as AWS_REGION env var and used for CloudWatch Logs config."
   type        = string
 }
+

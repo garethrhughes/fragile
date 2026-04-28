@@ -6,10 +6,11 @@
 
 ## Context
 
-The frontend is a Next.js 16 application deployed as a container on AWS App Runner.
-Next.js supports several output modes that determine what files the production server
-requires at runtime. The choice of output mode directly affects image size, cold-start
-time, and the Dockerfile structure needed for a minimal production image.
+The frontend is a Next.js 16 application deployed as a container on ECS Fargate
+(ADR-0043). Next.js supports several output modes that determine what files the
+production server requires at runtime. The choice of output mode directly affects
+image size, cold-start time, and the Dockerfile structure needed for a minimal
+production image.
 
 ---
 
@@ -67,7 +68,7 @@ and any future server-side data fetching.
 
 - Production image size is substantially reduced compared to shipping full `node_modules`.
 - The runner stage Dockerfile is clean: three `COPY` instructions cover everything needed.
-- App Runner's health checker can reach `GET /api/health` via the Next.js server.
+- The ECS Fargate ALB health checker can reach `GET /api/health` via the Next.js server.
 
 ### Negative / Trade-offs
 

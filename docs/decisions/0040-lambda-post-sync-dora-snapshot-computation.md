@@ -7,7 +7,7 @@
 
 ## Context
 
-The DORA metrics page was crashing the App Runner backend process with OOM kills
+The DORA metrics page was crashing the ECS Fargate backend task with OOM kills
 (exit 137). The root cause was identified as two independently memory-intensive
 workloads co-located in the same Node.js heap:
 
@@ -24,8 +24,8 @@ proposal 0036) was evaluated and ruled out: they run immediately after sync at t
 of heap occupancy, compounding rather than relieving pressure.
 
 The secondary failure mode was the 60-second CloudFront origin timeout (ADR-0033):
-on-the-fly DORA computation across 8 quarters exceeds this limit on the first request
-after App Runner scales from zero.
+on-the-fly DORA computation across 8 quarters exceeds this limit when the ECS task
+is under load or has not yet warmed its connection pool.
 
 Prior mitigations (instance sizing, column projection, sequential sprint-report
 generation) had been applied to saturation. A structural separation of the two workloads
@@ -42,12 +42,12 @@ The shortlist after the OOM constraint was established:
 
 After each board's sync completes and data is persisted to RDS, invoke a small Lambda
 function asynchronously (`InvocationType: Event`). The Lambda reads from RDS, computes
-DORA metrics for 8 quarters, and writes to a `dora_snapshots` table. App Runner API
+DORA metrics for 8 quarters, and writes to a `dora_snapshots` table. ECS Fargate API
 endpoints read the pre-computed snapshot rather than computing on demand.
 
 Memory separation guarantee: by the time the Lambda reads RDS, `syncBoard()` has
-returned and App Runner has GC'd the Jira response buffers and entity arrays for that
-board. The sync and computation working sets never coexist in any single process.
+returned and the ECS Fargate task has GC'd the Jira response buffers and entity arrays
+for that board. The sync and computation working sets never coexist in any single process.
 
 ### Option D — Step Functions state machine (deferred)
 
@@ -87,8 +87,8 @@ Key design elements:
   SDK. `USE_LAMBDA === 'true'` is opt-in; all other values fall through to
   `InProcessSnapshotService` for local development.
 - **`InProcessSnapshotService`** — NestJS injectable that performs identical computation
-  within the App Runner process. Used when `USE_LAMBDA` is not `'true'` (local dev,
-  CI). Accepts OOM risk in local contexts where memory is not constrained.
+  within the ECS Fargate task process. Used when `USE_LAMBDA` is not `'true'` (local
+  dev, CI). Accepts OOM risk in local contexts where memory is not constrained.
 - **Board config invalidation** — `PUT /api/boards/:boardId/config` also invokes the
   Lambda (or in-process service) to refresh the snapshot immediately after a config change.
 - **`DoraSnapshotReadService`** — reads from `dora_snapshots` and computes staleness
@@ -102,9 +102,9 @@ Key design elements:
 
 ## Rationale
 
-Lambda is the lightest-weight out-of-process compute available. The Lambda handler is
+The Lambda is the lightest-weight out-of-process compute available. The Lambda handler is
 short-lived (10–30 seconds), reads only from RDS, and requires no Jira API credentials.
-The App Runner process's Jira response buffers are fully GC'd before the Lambda runs,
+The ECS Fargate task's Jira response buffers are fully GC'd before the Lambda runs,
 guaranteeing the two peak working sets never overlap in any process.
 
 `InvocationType: Event` makes the invocation fire-and-forget. Invocation failure is
@@ -124,8 +124,8 @@ produces the Lambda artifact from the same source.
 
 - DORA metric API endpoints are now `O(1)` reads from a single JSONB row regardless of
   board size or history depth. The CloudFront 60-second timeout is no longer a risk.
-- App Runner's peak heap during sync is bounded by the sync working set for a single board
-  only; metric computation never coexists with sync data in the same heap.
+- The ECS Fargate task's peak heap during sync is bounded by the sync working set for a
+  single board only; metric computation never coexists with sync data in the same heap.
 - `InProcessSnapshotService` preserves full local dev parity without requiring Lambda or
   LocalStack.
 
@@ -145,15 +145,15 @@ produces the Lambda artifact from the same source.
 ### Risks
 
 - If sync itself (not just metric computation) causes OOM as board count grows, Option D
-  (Step Functions) will be required. Monitor App Runner `container_memory_utilization`
+  (Step Functions) will be required. Monitor ECS Fargate task `MemoryUtilization`
   during sync with no concurrent DORA requests to establish the sync-only memory baseline.
 
 ---
 
 ## Related Decisions
 
-- [ADR-0032](0032-nodejs-heap-cap-and-apprunner-instance-sizing.md) — Instance sizing
-  and heap cap context
+- [ADR-0032](0032-nodejs-heap-cap-and-apprunner-instance-sizing.md) — ECS Fargate task
+  sizing and heap cap context
 - [ADR-0033](0033-cloudfront-as-public-entry-point.md) — CloudFront 60-second timeout
   that makes on-the-fly computation untenable
 - [ADR-0036](0036-sync-endpoint-fire-and-forget-http-202.md) — Fire-and-forget principle

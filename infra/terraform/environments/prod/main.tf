@@ -1,5 +1,5 @@
 # ============================================================
-# Fragile — Production environment
+# Fragile -- Production environment
 # ============================================================
 # Run from this directory:
 #
@@ -9,12 +9,12 @@
 # ============================================================
 
 terraform {
-  required_version = ">= 1.7"
+  required_version = ">= 1.10"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.50"
+      version = "~> 6.0"
     }
   }
 }
@@ -92,7 +92,7 @@ module "rds" {
   db_password_secret_arn = module.secrets.db_password_secret_arn
 }
 
-# ── Lambda — DORA snapshot computation ─────────────────────
+# ── Lambda -- DORA snapshot computation ─────────────────────
 module "lambda" {
   source      = "../../modules/lambda"
   environment = var.environment
@@ -105,20 +105,26 @@ module "lambda" {
   db_password_secret_arn = module.secrets.db_password_secret_arn
 }
 
-# ── App Runner ─────────────────────────────────────────────
-module "apprunner" {
-  source      = "../../modules/apprunner"
+# ── ECS ───────────────────────────────────────────────────
+module "ecs" {
+  source      = "../../modules/ecs"
   environment = var.environment
 
   backend_image_uri  = "${module.ecr.backend_repository_url}:${var.backend_image_tag}"
   frontend_image_uri = "${module.ecr.frontend_repository_url}:${var.frontend_image_tag}"
 
-  backend_execution_role_arn  = module.iam.apprunner_build_role_arn
-  frontend_execution_role_arn = module.iam.apprunner_build_role_arn
-  backend_instance_role_arn   = module.iam.backend_task_role_arn
-  frontend_instance_role_arn  = module.iam.frontend_task_role_arn
+  ecs_execution_role_arn = module.iam.ecs_execution_role_arn
+  backend_task_role_arn  = module.iam.backend_task_role_arn
+  frontend_task_role_arn = module.iam.frontend_task_role_arn
 
-  vpc_connector_arn = module.network.vpc_connector_arn
+  private_subnet_ids         = module.network.private_subnet_ids
+  vpc_id                     = module.network.vpc_id
+  backend_security_group_id  = module.network.ecs_backend_security_group_id
+  frontend_security_group_id = module.network.ecs_frontend_security_group_id
+
+  # TG ARNs for the ALB rules that CloudFront routes to.
+  backend_target_group_arn  = var.backend_target_group_arn
+  frontend_target_group_arn = var.frontend_target_group_arn
 
   rds_endpoint = module.rds.db_endpoint
 
@@ -132,11 +138,10 @@ module "apprunner" {
   jira_user_email_param_arn = module.secrets.jira_user_email_param_arn
   timezone_param_arn        = module.secrets.timezone_param_arn
 
-  backend_url  = "https://${var.backend_subdomain}.${var.domain_name}"
   frontend_url = "https://${var.frontend_subdomain}.${var.domain_name}"
 }
 
-# ── WAF — CloudFront-scoped IP allowlist ───────────────────
+# ── WAF -- CloudFront-scoped IP allowlist ───────────────────
 # Must be deployed in us-east-1 (CloudFront WAF requirement).
 # The WebACL ARN is attached directly to the CloudFront distributions.
 module "waf" {
@@ -149,9 +154,9 @@ module "waf" {
   allowed_cidrs = var.allowed_cidrs
 }
 
-# ── CDN — ACM + CloudFront ─────────────────────────────────
+# ── CDN -- ACM + CloudFront ─────────────────────────────────
 # Issues ACM certificates in us-east-1, validates them via Route 53,
-# and creates CloudFront distributions in front of both App Runner services.
+# and creates CloudFront distributions in front of both ECS Express services.
 module "cdn" {
   source = "../../modules/cdn"
 
@@ -164,8 +169,8 @@ module "cdn" {
   frontend_subdomain = var.frontend_subdomain
   backend_subdomain  = var.backend_subdomain
 
-  backend_service_url  = module.apprunner.backend_service_url
-  frontend_service_url = module.apprunner.frontend_service_url
+  alb_dns_name = module.ecs.alb_dns_name
+  alb_arn      = module.ecs.alb_arn
 
   web_acl_arn = module.waf.web_acl_arn
 }
@@ -181,4 +186,31 @@ module "dns" {
   backend_cloudfront_domain  = module.cdn.backend_cloudfront_domain
   frontend_cloudfront_domain = module.cdn.frontend_cloudfront_domain
   cloudfront_hosted_zone_id  = module.cdn.cloudfront_hosted_zone_id
+}
+
+# ── ECS task SG ingress rules ──────────────────────────────
+# Defined here (not in module.network) to avoid a dependency cycle:
+#   module.network SGs → module.ecs services → module.ecs ALB data → ALB SG
+#                    ↖──────────────────────────────────────────────────────┘
+# By placing these rules in the root module, both the SG IDs (network) and
+# the ALB SG ID (ecs) are available with no cycle.
+
+resource "aws_security_group_rule" "ecs_backend_ingress_alb" {
+  type                     = "ingress"
+  description              = "Allow inbound traffic from Express-managed ALB on backend container port"
+  from_port                = 3001
+  to_port                  = 3001
+  protocol                 = "tcp"
+  source_security_group_id = module.ecs.alb_security_group_id
+  security_group_id        = module.network.ecs_backend_security_group_id
+}
+
+resource "aws_security_group_rule" "ecs_frontend_ingress_alb" {
+  type                     = "ingress"
+  description              = "Allow inbound traffic from Express-managed ALB on frontend container port"
+  from_port                = 3000
+  to_port                  = 3000
+  protocol                 = "tcp"
+  source_security_group_id = module.ecs.alb_security_group_id
+  security_group_id        = module.network.ecs_frontend_security_group_id
 }
