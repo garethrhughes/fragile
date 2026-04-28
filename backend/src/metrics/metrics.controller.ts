@@ -90,10 +90,19 @@ export class MetricsController {
     res.setHeader('X-Snapshot-Age', String(snapshot.ageSeconds));
 
     const payload = snapshot.payload as TrendResponse;
-    if (query.limit !== undefined && Array.isArray(payload)) {
-      return payload.slice(0, query.limit) as TrendResponse;
+    if (!Array.isArray(payload)) return payload;
+
+    // Sort ascending by period.start so chart order is deterministic regardless
+    // of how the snapshot was written (newest-first, oldest-first, or arbitrary).
+    const sorted = [...payload].sort(
+      (a, b) => new Date(a.period.start).getTime() - new Date(b.period.start).getTime(),
+    );
+
+    // Take the most recent N periods (tail of the sorted array).
+    if (query.limit !== undefined) {
+      return sorted.slice(-query.limit) as TrendResponse;
     }
-    return payload;
+    return sorted as TrendResponse;
   }
 
   @ApiOperation({
