@@ -83,9 +83,10 @@ If **nothing** is found, skip this step silently and proceed.
 
 Tell the user:
 
-> "I'll onboard this existing codebase by reading it first. There are **8 phases**
+> "I'll onboard this existing codebase by reading it first. There are **9 phases**
 > covering project identity, application stack, infrastructure-as-code, repository
-> structure, conventions, observability, security/compliance, and domain.
+> structure, conventions, observability, security/compliance, domain, and Jira
+> integration (optional).
 >
 > For each phase I'll investigate the repo, then show you a summary table of what
 > I found with a confidence level and the file/line evidence. You confirm,
@@ -400,6 +401,44 @@ Ask:
 
 ---
 
+## Phase 9 — Jira Integration (optional)
+
+### Investigate
+
+- Look for Jira references in the repo: `.github/workflows/*.yml` steps calling the
+  Jira API, `JIRA_HOST` / `JIRA_EMAIL` / `JIRA_API_TOKEN` in `.env.example` or CI
+  environment variables, any existing `opencode.json` with a `jira` MCP entry.
+
+### Present
+
+If Jira evidence is found, show it to the user and ask to confirm the details.
+
+If no evidence is found, ask:
+
+> "Does your team use Jira to track work? The `jira-feature` skill can load ticket
+> details automatically if I know your instance and project keys.
+>
+> - **Jira instance URL** — e.g. `https://your-org.atlassian.net`
+> - **Default project key(s)** — e.g. `PLAT, API, FE`
+> - **Where are acceptance criteria written?** — e.g. a custom field named
+>   'Acceptance Criteria', or a `## Acceptance Criteria` heading in the Description
+>
+> Reply **skip** if your team doesn't use Jira or you'd rather configure this later."
+
+If the user skips, record `jira: none` and move on.
+
+If details are provided or confirmed, show:
+
+```
+Jira instance:         {url}
+Default project keys:  {keys}
+AC location:           {custom field / heading / pattern}
+```
+
+Ask: "Does this look right?"
+
+---
+
 ## Output Generation
 
 Once all phases are complete, produce the following outputs.
@@ -520,6 +559,17 @@ tagging contract, pinned versions, secrets-by-reference, IAM scoping, CI-only ap
 
 *(omit if none)*
 {for each integration discovered in code or supplied by user: name, purpose, auth method, rate limits}
+
+---
+
+## Jira Integration
+
+*(omit if jira: none)*
+| Field | Value |
+|---|---|
+| Instance URL | {jira instance url} |
+| Default project keys | {keys} |
+| Acceptance criteria location | {custom field / heading / pattern} |
 
 ---
 

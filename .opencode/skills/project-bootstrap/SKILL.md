@@ -27,9 +27,9 @@ into their project.
 Before asking any questions, tell the user:
 
 > "I'll ask you a series of short questions to bootstrap your project's CLAUDE.md
-> and skill context block. There are **8 phases** covering project identity, application
+> and skill context block. There are **9 phases** covering project identity, application
 > stack, infrastructure-as-code, repository structure, conventions, observability,
-> security/compliance, and domain. Answer as much or as little as you know — I'll mark
+> security/compliance, domain, and Jira integration (optional). Answer as much or as little as you know — I'll mark
 > anything unknown as `[TBD]` and you can fill it in later.
 >
 > For most questions I'll show a **default** in bold brackets — this is the approach
@@ -215,6 +215,34 @@ Ask:
 
 ---
 
+## Phase 9 — Jira Integration (optional)
+
+Ask as a single message, making it clear this phase is optional:
+
+> "Does your team use Jira to track work? If so, I can configure the `jira-feature`
+> skill so it knows your instance and project keys out of the box.
+>
+> - **Jira instance URL** — e.g. `https://your-org.atlassian.net`
+> - **Default project key(s)** — e.g. `PLAT, API, FE` (the keys you use most often)
+> - **Where are acceptance criteria written?** — e.g. a custom field named
+>   'Acceptance Criteria', or a `## Acceptance Criteria` heading in the Description
+>
+> Reply **skip** if your team doesn't use Jira or you'd rather configure this later."
+
+If the user skips, record `jira: none` and move on.
+
+If the user provides details, confirm back:
+
+```
+Jira instance:         {url}
+Default project keys:  {keys}
+AC location:           {custom field name / heading / pattern}
+```
+
+Ask: "Does this look right?"
+
+---
+
 ## Output Generation
 
 Once all phases are complete, produce the following two outputs.
@@ -337,6 +365,17 @@ Include the settled decisions table populated with any decisions from Phase 8.
 
 *(omit if none)*
 {for each integration: name, purpose, auth method, rate limits}
+
+---
+
+## Jira Integration
+
+*(omit if jira: none)*
+| Field | Value |
+|---|---|
+| Instance URL | {jira instance url} |
+| Default project keys | {keys} |
+| Acceptance criteria location | {custom field / heading / pattern} |
 
 ---
 
