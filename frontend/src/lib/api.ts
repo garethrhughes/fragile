@@ -29,6 +29,7 @@ export interface BoardConfig {
   dataStartDate: string | null;
   inProgressStatusNames: string[];
   cancelledStatusNames: string[];
+  roadmapLinkTypes: string[];
 }
 
 export interface SprintAccuracy {
@@ -497,6 +498,7 @@ export interface SprintDetailIssue {
   issueType: string
   addedMidSprint: boolean
   roadmapStatus: 'in-scope' | 'linked' | 'none'
+  roadmapLinkSource: 'epic' | 'direct' | null
   isIncident: boolean
   isFailure: boolean
   completedInSprint: boolean

@@ -1,9 +1,9 @@
 # 0041 — Roadmap Coverage via Jira Issue Links
 
 **Date:** 2026-04-30
-**Status:** Draft
+**Status:** Accepted
 **Author:** Architect Agent
-**Related ADRs:** To be created upon acceptance
+**Related ADRs:** [ADR 0044](../decisions/0044-roadmap-coverage-via-direct-issue-links.md)
 **Related proposals:** [0012](0012-roadmap-coverage-semantics.md), [0020](0020-in-flight-roadmap-coverage.md)
 
 ---
@@ -140,6 +140,26 @@ roadmapCoverage(issue):
   deliveredOnTime = resolvedAt ≠ null AND resolvedAt ≤ endOfDay(targetDate)
   isInFlight      = sprint.active AND targetDate ≥ today AND !done AND !cancelled
   return (deliveredOnTime || isInFlight) ? 'in-scope' : 'linked'
+
+roadmapLinkSource(issue):
+  epicLinked   → 'epic'
+  directLinked → 'direct'
+  neither      → null
+```
+
+### Classification flow
+
+```mermaid
+flowchart LR
+    A[Sprint issue] --> B{epicKey in epicIdeaMap?}
+    B -- yes --> C[linkSource = 'epic']
+    B -- no --> D{Direct link in jira_issue_links\nmatches roadmapLinkTypes\nAND target in jpd_ideas?}
+    D -- yes --> E[linkSource = 'direct']
+    D -- no --> F[roadmapStatus = 'none'\nroadmapLinkSource = null]
+    C --> G{Condition A or B?}
+    E --> G
+    G -- yes --> H[roadmapStatus = 'in-scope']
+    G -- no --> I[roadmapStatus = 'linked']
 ```
 
 ### New `BoardConfig` field: `roadmapLinkTypes`
@@ -250,21 +270,38 @@ for (const issue of filteredIssues) {
 `JiraIssueLink` is already injected (used for `failureLinkTypes` AND-gate). The direct
 link query can share the same `issueLinkRepo`.
 
+A new field `roadmapLinkSource: 'epic' | 'direct' | null` is added to `SprintDetailIssue`
+to distinguish how the roadmap connection was determined:
+
+- `'epic'` — the issue's epic key was found in `epicIdeaMap` (existing path)
+- `'direct'` — the issue was linked directly to a JPD idea via `jira_issue_links`
+- `null` — no roadmap connection (`roadmapStatus === 'none'`)
+
 ```typescript
+// Updated SprintDetailIssue interface:
+export interface SprintDetailIssue {
+  // ... existing fields unchanged ...
+  roadmapStatus: 'in-scope' | 'linked' | 'none';
+  roadmapLinkSource: 'epic' | 'direct' | null;  // NEW — how the roadmap connection was made
+  // ...
+}
+
 // In getDetail — after building epicIdeaMap (around line 464):
 const roadmapLinkTypes = boardConfig?.roadmapLinkTypes ?? [];
 const directLinkIdeaMap = roadmapLinkTypes.length > 0
   ? await this.buildDirectLinkIdeaMap(finalKeys, jpdIdeas, roadmapLinkTypes)
   : new Map<string, { targetDate: Date }>();
 
-// In the per-issue annotation loop — extend roadmapStatus:
+// In the per-issue annotation loop:
 let roadmapStatus: 'in-scope' | 'linked' | 'none' = 'none';
+let roadmapLinkSource: 'epic' | 'direct' | null = null;
 if (!cancelledStatusNames.includes(issue.status)) {
-  const epicIdea  = issue.epicKey ? epicIdeaMap.get(issue.epicKey) : undefined;
+  const epicIdea   = issue.epicKey ? epicIdeaMap.get(issue.epicKey) : undefined;
   const directIdea = directLinkIdeaMap.get(issue.key);
   const idea = epicIdea ?? directIdea;
   if (idea) {
-    // ... Conditions A and B unchanged ...
+    roadmapLinkSource = epicIdea ? 'epic' : 'direct';
+    // ... Conditions A and B unchanged, set roadmapStatus as before ...
   }
 }
 ```
@@ -322,6 +359,30 @@ export async function buildDirectLinkIdeaMap(
 path. A new input in the Settings UI (e.g. a tag-input for link type strings) should
 be added to the board configuration section, labelled "Roadmap link types (direct
 coverage)". This is additive to the existing settings form.
+
+### Sprint detail — visual connection-type indicator
+
+The sprint detail issues table currently renders `roadmapStatus` as a colour-coded
+checkmark with no distinction between connection methods. The new `roadmapLinkSource`
+field enables this distinction in the UI.
+
+The Roadmap column renderer in
+`frontend/src/app/sprint/[boardId]/[sprintId]/page.tsx` will be updated to show a
+different Lucide icon (with a tooltip) depending on the link source:
+
+| `roadmapStatus` | `roadmapLinkSource` | Icon | Colour | Tooltip |
+|---|---|---|---|---|
+| `'in-scope'` | `'epic'` | `GitBranch` | green-600 | "On roadmap via epic" |
+| `'in-scope'` | `'direct'` | `Link2` | green-600 | "On roadmap via direct link" |
+| `'linked'` | `'epic'` | `GitBranch` | amber-500 | "Linked to roadmap via epic (not in window)" |
+| `'linked'` | `'direct'` | `Link2` | amber-500 | "Linked to roadmap via direct link (not in window)" |
+| `'none'` | `null` | — | muted | — |
+
+The tooltip is implemented as a `title` attribute on the wrapping `<span>` — consistent
+with the current pattern and without introducing a new tooltip library dependency.
+
+The `roadmapLinkSource` field is added to `SprintDetailIssue` in `frontend/src/lib/api.ts`
+to match the updated backend interface.
 
 ### `GapsService.getGaps()` — `noEpic` unchanged
 
@@ -407,10 +468,12 @@ so per-board `roadmapLinkTypes` in `BoardConfig` is the correct granularity.
 | `JpdIdea` entity | None | No schema change. Used as read-only source of truth for roadmap item identity. |
 | `BoardConfig` entity | Additive | New `roadmapLinkTypes: string[]` field. Existing rows default to `[]` (feature disabled). |
 | `RoadmapService` | New injection + helper call | Inject `JiraIssueLink` repo; call `buildDirectLinkIdeaMap` from `calculateSprintAccuracy`. |
-| `SprintDetailService` | New helper call only | `JiraIssueLink` repo already injected. Add `buildDirectLinkIdeaMap` call in `getDetail`. |
+| `SprintDetailService` | New helper call + new field | `JiraIssueLink` repo already injected. Add `buildDirectLinkIdeaMap` call; add `roadmapLinkSource` to response shape. |
 | `GapsService` | None | `noEpic` logic unchanged. An issue with a direct roadmap link but no epic still appears in the no-epic gaps list — correct by design. |
-| API contract | Additive | `roadmapStatus` union type unchanged (`'in-scope' \| 'linked' \| 'none'`). `RoadmapSprintAccuracy` shape unchanged. New `roadmapLinkTypes` field in `GET /api/boards/:id/config` response. |
-| Frontend | Settings UI addition | New tag-input for `roadmapLinkTypes` in the board settings form. No changes to roadmap page, sprint detail page, or `api.ts` coverage types. |
+| API contract | Additive | `roadmapStatus` union type unchanged. New `roadmapLinkSource: 'epic' \| 'direct' \| null` field on `SprintDetailIssue`. New `roadmapLinkTypes` field in board config response. |
+| Frontend — sprint detail | Updated column renderer | Roadmap column uses Lucide icons (`GitBranch` for epic, `Link2` for direct) with `title` tooltip. |
+| Frontend — `api.ts` | Additive | `SprintDetailIssue.roadmapLinkSource` field added. |
+| Frontend — Settings UI | Additive | New tag-input for `roadmapLinkTypes` in board settings form. |
 | Shared utility | New file | `backend/src/metrics/roadmap-link-utils.ts` — pure function, no DI, testable in isolation. |
 | Sync | None | `persistIssueLinks` already stores all link types. No sync changes needed. |
 | Tests | New unit tests | See Acceptance Criteria. |
@@ -512,6 +575,11 @@ so per-board `roadmapLinkTypes` in `BoardConfig` is the correct granularity.
       `roadmapStatus = 'none'`.
 - [ ] `roadmapLinkedCount` in the sprint summary correctly counts issues with a direct
       roadmap link as `roadmapStatus !== 'none'`.
+- [ ] An epic-linked issue returns `roadmapLinkSource = 'epic'` when `roadmapStatus !== 'none'`.
+- [ ] A directly-linked issue (no epic) returns `roadmapLinkSource = 'direct'` when `roadmapStatus !== 'none'`.
+- [ ] An issue with `roadmapStatus = 'none'` returns `roadmapLinkSource = null`.
+- [ ] An issue with both an epic link and a direct link returns `roadmapLinkSource = 'epic'`
+      (epic takes priority).
 
 ### `GapsService`
 
@@ -531,6 +599,19 @@ so per-board `roadmapLinkTypes` in `BoardConfig` is the correct granularity.
       (tag-input or comma-separated text field) that reads and writes
       `boardConfig.roadmapLinkTypes`.
 - [ ] The input documents that values are matched case-insensitively.
+
+### Frontend — sprint detail visual indicator
+
+- [ ] `SprintDetailIssue` in `frontend/src/lib/api.ts` includes
+      `roadmapLinkSource: 'epic' | 'direct' | null`.
+- [ ] The Roadmap column in the sprint detail issues table renders a `GitBranch` Lucide icon
+      when `roadmapLinkSource = 'epic'` (green for `'in-scope'`, amber for `'linked'`).
+- [ ] The Roadmap column renders a `Link2` Lucide icon when `roadmapLinkSource = 'direct'`
+      (green for `'in-scope'`, amber for `'linked'`).
+- [ ] Each icon has a descriptive `title` tooltip distinguishing the connection method
+      (e.g. "On roadmap via epic" vs "On roadmap via direct link").
+- [ ] `roadmapStatus = 'none'` continues to render as a dash with no icon.
+- [ ] No changes to `roadmapLinkedCount` StatChip or any other summary component.
 
 ### No regressions
 

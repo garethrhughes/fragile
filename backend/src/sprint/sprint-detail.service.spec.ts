@@ -2161,4 +2161,179 @@ describe('SprintDetailService', () => {
       expect(result.issues[0].isFailure).toBe(true);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // roadmapLinkSource — direct-link coverage path (ADR 0044)
+  // -------------------------------------------------------------------------
+
+  describe('roadmapLinkSource — direct Jira issue link to JPD idea', () => {
+    /** Shared setup: single Story with no epic, linked directly to a JPD idea. */
+    function setupDirectLinkDetail(opts: {
+      roadmapLinkTypes: string[];
+      linkTypeName: string;
+      targetDate: Date;
+      sprintState?: string;
+      resolvedAt?: Date;
+    }) {
+      const sprint: JiraSprint = {
+        ...SPRINT,
+        state: opts.sprintState ?? 'active',
+      } as JiraSprint;
+
+      sprintRepo.findOne.mockResolvedValue(sprint);
+
+      const issue = {
+        key: 'ACC-99',
+        summary: 'Story',
+        boardId: 'ACC',
+        status: opts.resolvedAt ? 'Done' : 'In Progress',
+        issueType: 'Story',
+        epicKey: null,
+        points: 3,
+        fixVersion: null,
+        sprintId: 'sprint-1',
+        labels: [],
+        createdAt: new Date('2026-01-05T00:00:00Z'),
+        updatedAt: new Date('2026-01-05T00:00:00Z'),
+      } as unknown as JiraIssue;
+
+      issueRepo.find.mockResolvedValue([issue]);
+
+      const boardConfig = {
+        boardId: 'ACC',
+        boardType: 'scrum',
+        doneStatusNames: ['Done', 'Closed', 'Released'],
+        cancelledStatusNames: ["Cancelled", "Won't Do"],
+        inProgressStatusNames: ['In Progress'],
+        failureIssueTypes: [],
+        failureLabels: [],
+        failureLinkTypes: [],
+        incidentIssueTypes: [],
+        incidentLabels: [],
+        roadmapLinkTypes: opts.roadmapLinkTypes,
+      } as unknown as BoardConfig;
+      boardConfigRepo.findOne.mockResolvedValue(boardConfig);
+
+      roadmapConfigRepo.find.mockResolvedValue([{ jpdKey: 'PT' } as RoadmapConfig]);
+
+      const idea = Object.assign(new JpdIdea(), {
+        key: 'PT-389',
+        jpdKey: 'PT',
+        targetDate: opts.targetDate,
+        startDate: new Date('2026-01-01'),
+        deliveryIssueKeys: [],
+        summary: 'Roadmap item',
+      });
+      jpdIdeaRepo.find.mockResolvedValue([idea]);
+
+      const statusChanelogs = opts.resolvedAt
+        ? [{ issueKey: 'ACC-99', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: opts.resolvedAt }]
+        : [];
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb(statusChanelogs));
+
+      const linkRows = opts.roadmapLinkTypes.length > 0
+        && opts.roadmapLinkTypes.map((t) => t.toLowerCase()).includes(opts.linkTypeName.toLowerCase())
+        ? [{ sourceIssueKey: 'ACC-99', targetIssueKey: 'PT-389', linkTypeName: opts.linkTypeName }]
+        : [];
+
+      issueLinkRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue(linkRows),
+      });
+    }
+
+    it('sets roadmapLinkSource="direct" and roadmapStatus="in-scope" when issue resolved before targetDate', async () => {
+      const targetDate = new Date('2026-06-30T00:00:00Z');
+      const resolvedAt = new Date('2026-06-15T10:00:00Z');
+      setupDirectLinkDetail({ roadmapLinkTypes: ['is connected to'], linkTypeName: 'is connected to', targetDate, resolvedAt });
+
+      const result = await service.getDetail('ACC', 'sprint-1');
+
+      expect(result.issues[0].roadmapLinkSource).toBe('direct');
+      expect(result.issues[0].roadmapStatus).toBe('in-scope');
+    });
+
+    it('sets roadmapLinkSource="direct" and roadmapStatus="linked" when issue not resolved and sprint closed', async () => {
+      const pastTarget = new Date('2026-01-10T00:00:00Z');
+      setupDirectLinkDetail({
+        roadmapLinkTypes: ['is connected to'],
+        linkTypeName: 'is connected to',
+        targetDate: pastTarget,
+        sprintState: 'closed',
+      });
+
+      const result = await service.getDetail('ACC', 'sprint-1');
+
+      expect(result.issues[0].roadmapLinkSource).toBe('direct');
+      expect(result.issues[0].roadmapStatus).toBe('linked');
+    });
+
+    it('sets roadmapLinkSource=null and roadmapStatus="none" when roadmapLinkTypes is empty', async () => {
+      const targetDate = new Date('2026-06-30T00:00:00Z');
+      setupDirectLinkDetail({ roadmapLinkTypes: [], linkTypeName: 'is connected to', targetDate });
+
+      const result = await service.getDetail('ACC', 'sprint-1');
+
+      expect(result.issues[0].roadmapLinkSource).toBeNull();
+      expect(result.issues[0].roadmapStatus).toBe('none');
+      expect(issueLinkRepo.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('sets roadmapLinkSource="epic" (not "direct") when issue has both an epic link and a direct link', async () => {
+      const epicTargetDate = new Date('2026-03-31T00:00:00Z');
+      const resolvedAt = new Date('2026-03-20T10:00:00Z'); // before epicTargetDate → in-scope via epic
+
+      const sprint: JiraSprint = { ...SPRINT, state: 'closed' } as JiraSprint;
+      sprintRepo.findOne.mockResolvedValue(sprint);
+
+      const issue = {
+        key: 'ACC-99', summary: 'Story', boardId: 'ACC',
+        status: 'Done', issueType: 'Story', epicKey: 'ACC-EPIC-1',
+        points: 3, fixVersion: null, sprintId: 'sprint-1',
+        labels: [], createdAt: new Date('2026-01-05T00:00:00Z'), updatedAt: new Date('2026-01-05T00:00:00Z'),
+      } as unknown as JiraIssue;
+      issueRepo.find.mockResolvedValue([issue]);
+
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardId: 'ACC', boardType: 'scrum',
+        doneStatusNames: ['Done', 'Closed', 'Released'],
+        cancelledStatusNames: ["Cancelled", "Won't Do"],
+        inProgressStatusNames: ['In Progress'],
+        failureIssueTypes: [], failureLabels: [], failureLinkTypes: [],
+        incidentIssueTypes: [], incidentLabels: [],
+        roadmapLinkTypes: ['is connected to'],
+      } as unknown as BoardConfig);
+
+      roadmapConfigRepo.find.mockResolvedValue([{ jpdKey: 'PT' } as RoadmapConfig]);
+
+      const epicIdea = Object.assign(new JpdIdea(), {
+        key: 'PT-100', jpdKey: 'PT', targetDate: epicTargetDate,
+        startDate: new Date('2026-01-01'), deliveryIssueKeys: ['ACC-EPIC-1'], summary: 'Epic idea',
+      });
+      const directIdea = Object.assign(new JpdIdea(), {
+        key: 'PT-200', jpdKey: 'PT', targetDate: new Date('2026-09-30'),
+        startDate: new Date('2026-01-01'), deliveryIssueKeys: [], summary: 'Direct idea',
+      });
+      jpdIdeaRepo.find.mockResolvedValue([epicIdea, directIdea]);
+
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb([
+        { issueKey: 'ACC-99', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: resolvedAt },
+      ]));
+      issueLinkRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          { sourceIssueKey: 'ACC-99', targetIssueKey: 'PT-200', linkTypeName: 'is connected to' },
+        ]),
+      });
+
+      const result = await service.getDetail('ACC', 'sprint-1');
+
+      expect(result.issues[0].roadmapLinkSource).toBe('epic');
+      expect(result.issues[0].roadmapStatus).toBe('in-scope');
+    });
+  });
 });

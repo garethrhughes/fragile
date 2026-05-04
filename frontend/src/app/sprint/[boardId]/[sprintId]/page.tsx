@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { Loader2, ExternalLink, AlertCircle, BarChart2, ChevronDown, ChevronRight } from 'lucide-react'
+import { Loader2, ExternalLink, AlertCircle, BarChart2, ChevronDown, ChevronRight, GitBranch, Link2 } from 'lucide-react'
 import {
   getSprintDetail,
   getUnplannedDone,
@@ -422,14 +422,22 @@ function buildColumns(): Column<SprintDetailIssue>[] {
       key: 'roadmapStatus',
       label: 'Roadmap',
       sortable: true,
-      render: (value) =>
-        value === 'in-scope' ? (
-          <span className="font-semibold text-green-600">✓</span>
-        ) : value === 'linked' ? (
-          <span className="font-semibold text-amber-500">✓</span>
-        ) : (
-          <span className="text-muted">—</span>
-        ),
+      render: (value, row) => {
+        if (value === 'in-scope' || value === 'linked') {
+          const isInScope = value === 'in-scope'
+          const isDirect = row?.roadmapLinkSource === 'direct'
+          const Icon = isDirect ? Link2 : GitBranch
+          const tooltip = isDirect
+            ? isInScope ? 'On roadmap (direct link) — on track' : 'On roadmap (direct link) — at risk'
+            : isInScope ? 'On roadmap (via epic) — on track' : 'On roadmap (via epic) — at risk'
+          return (
+            <span title={tooltip} className={`inline-flex items-center gap-1 font-semibold ${isInScope ? 'text-green-600' : 'text-amber-500'}`}>
+              <Icon size={14} />
+            </span>
+          )
+        }
+        return <span className="text-muted">—</span>
+      },
     },
     {
       key: 'isIncident',

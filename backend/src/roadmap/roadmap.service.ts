@@ -16,12 +16,14 @@ import {
   JiraIssue,
   JiraChangelog,
   JpdIdea,
+  JiraIssueLink,
   RoadmapConfig,
   BoardConfig,
 } from '../database/entities/index.js';
 import { SyncService } from '../sync/sync.service.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { dateParts, midnightInTz } from '../metrics/tz-utils.js';
+import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
 
 export interface RoadmapSprintAccuracy {
   sprintId: string;
@@ -64,6 +66,8 @@ export class RoadmapService {
     private readonly changelogRepo: Repository<JiraChangelog>,
     @InjectRepository(JpdIdea)
     private readonly jpdIdeaRepo: Repository<JpdIdea>,
+    @InjectRepository(JiraIssueLink)
+    private readonly issueLinkRepo: Repository<JiraIssueLink>,
     @InjectRepository(RoadmapConfig)
     private readonly roadmapConfigRepo: Repository<RoadmapConfig>,
     @InjectRepository(BoardConfig)
@@ -296,6 +300,7 @@ export class RoadmapService {
       const sprintIssues = issueListBySprint.get(sprint.id) ?? [];
       const inProgressStatusNames: string[] =
         boardConfig?.inProgressStatusNames ?? ['In Progress'];
+      const roadmapLinkTypes: string[] = boardConfig?.roadmapLinkTypes ?? [];
       const accuracy = await this.calculateSprintAccuracy(
         sprint,
         sprintIssues,
@@ -303,6 +308,7 @@ export class RoadmapService {
         cancelledStatusNames,
         allIdeasForSprints,
         inProgressStatusNames,
+        roadmapLinkTypes,
       );
       results.push(accuracy);
     }
@@ -852,6 +858,7 @@ export class RoadmapService {
     cancelledStatusNames: string[],
     allIdeas: JpdIdea[],
     _inProgressStatusNames: string[], // accepted for API clarity; not used in core predicate
+    roadmapLinkTypes: string[] = [],
   ): Promise<RoadmapSprintAccuracy> {
     // Exclude Epics, Sub-tasks, and cancelled issues from all coverage metrics.
     // Cancelled issues are removed from both numerator and denominator so they
@@ -893,6 +900,16 @@ export class RoadmapService {
       }
     }
 
+    // Direct-link coverage map (Condition C — ADR 0044):
+    // When roadmapLinkTypes is non-empty, bulk-query jira_issue_links for
+    // issues directly linked to a known JPD idea via a qualifying link type.
+    const directLinkIdeaMap = await buildDirectLinkIdeaMap(
+      this.issueLinkRepo,
+      allFilteredKeys,
+      allIdeas,
+      roadmapLinkTypes,
+    );
+
     // Per-issue delivery classification:
     //   in-scope (green)  = linked to an idea AND:
     //                         (a) resolvedAt <= idea.targetDate (end-of-day), OR
@@ -906,8 +923,10 @@ export class RoadmapService {
     today.setUTCHours(0, 0, 0, 0); // start of today UTC
 
     for (const issue of filteredIssues) {
-      if (issue.epicKey === null) continue;
-      const idea = epicIdeaMap.get(issue.epicKey);
+      // Epic link takes priority; fall back to direct link (ADR 0044)
+      const epicIdea = issue.epicKey ? epicIdeaMap.get(issue.epicKey) : undefined;
+      const directIdea = directLinkIdeaMap.get(issue.key);
+      const idea = epicIdea ?? directIdea;
       if (!idea) continue;
 
       const targetEndOfDay = this.endOfDayUTC(idea.targetDate);

@@ -18,6 +18,7 @@ import {
 } from '../database/entities/index.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
+import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
 
 // ---------------------------------------------------------------------------
 // Response interfaces (exported for use by the controller and frontend types)
@@ -54,16 +55,24 @@ export interface SprintDetailIssue {
 
   /**
    * Roadmap link status for the issue:
-   *  - 'in-scope'  : issue's epic is linked to a JPD idea AND either:
+   *  - 'in-scope'  : issue is linked (via epic or direct link) to a JPD idea AND either:
    *                    (a) completed on or before idea.targetDate, OR
    *                    (b) in-flight (not done/cancelled) in an active sprint
    *                        with idea.targetDate not yet lapsed (green tick)
-   *  - 'linked'    : issue's epic is linked to a JPD idea but neither (a) nor (b)
+   *  - 'linked'    : issue is linked to a JPD idea but neither (a) nor (b)
    *                  applies (amber tick — on roadmap but overdue or not started in
    *                  a closed sprint)
    *  - 'none'      : no roadmap link, or issue is cancelled (dash)
    */
   roadmapStatus: 'in-scope' | 'linked' | 'none';
+
+  /**
+   * Source of the roadmap link:
+   *  - 'epic'   : linked via the issue's epic key → JPD deliveryIssueKeys
+   *  - 'direct' : linked via a direct Jira issue link (roadmapLinkTypes, ADR 0044)
+   *  - null     : no roadmap link (roadmapStatus === 'none')
+   */
+  roadmapLinkSource: 'epic' | 'direct' | null;
 
   /**
    * True if the issue matches incidentIssueTypes OR incidentLabels
@@ -462,14 +471,15 @@ export class SprintDetailService {
     // -----------------------------------------------------------------------
     const roadmapConfigs = await this.roadmapConfigRepo.find();
     const epicIdeaMap = new Map<string, { targetDate: Date }>();
+    let jpdIdeasAll: JpdIdea[] = [];
 
     if (roadmapConfigs.length > 0) {
       const jpdKeys = roadmapConfigs.map((c) => c.jpdKey);
-      const jpdIdeas = await this.jpdIdeaRepo.find({
+      jpdIdeasAll = await this.jpdIdeaRepo.find({
         where: { jpdKey: In(jpdKeys) },
       });
 
-      for (const idea of jpdIdeas) {
+      for (const idea of jpdIdeasAll) {
         if (!idea.deliveryIssueKeys || idea.targetDate === null) continue;
         for (const epicKey of idea.deliveryIssueKeys.filter(Boolean)) {
           const existing = epicIdeaMap.get(epicKey);
@@ -479,6 +489,16 @@ export class SprintDetailService {
         }
       }
     }
+
+    // Direct-link coverage map (ADR 0044).
+    // Only queried when roadmapLinkTypes is non-empty (feature flag).
+    const roadmapLinkTypes: string[] = boardConfig?.roadmapLinkTypes ?? [];
+    const directLinkIdeaMap = await buildDirectLinkIdeaMap(
+      this.issueLinkRepo,
+      finalKeys,
+      jpdIdeasAll,
+      roadmapLinkTypes,
+    );
 
     // -----------------------------------------------------------------------
     // Derive per-issue annotations
@@ -571,9 +591,14 @@ export class SprintDetailService {
       // Cancelled issues always get 'none' so they don't inflate the amber count
       // and are excluded from coverage metrics in calculateSprintAccuracy.
       let roadmapStatus: 'in-scope' | 'linked' | 'none' = 'none';
-      if (!cancelledStatusNames.includes(issue.status) && issue.epicKey !== null) {
-        const idea = epicIdeaMap.get(issue.epicKey);
+      let roadmapLinkSource: 'epic' | 'direct' | null = null;
+      if (!cancelledStatusNames.includes(issue.status)) {
+        // Epic link takes priority; direct link is fallback (ADR 0044)
+        const epicIdea = issue.epicKey !== null ? epicIdeaMap.get(issue.epicKey) : undefined;
+        const directIdea = directLinkIdeaMap.get(issue.key);
+        const idea = epicIdea ?? directIdea;
         if (idea) {
+          roadmapLinkSource = epicIdea ? 'epic' : 'direct';
           const targetEndOfDay = new Date(idea.targetDate.getTime());
           targetEndOfDay.setUTCHours(23, 59, 59, 999);
 
@@ -619,6 +644,7 @@ export class SprintDetailService {
         issueType: issue.issueType,
         addedMidSprint,
         roadmapStatus,
+        roadmapLinkSource,
         isIncident,
         isFailure,
         completedInSprint,

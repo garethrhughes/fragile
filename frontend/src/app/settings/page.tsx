@@ -559,11 +559,30 @@ export default function SettingsPage() {
                   label="Recovery Status Names"
                   value={config.recoveryStatusNames}
                   onChange={(v) => updateField('recoveryStatusNames', v)}
-                />
+                 />
                 <CsvField
                   label="Incident Labels"
                   value={config.incidentLabels}
                   onChange={(v) => updateField('incidentLabels', v)}
+                />
+              </div>
+            </div>
+
+            {/* ── Roadmap Coverage ──────────────────────────────────────── */}
+            <div className="rounded-lg border border-border bg-background p-4 space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Roadmap Coverage</h3>
+                <p className="mt-0.5 text-xs text-muted">
+                  Jira issue link type names (e.g. <code className="font-mono">is connected to</code>) that signal a direct
+                  roadmap link from a ticket to a JPD idea. Leave empty to disable direct-link coverage (issues must be
+                  linked via their epic). Comma-separated.
+                </p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <CsvField
+                  label="Roadmap Link Types"
+                  value={config.roadmapLinkTypes ?? []}
+                  onChange={(v) => updateField('roadmapLinkTypes', v)}
                 />
               </div>
             </div>
