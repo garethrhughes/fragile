@@ -587,6 +587,55 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            {/* ── Support Detection ─────────────────────────────────────── */}
+            <div className="rounded-lg border border-border bg-background p-4 space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Support Detection</h3>
+                <p className="mt-0.5 text-xs text-muted">
+                  Criteria used to identify support tickets in the Support report. A ticket matches
+                  if it carries any of the configured labels <strong>or</strong> has a link of the
+                  configured type pointing to the triage board key prefix.
+                </p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <CsvField
+                  label="Support Labels"
+                  value={config.supportLabels ?? []}
+                  onChange={(v) => updateField('supportLabels', v)}
+                />
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium">Support Link Type</label>
+                  <input
+                    type="text"
+                    value={config.supportLinkType ?? ''}
+                    onChange={(e) =>
+                      updateField('supportLinkType', e.target.value.trim() || null)
+                    }
+                    placeholder="e.g. clones"
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm placeholder:text-muted focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                  <p className="mt-1 text-xs text-muted">
+                    Jira link type name used to link tickets to the triage board.
+                  </p>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium">Triage Board Key</label>
+                  <input
+                    type="text"
+                    value={config.triageBoardKey ?? ''}
+                    onChange={(e) =>
+                      updateField('triageBoardKey', e.target.value.trim().toUpperCase() || null)
+                    }
+                    placeholder="e.g. TTB"
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm placeholder:text-muted focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                  <p className="mt-1 text-xs text-muted">
+                    Project key prefix of the triage board (e.g. <code className="font-mono">TTB</code> matches <code className="font-mono">TTB-42</code>).
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <div className="flex justify-end pt-2">
               <button
                 type="button"

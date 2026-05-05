@@ -7,9 +7,11 @@ import {
   getSupportTickets,
   getSupportSummary,
   getQuarters,
+  getSprints,
   type SupportResult,
   type SupportSummary,
   type QuarterInfo,
+  type SprintInfo,
 } from '@/lib/api'
 import { classifyCycleTime } from '@/lib/cycle-time-bands'
 import { useBoardsStore } from '@/store/boards-store'
@@ -49,6 +51,8 @@ const SUPPORT_HELP: MetricDefinition[] = [
 // Types
 // ---------------------------------------------------------------------------
 
+type PeriodMode = 'quarter' | 'sprint'
+
 type PageState =
   | { status: 'idle' }
   | { status: 'loading' }
@@ -72,6 +76,7 @@ function SupportPageInner() {
   const replaceParams = useReplaceParams()
 
   const allBoards = useBoardsStore((s) => s.allBoards)
+  const kanbanBoardIds = useBoardsStore((s) => s.kanbanBoardIds)
   const boardsStatus = useBoardsStore((s) => s.status)
 
   const boardsParam = searchParams.get('boards')
@@ -79,14 +84,35 @@ function SupportPageInner() {
     () => (boardsParam ? boardsParam.split(',').filter(Boolean) : allBoards),
     [boardsParam, allBoards],
   )
+
+  const periodMode = (searchParams.get('mode') ?? 'quarter') as PeriodMode
   const selectedQuarter = searchParams.get('quarter') ?? ''
+  const selectedSprintId = searchParams.get('sprintId') ?? ''
 
   const [quarters, setQuarters] = useState<QuarterInfo[]>([])
+  const [sprints, setSprints] = useState<SprintInfo[]>([])
   const [pageState, setPageState] = useState<PageState>({ status: 'idle' })
   const [retryKey, setRetryKey] = useState(0)
   const [tablePage, setTablePage] = useState(0)
 
   const reload = useCallback(() => setRetryKey((k) => k + 1), [])
+
+  // Sprint mode is only valid when exactly 1 non-Kanban board is selected.
+  const sprintModeAvailable = useMemo(
+    () =>
+      boardsStatus === 'ready' &&
+      selectedBoards.length === 1 &&
+      !kanbanBoardIds.has(selectedBoards[0] ?? ''),
+    [selectedBoards, kanbanBoardIds, boardsStatus],
+  )
+
+  // Auto-reset to quarter when sprint mode becomes unavailable.
+  useEffect(() => {
+    if (boardsStatus !== 'ready') return
+    if (!sprintModeAvailable && periodMode === 'sprint') {
+      replaceParams({ mode: 'quarter' })
+    }
+  }, [boardsStatus, sprintModeAvailable, periodMode, replaceParams])
 
   // Load quarters once on mount
   useEffect(() => {
@@ -95,7 +121,7 @@ function SupportPageInner() {
       .then((res) => {
         if (!cancelled) {
           setQuarters(res)
-          if (res.length > 0 && !searchParams.get('quarter')) {
+          if (res.length > 0 && !searchParams.get('quarter') && periodMode !== 'sprint') {
             replaceParams({ quarter: res[0].quarter })
           }
         }
@@ -105,15 +131,44 @@ function SupportPageInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Load sprints when a single board is selected in sprint mode
+  useEffect(() => {
+    if (!sprintModeAvailable || selectedBoards.length !== 1) {
+      setSprints([])
+      return
+    }
+    let cancelled = false
+    getSprints(selectedBoards[0]!)
+      .then((res) => {
+        if (!cancelled) {
+          setSprints(res)
+          // Auto-select most-recent sprint if none in URL
+          if (res.length > 0 && !searchParams.get('sprintId')) {
+            replaceParams({ sprintId: String(res[res.length - 1]!.id) })
+          }
+        }
+      })
+      .catch(() => { if (!cancelled) setSprints([]) })
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sprintModeAvailable, selectedBoards[0]])
+
   // Main data fetch
   useEffect(() => {
     let cancelled = false
-    if (boardsStatus !== 'ready' || !selectedQuarter) return
+    if (boardsStatus !== 'ready') return
+
+    const inSprintMode = periodMode === 'sprint'
+    const hasPeriod = inSprintMode ? Boolean(selectedSprintId) : Boolean(selectedQuarter)
+    if (!hasPeriod) return
+
     setPageState({ status: 'loading' })
 
     const params = {
       boardId: selectedBoards.join(',') || undefined,
-      quarter: selectedQuarter,
+      ...(inSprintMode
+        ? { sprintId: selectedSprintId }
+        : { quarter: selectedQuarter }),
     }
 
     const run = async (): Promise<void> => {
@@ -136,7 +191,7 @@ function SupportPageInner() {
     }
     void run()
     return () => { cancelled = true }
-  }, [selectedBoards, selectedQuarter, boardsStatus, retryKey])
+  }, [selectedBoards, selectedQuarter, selectedSprintId, periodMode, boardsStatus, retryKey])
 
   // All tickets across boards for the table
   const allTickets = useMemo(() => {
@@ -155,6 +210,14 @@ function SupportPageInner() {
     (boardId: string) => replaceParams({ boards: boardId === (selectedBoards[0] ?? '') && selectedBoards.length === 1 ? '' : boardId }),
     [replaceParams, selectedBoards],
   )
+
+  // Human-readable period label for empty states
+  const periodLabel = periodMode === 'sprint'
+    ? (sprints.find((s) => String(s.id) === selectedSprintId)?.name ?? selectedSprintId)
+    : selectedQuarter
+  const boardLabel = selectedBoards.length < allBoards.length
+    ? ` for board ${selectedBoards.join(', ')}`
+    : ''
 
   return (
     <div className="space-y-6">
@@ -195,20 +258,78 @@ function SupportPageInner() {
           </div>
         </div>
 
-        {/* Quarter selector */}
+        {/* Period type toggle */}
         <div>
-          <label className="mb-2 block text-sm font-medium text-muted">Quarter</label>
-          <div className="inline-flex flex-wrap gap-1">
-            {quarters.map((q) => (
-              <ToggleChip
-                key={q.quarter}
-                label={q.quarter}
-                selected={selectedQuarter === q.quarter}
-                onClick={() => replaceParams({ quarter: q.quarter })}
-              />
-            ))}
+          <label className="mb-2 block text-sm font-medium text-muted">Period</label>
+          <div className="inline-flex rounded-lg border border-border">
+            <button
+              type="button"
+              onClick={() => replaceParams({ mode: 'quarter' })}
+              className={`rounded-l-lg px-4 py-2 text-sm font-medium transition-colors ${
+                periodMode === 'quarter'
+                  ? 'bg-interactive-selected-bg text-interactive-selected-fg'
+                  : 'text-muted hover:bg-interactive-hover-bg'
+              }`}
+            >
+              Quarter
+            </button>
+            <button
+              type="button"
+              disabled={!sprintModeAvailable}
+              onClick={() => {
+                if (sprintModeAvailable) replaceParams({ mode: 'sprint' })
+              }}
+              className={`rounded-r-lg px-4 py-2 text-sm font-medium transition-colors ${
+                periodMode === 'sprint'
+                  ? 'bg-interactive-selected-bg text-interactive-selected-fg'
+                  : !sprintModeAvailable
+                    ? 'cursor-not-allowed text-muted opacity-40'
+                    : 'text-muted hover:bg-interactive-hover-bg'
+              }`}
+            >
+              Sprint
+            </button>
           </div>
+          {!sprintModeAvailable && boardsStatus === 'ready' && (
+            <p className="mt-1 text-xs text-muted">
+              Select a single Scrum board to enable sprint view.
+            </p>
+          )}
         </div>
+
+        {/* Quarter selector */}
+        {periodMode === 'quarter' && (
+          <div>
+            <label className="mb-2 block text-sm font-medium text-muted">Quarter</label>
+            <div className="inline-flex flex-wrap gap-1">
+              {quarters.map((q) => (
+                <ToggleChip
+                  key={q.quarter}
+                  label={q.quarter}
+                  selected={selectedQuarter === q.quarter}
+                  onClick={() => replaceParams({ quarter: q.quarter })}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Sprint selector */}
+        {periodMode === 'sprint' && sprints.length > 0 && (
+          <div>
+            <label className="mb-2 block text-sm font-medium text-muted">Sprint</label>
+            <div className="inline-flex flex-wrap gap-1">
+              {sprints.map((s) => (
+                <ToggleChip
+                  key={s.id}
+                  label={s.name}
+                  selected={selectedSprintId === String(s.id)}
+                  onClick={() => replaceParams({ sprintId: String(s.id) })}
+                />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Skeleton */}
@@ -245,7 +366,7 @@ function SupportPageInner() {
 
       {/* Idle */}
       {pageState.status === 'idle' && (
-        <EmptyState title="No data" message="Select a quarter to view support metrics." />
+        <EmptyState title="No data" message="Select a period to view support metrics." />
       )}
 
       {/* Ready */}
@@ -254,7 +375,7 @@ function SupportPageInner() {
           {pageState.summary.totalIssues === 0 ? (
             <EmptyState
               title="No completed issues"
-              message={`No issues completed in ${selectedQuarter}${selectedBoards.length < allBoards.length ? ` for board ${selectedBoards.join(', ')}` : ''}.`}
+              message={`No issues completed in ${periodLabel}${boardLabel}.`}
             />
           ) : (
             <>
