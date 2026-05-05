@@ -29,6 +29,7 @@ export interface BoardConfig {
   dataStartDate: string | null;
   inProgressStatusNames: string[];
   cancelledStatusNames: string[];
+  roadmapLinkTypes: string[];
 }
 
 export interface SprintAccuracy {
@@ -363,11 +364,13 @@ export interface WeekDetailIssue {
   assignedWeek: string
   completedInWeek: boolean
   addedMidWeek: boolean
-  linkedToRoadmap: boolean
+  roadmapStatus: 'in-scope' | 'linked' | 'none'
+  roadmapLinkSource: 'direct' | 'epic' | null
   isIncident: boolean
   isFailure: boolean
   labels: string[]
   boardEntryDate: string
+  cycleTimeDays: number | null
   jiraUrl: string
 }
 
@@ -375,9 +378,12 @@ export interface WeekDetailSummary {
   totalIssues: number
   completedIssues: number
   addedMidWeek: number
-  linkedToRoadmap: number
+  roadmapLinkedCount: number
+  incidentCount: number
+  failureCount: number
   totalPoints: number
   completedPoints: number
+  medianCycleTimeDays: number | null
 }
 
 export interface WeekDetailBoardConfig {
@@ -495,12 +501,13 @@ export interface SprintDetailIssue {
   summary: string
   currentStatus: string
   issueType: string
+  priority: string | null
   addedMidSprint: boolean
   roadmapStatus: 'in-scope' | 'linked' | 'none'
+  roadmapLinkSource: 'epic' | 'direct' | null
   isIncident: boolean
   isFailure: boolean
   completedInSprint: boolean
-  leadTimeDays: number | null
   resolvedAt: string | null
   jiraUrl: string
 }
@@ -513,7 +520,6 @@ export interface SprintDetailSummary {
   roadmapLinkedCount: number
   incidentCount: number
   failureCount: number
-  medianLeadTimeDays: number | null
 }
 
 export interface SprintDetailResponse {
@@ -550,6 +556,8 @@ export interface QuarterDetailIssue {
   completedInQuarter: boolean
   addedMidQuarter: boolean
   linkedToRoadmap: boolean
+  roadmapStatus: 'in-scope' | 'linked' | 'none'
+  roadmapLinkSource: 'direct' | 'epic' | null
   isIncident: boolean
   isFailure: boolean
   labels: string[]
@@ -561,7 +569,9 @@ export interface QuarterDetailSummary {
   totalIssues: number
   completedIssues: number
   addedMidQuarter: number
-  linkedToRoadmap: number
+  roadmapLinkedCount: number
+  incidentCount: number
+  failureCount: number
   totalPoints: number
   completedPoints: number
 }

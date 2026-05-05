@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { Loader2, ExternalLink, AlertCircle, BarChart2, ChevronDown, ChevronRight } from 'lucide-react'
+import { Loader2, ExternalLink, AlertCircle, BarChart2, ChevronDown, ChevronRight, GitBranch, Link2 } from 'lucide-react'
 import {
   getSprintDetail,
   getUnplannedDone,
@@ -17,6 +17,7 @@ import { DataTable, type Column } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
 import { MetricHelp, type MetricDefinition } from '@/components/ui/metric-help'
+import { PriorityBadge } from '@/components/ui/priority-badge'
 
 // ---------------------------------------------------------------------------
 // Metric help definitions
@@ -131,6 +132,12 @@ function buildNeverBoardedColumns(boardId: string, sprintId: string): Column<Unp
       sortable: true,
     },
     {
+      key: 'priority',
+      label: 'Priority',
+      sortable: true,
+      render: (value) => <PriorityBadge priority={value as string | null} />,
+    },
+    {
       key: 'resolvedStatus',
       label: 'Resolved Status',
       sortable: true,
@@ -155,28 +162,6 @@ function buildNeverBoardedColumns(boardId: string, sprintId: string): Column<Unp
       render: (value) =>
         value !== null && value !== undefined ? (
           <span>{String(value)}</span>
-        ) : (
-          <span className="text-muted">—</span>
-        ),
-    },
-    {
-      key: 'epicKey',
-      label: 'Epic',
-      sortable: true,
-      render: (value) =>
-        value ? (
-          <span className="font-mono text-sm">{String(value)}</span>
-        ) : (
-          <span className="text-muted">—</span>
-        ),
-    },
-    {
-      key: 'priority',
-      label: 'Priority',
-      sortable: true,
-      render: (value) =>
-        value ? (
-          <span className="text-sm">{String(value)}</span>
         ) : (
           <span className="text-muted">—</span>
         ),
@@ -393,6 +378,12 @@ function buildColumns(): Column<SprintDetailIssue>[] {
       sortable: true,
     },
     {
+      key: 'priority',
+      label: 'Priority',
+      sortable: true,
+      render: (value) => <PriorityBadge priority={value as string | null} />,
+    },
+    {
       key: 'currentStatus',
       label: 'Status',
       sortable: true,
@@ -406,8 +397,19 @@ function buildColumns(): Column<SprintDetailIssue>[] {
       },
     },
     {
+      key: 'completedInSprint',
+      label: 'Completed',
+      sortable: true,
+      render: (value) =>
+        value ? (
+          <span className="font-semibold text-green-600">✓</span>
+        ) : (
+          <span className="text-muted">—</span>
+        ),
+    },
+    {
       key: 'addedMidSprint',
-      label: 'Scope creep',
+      label: 'Mid-sprint',
       sortable: true,
       render: (value) =>
         value ? (
@@ -422,14 +424,22 @@ function buildColumns(): Column<SprintDetailIssue>[] {
       key: 'roadmapStatus',
       label: 'Roadmap',
       sortable: true,
-      render: (value) =>
-        value === 'in-scope' ? (
-          <span className="font-semibold text-green-600">✓</span>
-        ) : value === 'linked' ? (
-          <span className="font-semibold text-amber-500">✓</span>
-        ) : (
-          <span className="text-muted">—</span>
-        ),
+      render: (value, row) => {
+        if (value === 'in-scope' || value === 'linked') {
+          const isInScope = value === 'in-scope'
+          const isDirect = row.roadmapLinkSource === 'direct'
+          const Icon = isDirect ? Link2 : GitBranch
+          const tooltip = isDirect
+            ? isInScope ? 'On roadmap (direct link)' : 'Linked to roadmap (direct link) — not in window'
+            : isInScope ? 'On roadmap (via epic)' : 'Linked to roadmap (via epic) — not in window'
+          return (
+            <span title={tooltip} aria-label={tooltip} className={`inline-flex items-center gap-1 font-semibold ${isInScope ? 'text-green-600' : 'text-amber-500'}`}>
+              <Icon size={14} aria-hidden="true" />
+            </span>
+          )
+        }
+        return <span className="text-muted">—</span>
+      },
     },
     {
       key: 'isIncident',
@@ -457,35 +467,14 @@ function buildColumns(): Column<SprintDetailIssue>[] {
           <span className="text-muted">—</span>
         ),
     },
-    {
-      key: 'completedInSprint',
-      label: 'Done in sprint',
-      sortable: true,
-      render: (value) =>
-        value ? (
-          <span className="font-semibold text-green-600">✓</span>
-        ) : (
-          <span className="text-muted">—</span>
-        ),
-    },
-    {
-      key: 'leadTimeDays',
-      label: 'Lead time',
-      sortable: true,
-      render: (value) =>
-        value !== null && value !== undefined ? (
-          <span>{Number(value).toFixed(1)}d</span>
-        ) : (
-          <span className="text-muted">—</span>
-        ),
-    },
   ]
 }
 
 function rowClassName(row: SprintDetailIssue): string {
-  if (row.isIncident || row.isFailure) return 'bg-red-50'
-  if (row.addedMidSprint) return 'bg-amber-50'
-  if (row.completedInSprint) return 'bg-green-50/30'
+  if (row.isIncident) return 'bg-red-50 dark:bg-red-950/20'
+  if (row.isFailure) return 'bg-orange-50 dark:bg-orange-950/20'
+  if (row.addedMidSprint) return 'bg-amber-50 dark:bg-amber-950/20'
+  if (row.completedInSprint) return 'bg-green-50/30 dark:bg-green-950/10'
   return ''
 }
 
@@ -525,6 +514,11 @@ export default function SprintDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [notFound, setNotFound] = useState(false)
   const [isKanban, setIsKanban] = useState(false)
+  const [retryKey, setRetryKey] = useState(0)
+
+  const reload = useCallback(() => {
+    setRetryKey((k) => k + 1)
+  }, [])
 
   useEffect(() => {
     if (!boardId || !sprintId) return
@@ -560,7 +554,7 @@ export default function SprintDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [boardId, sprintId])
+  }, [boardId, sprintId, retryKey])
 
   const columns = useMemo(() => buildColumns(), [])
 
@@ -619,22 +613,7 @@ export default function SprintDetailPage() {
           </div>
           <button
             type="button"
-            onClick={() => {
-              setError(null)
-              setLoading(true)
-              getSprintDetail(boardId, sprintId)
-                .then((res) => setData(res))
-                .catch((err: unknown) => {
-                  if (err instanceof ApiError) {
-                    if (err.status === 404) setNotFound(true)
-                    else if (err.status === 400) setIsKanban(true)
-                    else setError(err.message)
-                  } else {
-                    setError(err instanceof Error ? err.message : 'Failed to load sprint detail')
-                  }
-                })
-                .finally(() => setLoading(false))
-            }}
+            onClick={reload}
             className="mt-2 text-sm font-medium text-red-700 underline hover:no-underline"
           >
             Try again
@@ -701,7 +680,7 @@ export default function SprintDetailPage() {
       </div>
 
       {/* Summary bar */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
         <StatChip label="Committed" value={summary.committedCount} />
         <StatChip
           label="Added mid-sprint"
@@ -728,14 +707,6 @@ export default function SprintDetailPage() {
           label="Failures"
           value={summary.failureCount}
           highlight={summary.failureCount > 0 ? 'danger' : 'none'}
-        />
-        <StatChip
-          label="Median lead time"
-          value={
-            summary.medianLeadTimeDays !== null
-              ? `${summary.medianLeadTimeDays.toFixed(1)}d`
-              : '—'
-          }
         />
       </div>
 

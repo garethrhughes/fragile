@@ -12,143 +12,32 @@ Reusable OpenCode skills for structured software development with AI agents.
 | [infosec](infosec/SKILL.md) | Read-only security and compliance audit (ISO27001-aligned by default). Audits encryption, access control, audit logging, secrets, IAM, network exposure, and supply chain. Returns APPROVED / REQUIRES CHANGES / APPROVED WITH EXCEPTION |
 | [decision-log](decision-log/SKILL.md) | Captures and maintains architectural decisions (ADRs) in `docs/decisions/` with a running index |
 | [create-feature](create-feature/SKILL.md) | Full feature development cycle: proposal → implementation → review → infosec sign-off → decision logging → PR |
-| [project-bootstrap](project-bootstrap/SKILL.md) | Interactive bootstrap that asks a structured set of questions (app stack, IaC, observability, security/compliance, domain) and produces a complete CLAUDE.md and Project Context block |
-| [project-onboard](project-onboard/SKILL.md) | Interactive onboarding for an existing codebase — investigates the repo to fill in CLAUDE.md and the Project Context block, asking the user only what the code can't answer |
-| [mcp-setup](mcp-setup/SKILL.md) | Interactive MCP server setup — presents a menu of free MCP servers (Context7, GitHub, Filesystem, Fetch, Memory, Semgrep) and writes the chosen config into `opencode.json`; invoked automatically by `project-bootstrap` and `project-onboard` |
+| [jira-feature](jira-feature/SKILL.md) | Loads a Jira ticket by URL or issue key, extracts description and acceptance criteria, and drives the full create-feature cycle with that ticket as the requirement source |
+| [project-bootstrap](project-bootstrap/SKILL.md) | Interactive bootstrap for new projects — asks structured questions covering app stack, IaC, observability, security/compliance, domain, and Jira integration, then produces a complete `CLAUDE.md` and populates the Project Context block in all local skills |
+| [project-onboard](project-onboard/SKILL.md) | Interactive onboarding for an existing codebase — investigates the repo to fill in `CLAUDE.md` and the Project Context block, asking the user only what the code can't answer; covers the same 9 phases as project-bootstrap including optional Jira integration |
+| [mcp-setup](mcp-setup/SKILL.md) | Interactive MCP server setup — presents a menu of available MCP servers (Context7, GitHub, Filesystem, Memory, Squirrel Notes, Semgrep, Jira) and writes the chosen config into `opencode.json`; invoked automatically by `project-bootstrap` and `project-onboard` |
 | [create-skill](create-skill/SKILL.md) | Interactively creates or updates OpenCode skills — asks structured questions about purpose, workflow, MCP tools, and output format, then produces a complete SKILL.md and updates the README |
 | [update-skills](update-skills/SKILL.md) | Pulls the latest skills from the upstream repository and reports what changed (added, removed, modified) with a unified diff per skill |
 
 ## Setup
 
-Choose the approach that fits your workflow.
-
----
-
-### Option A — Global symlink (use skills across all projects)
-
-Skills live in one place and are available in every OpenCode session.
-
-**1. Clone the repository**
+Install the skills into your project with a single command run from your project root:
 
 ```bash
-git clone https://github.com/garethrhughes/skills ~/Documents/skills
-```
-
-**2. Symlink into OpenCode's global skills directory**
-
-```bash
-ln -s ~/Documents/skills ~/.config/opencode/skills
-```
-
-**3. Verify**
-
-Open OpenCode and check that the skills appear in the skill tool. You should see `architect`,
-`developer`, `reviewer`, `infosec`, `decision-log`, `create-feature`, `project-bootstrap`,
-`project-onboard`, `mcp-setup`, and `update-skills` listed.
-
----
-
-### Option B — Copy into a project (version skills alongside your code)
-
-Skills live inside the project repository. Useful when you want to customise skills
-per-project, pin them at a specific version, or commit them to the repo so the whole team
-shares the same definitions.
-
-**1. Copy the skills directory into your project**
-
-```bash
-# From your project root
-cp -r ~/Documents/skills .opencode/skills
-
-# Or, if you haven't cloned the repo yet:
 git clone --depth 1 https://github.com/garethrhughes/skills .opencode/skills && rm -rf .opencode/skills/.git
 ```
 
-**2. Verify**
+This copies the skills into `.opencode/skills/` inside your project, where OpenCode picks
+them up automatically. The `.git` directory is removed so the skills folder is a plain
+directory tracked by your own repository rather than a nested git repo.
 
-Open OpenCode from your project root and check that the skills appear in the skill tool.
+Once installed, configure the skills for your project by running either:
 
-**3. Configure the project context**
+- **New project:** `Use the project-bootstrap skill to set up this project.`
+- **Existing project:** `Use the project-onboard skill to onboard this existing codebase.`
 
-Run the `project-bootstrap` skill to interactively configure your project. It will ask
-structured questions about your stack, infrastructure, observability, and security posture,
-then produce a complete `CLAUDE.md` and populate the `## Project Context` block in each
-skill automatically.
-
-```
-Use the project-bootstrap skill to set up this project.
-```
-
-Alternatively, edit the `## Project Context` section of each SKILL.md directly — changes
-are tracked in version control alongside your code.
-
----
-
-### Option C — Both (global base, project-level overrides)
-
-Keep the global symlink for the base skills and copy only the skills you want to override
-into `.opencode/skills/` in a specific project. OpenCode will prefer the project-local
-version when both exist.
-
-## Use with other AI tools
-
-The skill content is plain Markdown and works anywhere you can provide a system prompt.
-Two helper scripts handle the mechanical parts of installing skills as agents for other tools.
-
----
-
-### GitHub Copilot agents
-
-Symlinks each skill into `.github/agents/` in your project root. Copilot picks up `.md`
-files in that directory as custom agents automatically.
-
-```bash
-# From your project root
-bash path/to/skills/scripts/install-copilot-agents.sh
-
-# Or if skills are global:
-bash ~/.config/opencode/skills/scripts/install-copilot-agents.sh
-```
-
-Re-run whenever skills change — symlinks always point at the latest content.
-
-> **Note:** The `compatibility: opencode` and `permission:` frontmatter blocks are
-> ignored by Copilot. The `infosec` skill's read-only intent is advisory; Copilot has
-> no runtime enforcement equivalent.
-
----
-
-### Claude Code subagents
-
-Generates a `.claude/agents/<skill-name>.md` file for each skill. Unlike the Copilot
-script, this one transforms the content rather than symlinking, because Claude Code uses
-different frontmatter fields (`tools`, `description`) and some skills need tool
-restrictions baked in (e.g. `infosec` is restricted to read-only tools).
-
-```bash
-# From your project root
-bash path/to/skills/scripts/install-claude-agents.sh
-
-# Or if skills are global:
-bash ~/.config/opencode/skills/scripts/install-claude-agents.sh
-```
-
-Re-run whenever skills change to regenerate the agent files from the latest skill content.
-
-The script applies these tool restrictions automatically:
-
-| Agent | Tools |
-|---|---|
-| `infosec` | `Read, Grep, Glob, WebFetch` — read-only, never edits |
-| `reviewer` | `Read, Grep, Glob, Bash` |
-| `architect` | `Read, Grep, Glob, Write, Edit, WebFetch` |
-| `decision-log` | `Read, Grep, Glob, Write, Edit` |
-| `developer`, `create-feature`, `project-bootstrap` | All tools |
-
-Commit `.claude/agents/` to version control so your whole team shares the same agents.
-Claude Code loads them automatically at session start.
-
----
+Both skills will interview you (or read your codebase), produce a `CLAUDE.md`, populate
+the `## Project Context` block in every skill, and guide you through MCP server setup.
 
 ## Usage
 
@@ -179,6 +68,10 @@ Use the create-feature skill to walk through the full feature cycle for this tas
 ```
 
 ```
+Use the jira-feature skill with PROJ-123.
+```
+
+```
 Use the project-bootstrap skill to set up this project.
 ```
 
@@ -187,15 +80,38 @@ Use the project-onboard skill to onboard this existing codebase.
 ```
 
 ```
+Use the mcp-setup skill to configure MCP servers for this project.
+```
+
+```
+Use the create-skill skill to create a new skill called my-skill.
+```
+
+```
 Use the update-skills skill to update all skills to the latest version.
+```
+
+### jira-feature
+
+Run this skill when you want to start a feature cycle directly from a Jira ticket. Provide
+a ticket URL or issue key and the skill will fetch the summary, description, and acceptance
+criteria, confirm the brief with you, then hand off to `create-feature` to run the full
+proposal → implementation → review → infosec → decision log → PR cycle.
+
+If the Jira MCP server is not configured, the skill will invoke `mcp-setup` automatically
+to add it before proceeding.
+
+```
+Use the jira-feature skill with PROJ-123.
 ```
 
 ### mcp-setup
 
-Run this skill to configure MCP servers for a project. It presents a menu of six free options
-and writes the selected config into `opencode.json` in the project root, merging with any
-existing config. It is invoked automatically as part of `project-bootstrap` and `project-onboard`,
-but can also be run standalone at any time to add or reconfigure servers.
+Run this skill to configure MCP servers for a project. It presents a menu of available
+servers (Context7, GitHub, Filesystem, Memory, Squirrel Notes, Semgrep, Jira) and writes
+the selected config into `opencode.json`, merging with any existing config. It is invoked
+automatically as part of `project-bootstrap` and `project-onboard`, but can also be run
+standalone at any time to add or reconfigure servers.
 
 ```
 Use the mcp-setup skill to configure MCP servers for this project.
@@ -203,13 +119,14 @@ Use the mcp-setup skill to configure MCP servers for this project.
 
 ### project-bootstrap
 
-Run this skill once when starting a **new project**. It walks through a structured interview
-covering app stack, infrastructure, observability, security/compliance, and domain decisions.
-Accept the opinionated defaults by saying "yes" or "default" at any phase, or provide your own
-values. At the end it produces:
+Run this skill once when starting a **new project**. It walks through 9 phases covering
+app stack, infrastructure, observability, security/compliance, domain decisions, and
+optional Jira integration. Accept the opinionated defaults by saying "yes" or "default"
+at any phase, or provide your own values. At the end it produces:
 
 - A fully populated `CLAUDE.md` in the project root
 - A `## Project Context` block automatically inserted into each skill in `.opencode/skills/`
+- MCP server config written to `opencode.json` via `mcp-setup`
 
 ```
 Use the project-bootstrap skill to set up this project.
@@ -217,12 +134,15 @@ Use the project-bootstrap skill to set up this project.
 
 ### project-onboard
 
-Run this skill once when **adopting an existing codebase**. Instead of interviewing you from
-scratch, it reads the repo first — package files, config, IaC, CI/CD — and only asks you for
-what the code cannot answer. At the end it produces the same outputs as `project-bootstrap`:
+Run this skill once when **adopting an existing codebase**. Instead of interviewing you
+from scratch, it reads the repo first — package files, config, IaC, CI/CD — and only asks
+for what the code cannot answer. It covers the same 9 phases as `project-bootstrap`,
+including optional Jira integration, and produces the same outputs:
 
 - A fully populated `CLAUDE.md` in the project root
 - A `## Project Context` block automatically inserted into each skill in `.opencode/skills/`
+- MCP server config written to `opencode.json` via `mcp-setup`
+- An **Onboarding Notes** section in `CLAUDE.md` listing gaps between the current code and the standard rules
 
 ```
 Use the project-onboard skill to onboard this existing codebase.
@@ -230,19 +150,17 @@ Use the project-onboard skill to onboard this existing codebase.
 
 ## Customisation
 
-Each skill contains a `## Project Context` section near the top. This section is intentionally
-left as a placeholder — fill it in before use.
+Each skill contains a `## Project Context` section near the top. Running `project-bootstrap`
+or `project-onboard` populates this automatically for every skill in `.opencode/skills/`.
 
-**Recommended approach:** copy the content of your project's `CLAUDE.md` into the `## Project Context`
-section of each skill, or paste it at the start of a conversation with instructions like:
+To update it manually, edit the `## Project Context` section of the relevant SKILL.md
+directly — changes are tracked in version control alongside your code.
 
-> "Here is my project context — treat this as the project context for the skill you are using."
-
-A `CLAUDE.md.template` file is provided in this repository as a starting point for new projects.
-
-> **Note:** in OpenCode, your project's `CLAUDE.md` is already loaded into every conversation automatically — you may not need to repeat the full context in each skill's `## Project Context` section. Instead, focus on any skill-specific overrides or additions.
+> **Note:** in OpenCode, your project's `CLAUDE.md` is already loaded into every
+> conversation automatically. The `## Project Context` section in each skill is for
+> skill-specific overrides or additions beyond what `CLAUDE.md` already provides.
 
 ## CLAUDE.md Template
 
 See [`CLAUDE.md.template`](CLAUDE.md.template) for a generic `CLAUDE.md` structure you can
-copy into any new project and fill in.
+copy into any new project and fill in manually, without running `project-bootstrap`.

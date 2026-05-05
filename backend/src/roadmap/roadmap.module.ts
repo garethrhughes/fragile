@@ -7,6 +7,7 @@ import {
   JiraIssue,
   JiraChangelog,
   JpdIdea,
+  JiraIssueLink,
   RoadmapConfig,
   BoardConfig,
 } from '../database/entities/index.js';
@@ -19,6 +20,7 @@ import { SyncModule } from '../sync/sync.module.js';
       JiraIssue,
       JiraChangelog,
       JpdIdea,
+      JiraIssueLink,
       RoadmapConfig,
       BoardConfig,
     ]),

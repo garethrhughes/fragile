@@ -1,6 +1,6 @@
 ---
 name: mcp-setup
-description: Interactive MCP server setup — presents a menu of available MCP servers (Context7, GitHub, Filesystem, Memory, Squirrel Notes, Semgrep) and writes the chosen config into opencode.json; invoked automatically by project-bootstrap and project-onboard.
+description: Interactive MCP server setup — presents a menu of available MCP servers (Context7, GitHub, Filesystem, Memory, Squirrel Notes, Semgrep, Jira) and writes the chosen config into opencode.json; invoked automatically by project-bootstrap and project-onboard.
 compatibility: opencode
 ---
 
@@ -45,6 +45,7 @@ allow multiple selections:
 | 4 | **Memory** | Persistent knowledge graph across sessions | Free — local only |
 | 5 | **Squirrel Notes** | Read/write your encrypted Squirrel Notes — create, search, append, tag notes from any prompt | Requires a Squirrel Notes account (free tier) and Pro for saved searches |
 | 6 | **Semgrep** | Static analysis and security scanning inline | Free (OSS) — needs `semgrep` CLI installed |
+| 7 | **Jira** | Read Jira issues, search tickets, fetch acceptance criteria — used by the jira-feature skill | Free — needs a Jira API token |
 
 Wait for the user's selection before proceeding.
 
@@ -83,6 +84,20 @@ If not found, tell the user:
 > ```
 >
 > Find your API key at squirrelnotes.app → Settings → API."
+
+**Jira** — ask:
+> "What is your Jira instance URL, email address, and API token?
+>
+> I'll read these from environment variables — add the following to your `~/.zshrc`
+> (or `~/.bashrc`) and restart your terminal:
+>
+> ```sh
+> export JIRA_HOST="https://your-org.atlassian.net"
+> export JIRA_EMAIL="you@example.com"
+> export JIRA_API_TOKEN="your-api-token"
+> ```
+>
+> Generate an API token at: https://id.atlassian.com/manage-profile/security/api-tokens"
 
 For **Filesystem** and **Memory** — no credentials needed.
 
@@ -169,6 +184,20 @@ export SQUIRREL_PASSPHRASE="your-passphrase"
 }
 ```
 
+### Jira
+```json
+"jira": {
+  "type": "local",
+  "command": ["npx", "-y", "mcp-server-jira"],
+  "environment": {
+    "JIRA_HOST": "{env:JIRA_HOST}",
+    "JIRA_EMAIL": "{env:JIRA_EMAIL}",
+    "JIRA_API_TOKEN": "{env:JIRA_API_TOKEN}"
+  },
+  "enabled": true
+}
+```
+
 ---
 
 ## Step 4 — Write opencode.json
@@ -203,6 +232,7 @@ After writing the file, print a confirmation summary:
 > - **Memory** — persistent knowledge graph. Use `remember ...` and `recall ...` in prompts.
 > - **Squirrel Notes** — read/write encrypted notes. Requires `SQUIRREL_API_KEY` and `SQUIRREL_PASSPHRASE` env vars.
 > - **Semgrep** — static analysis. Use `run semgrep` in any prompt to scan for issues.
+> - **Jira** — read Jira issues and tickets. Requires `JIRA_HOST`, `JIRA_EMAIL`, and `JIRA_API_TOKEN` env vars.
 >
 > Commit `opencode.json` to version control so the team shares the same MCP setup."
 

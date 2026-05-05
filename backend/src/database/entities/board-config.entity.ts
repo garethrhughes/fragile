@@ -82,4 +82,19 @@ export class BoardConfig {
    */
   @Column({ type: 'simple-json', nullable: true, default: null })
   boardEntryStatuses!: string[] | null;
+
+  /**
+   * Lower-cased Jira issue link type names (e.g. ["is connected to"]) that,
+   * when found between a sprint issue and a known JPD idea key in
+   * jira_issue_links, qualify the issue as roadmap-linked even without an
+   * epic-level link (Condition C — ADR 0044, Proposal 0041).
+   *
+   * An empty array (the default) disables the direct-link coverage path
+   * entirely — preserving existing behaviour for boards that have not
+   * configured this feature.
+   *
+   * Values are matched case-insensitively against jira_issue_links.linkTypeName.
+   */
+  @Column({ type: 'simple-json', default: '[]' })
+  roadmapLinkTypes!: string[];
 }

@@ -15,6 +15,9 @@ import {
   RoadmapConfig,
 } from '../database/entities/index.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
+import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
+import { dateParts, startOfDayInTz } from '../metrics/tz-utils.js';
+import { WorkingTimeService } from '../metrics/working-time.service.js';
 
 // ---------------------------------------------------------------------------
 // Response interfaces (exported for use by the controller and frontend types)
@@ -51,8 +54,16 @@ export interface WeekDetailIssue {
   /** True if the issue's board-entry date is > 1 day after week start */
   addedMidWeek: boolean;
 
-  /** True if the issue's epicKey is a member of the coveredEpicKeys set */
-  linkedToRoadmap: boolean;
+  /**
+   * Roadmap delivery status:
+   *   in-scope = linked to idea AND delivered on or before targetDate
+   *   linked   = linked to idea AND not yet delivered on time
+   *   none     = no roadmap link, or issue is cancelled
+   */
+  roadmapStatus: 'in-scope' | 'linked' | 'none';
+
+  /** How the roadmap link was established: 'direct' (Condition C) | 'epic' (A/B) | null */
+  roadmapLinkSource: 'direct' | 'epic' | null;
 
   /** True if the issue matches incidentIssueTypes OR incidentLabels */
   isIncident: boolean;
@@ -66,6 +77,12 @@ export interface WeekDetailIssue {
   /** ISO 8601 timestamp of when the issue entered the board */
   boardEntryDate: string;
 
+  /**
+   * Cycle time in working days (first inProgress → first done transition),
+   * or null if no inProgress transition exists or issue is not yet done.
+   */
+  cycleTimeDays: number | null;
+
   /** Deep link to the issue in Jira Cloud, or empty string if not configured */
   jiraUrl: string;
 }
@@ -74,9 +91,12 @@ export interface WeekDetailSummary {
   totalIssues: number;
   completedIssues: number;
   addedMidWeek: number;
-  linkedToRoadmap: number;
+  roadmapLinkedCount: number;
+  incidentCount: number;
+  failureCount: number;
   totalPoints: number;
   completedPoints: number;
+  medianCycleTimeDays: number | null;
 }
 
 export interface WeekDetailBoardConfig {
@@ -117,6 +137,7 @@ export class WeekDetailService {
     @InjectRepository(JiraIssueLink)
     private readonly issueLinkRepo: Repository<JiraIssueLink>,
     private readonly configService: ConfigService,
+    private readonly workingTimeService: WorkingTimeService,
   ) {
     const baseUrl = this.configService.get<string>('JIRA_BASE_URL', '');
     if (!baseUrl) {
@@ -150,6 +171,8 @@ export class WeekDetailService {
     }
 
     const doneStatuses: string[] = boardConfig?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
+    const cancelledStatusNames: string[] = boardConfig?.cancelledStatusNames ?? ['Cancelled', "Won't Do"];
+    const inProgressStatusNames: string[] = boardConfig?.inProgressStatusNames ?? ['In Progress'];
     const incidentIssueTypes: string[] = boardConfig?.incidentIssueTypes ?? ['Bug', 'Incident'];
     const incidentLabels: string[] = boardConfig?.incidentLabels ?? [];
     const incidentPriorities: string[] = boardConfig?.incidentPriorities ?? ['Critical'];
@@ -157,6 +180,7 @@ export class WeekDetailService {
     const failureLabels: string[] = boardConfig?.failureLabels ?? ['regression', 'incident', 'hotfix'];
     const failureLinkTypes: string[] = boardConfig?.failureLinkTypes ?? [];
     const backlogStatusIds: string[] = boardConfig?.backlogStatusIds ?? [];
+    const roadmapLinkTypes: string[] = boardConfig?.roadmapLinkTypes ?? [];
 
     // -----------------------------------------------------------------------
     // Step 3 — Load all issues for board
@@ -195,17 +219,35 @@ export class WeekDetailService {
 
     // -----------------------------------------------------------------------
     // Step 5 — Compute board-entry date per issue and exclude backlog items
-    //          (Kanban only: earliest status changelog where fromValue = 'To Do')
+    //
+    // Board-entry date = the earliest changelog where toValue is in the
+    // configured boardEntryStatuses list (first transition *into* a board-
+    // entry/staging status).  This matches the algorithm used by the planning
+    // overview (getKanbanWeeks) so both views agree on which week an issue
+    // entered the board.
+    //
+    // Previous implementation used fromValue === 'To Do' (first transition
+    // *out of* To Do).  That direction is wrong and hard-coded to a single
+    // status — it caused "1 ticket in overview, 0 in detail" divergence for
+    // issues that entered via Backlog, Open, or any other configured entry
+    // status.
     // -----------------------------------------------------------------------
+    const boardEntryStatuses: string[] = boardConfig?.boardEntryStatuses ?? [
+      'To Do', 'Backlog', 'Open', 'New', 'TODO', 'OPEN', 'Selected for Development',
+    ];
+
     const boardEntryDateByKey = new Map<string, Date>();
 
     for (const issue of issues) {
       const issueChangelogs = changelogsByIssue.get(issue.key) ?? [];
 
-      const toDoTransition = issueChangelogs.find(
-        (cl) => cl.field === 'status' && cl.fromValue === 'To Do',
+      const entryTransition = issueChangelogs.find(
+        (cl) =>
+          cl.field === 'status' &&
+          cl.toValue !== null &&
+          boardEntryStatuses.map((s) => s.toLowerCase()).includes(cl.toValue.toLowerCase()),
       );
-      const entryDate = toDoTransition ? toDoTransition.changedAt : issue.createdAt;
+      const entryDate = entryTransition ? entryTransition.changedAt : issue.createdAt;
 
       boardEntryDateByKey.set(issue.key, entryDate);
     }
@@ -224,8 +266,8 @@ export class WeekDetailService {
     const startBound = dataStartDate ? new Date(dataStartDate) : null;
     const startBoundedIssues = startBound
       ? filteredIssues.filter((issue) => {
-          const entryDate = boardEntryDateByKey.get(issue.key);
-          return entryDate !== undefined && entryDate >= startBound;
+          const entryDate = boardEntryDateByKey.get(issue.key) ?? issue.createdAt;
+          return entryDate >= startBound;
         })
       : filteredIssues;
 
@@ -233,8 +275,7 @@ export class WeekDetailService {
     // Step 6 — Filter issues to those whose boardEntryDate falls within the week
     // -----------------------------------------------------------------------
     const weekIssues = startBoundedIssues.filter((issue) => {
-      const entryDate = boardEntryDateByKey.get(issue.key);
-      if (!entryDate) return false;
+      const entryDate = boardEntryDateByKey.get(issue.key) ?? issue.createdAt;
       return entryDate >= weekStart && entryDate <= weekEnd;
     });
 
@@ -265,22 +306,36 @@ export class WeekDetailService {
     }
 
     // -----------------------------------------------------------------------
-    // Step 7 — Load RoadmapConfig and build coveredEpicKeys
+    // Step 7 — Load RoadmapConfig, build allIdeas for roadmap linking
     // -----------------------------------------------------------------------
     const roadmapConfigs = await this.roadmapConfigRepo.find({ where: {} });
-    const coveredEpicKeys = new Set<string>();
+    let allIdeas: JpdIdea[] = [];
 
     if (roadmapConfigs.length > 0) {
       const jpdKeys = roadmapConfigs.map((r) => r.jpdKey);
-      const ideas = await this.jpdIdeaRepo.find({ where: { jpdKey: In(jpdKeys) } });
-      for (const idea of ideas) {
-        for (const key of (idea.deliveryIssueKeys ?? [])) {
-          if (key) {
-            coveredEpicKeys.add(key);
-          }
-        }
+      allIdeas = await this.jpdIdeaRepo.find({ where: { jpdKey: In(jpdKeys) } });
+    }
+
+    // Direct issue → idea links (ADR 0044 Condition C), using the same
+    // roadmapLinkTypes as the roadmap service for consistent coverage.
+    const directLinkIdeaMap = await buildDirectLinkIdeaMap(
+      this.issueLinkRepo,
+      weekIssueKeys,
+      allIdeas,
+      roadmapLinkTypes,
+    );
+
+    // Epic → idea map (Condition A — epic key covered by a roadmap idea)
+    const epicIdeaMap = new Map<string, JpdIdea>();
+    for (const idea of allIdeas) {
+      for (const key of (idea.deliveryIssueKeys ?? [])) {
+        if (key) epicIdeaMap.set(key, idea);
       }
     }
+
+    // Working-time config for cycle time calculation
+    const wtEntity = await this.workingTimeService.getConfig();
+    const wtConfig = this.workingTimeService.toConfig(wtEntity);
 
     // 1-day grace period for addedMidWeek
     const gracePeriodEnd = new Date(weekStart.getTime() + 1 * 24 * 60 * 60 * 1000);
@@ -307,9 +362,62 @@ export class WeekDetailService {
       // addedMidWeek: boardEntryDate is > 1 day after week start
       const addedMidWeek = boardEntryDate > gracePeriodEnd;
 
-      // linkedToRoadmap
-      const linkedToRoadmap =
-        issue.epicKey != null && coveredEpicKeys.has(issue.epicKey);
+      // roadmapStatus — Condition A only (no sprint state for kanban weeks)
+      //   in-scope = linked AND delivered on or before targetDate
+      //   linked   = linked AND not yet delivered on time
+      //   none     = no link, or cancelled
+      let roadmapStatus: 'in-scope' | 'linked' | 'none' = 'none';
+      let roadmapLinkSource: 'direct' | 'epic' | null = null;
+
+      if (!cancelledStatusNames.includes(issue.status)) {
+        const epicIdea = issue.epicKey !== null ? epicIdeaMap.get(issue.epicKey) : undefined;
+        const directIdea = directLinkIdeaMap.get(issue.key);
+        // Epic link takes priority (ADR 0044)
+        const idea = epicIdea ?? directIdea;
+        if (idea) {
+          roadmapLinkSource = epicIdea ? 'epic' : 'direct';
+          if (idea.targetDate !== null) {
+            const targetEndOfDay = new Date(idea.targetDate.getTime());
+            targetEndOfDay.setUTCHours(23, 59, 59, 999);
+            const doneTransition = issueChangelogs.find(
+              (cl) =>
+                cl.field === 'status' &&
+                cl.toValue !== null &&
+                doneStatuses.includes(cl.toValue),
+            );
+            const resolvedDate = doneTransition?.changedAt ?? null;
+            const deliveredOnTime = resolvedDate !== null && resolvedDate <= targetEndOfDay;
+            roadmapStatus = deliveredOnTime ? 'in-scope' : 'linked';
+          } else {
+            roadmapStatus = 'linked';
+          }
+        }
+      }
+
+      // cycleTimeDays: working days from first inProgress transition → first done transition
+      let cycleTimeDays: number | null = null;
+      const firstInProgress = issueChangelogs.find(
+        (cl) =>
+          cl.field === 'status' &&
+          cl.toValue !== null &&
+          inProgressStatusNames.map((s) => s.toLowerCase()).includes(cl.toValue.toLowerCase()),
+      );
+      const firstDone = issueChangelogs.find(
+        (cl) =>
+          cl.field === 'status' &&
+          cl.toValue !== null &&
+          doneStatuses.map((s) => s.toLowerCase()).includes(cl.toValue.toLowerCase()),
+      );
+      if (firstInProgress && firstDone && firstDone.changedAt >= firstInProgress.changedAt) {
+        const rawDays = wtEntity.excludeWeekends
+          ? this.workingTimeService.workingDaysBetween(
+              firstInProgress.changedAt,
+              firstDone.changedAt,
+              wtConfig,
+            )
+          : (firstDone.changedAt.getTime() - firstInProgress.changedAt.getTime()) / 86_400_000;
+        cycleTimeDays = rawDays >= 0 ? Math.round(rawDays * 100) / 100 : null;
+      }
 
       // isIncident: must match type/label AND pass priority AND-gate
       // (consistent with MttrService; incidentPriorities = [] means all priorities qualify)
@@ -346,11 +454,13 @@ export class WeekDetailService {
         assignedWeek: week,
         completedInWeek,
         addedMidWeek,
-        linkedToRoadmap,
+        roadmapStatus,
+        roadmapLinkSource,
         isIncident,
         isFailure,
         labels: issue.labels,
         boardEntryDate: boardEntryDate.toISOString(),
+        cycleTimeDays,
         jiraUrl,
       });
     }
@@ -366,15 +476,29 @@ export class WeekDetailService {
     // -----------------------------------------------------------------------
     // Step 9 — Build summary
     // -----------------------------------------------------------------------
+    // Only sample issues that were completed within the week window so the
+    // median reflects "cycle time for work delivered this week" (not all
+    // issues whose changelogs happen to be loaded).
+    const cycleSamples = results
+      .filter((r) => r.completedInWeek && r.cycleTimeDays !== null)
+      .map((r) => r.cycleTimeDays as number)
+      .sort((a, b) => a - b);
+
+    const medianCycleTimeDays =
+      cycleSamples.length > 0 ? median(cycleSamples) : null;
+
     const summary: WeekDetailSummary = {
       totalIssues: weekIssues.length,
       completedIssues: results.filter((r) => r.completedInWeek).length,
       addedMidWeek: results.filter((r) => r.addedMidWeek).length,
-      linkedToRoadmap: results.filter((r) => r.linkedToRoadmap).length,
+      roadmapLinkedCount: results.filter((r) => r.roadmapStatus !== 'none').length,
+      incidentCount: results.filter((r) => r.isIncident).length,
+      failureCount: results.filter((r) => r.isFailure).length,
       totalPoints: results.reduce((s, r) => s + (r.points ?? 0), 0),
       completedPoints: results
         .filter((r) => r.completedInWeek)
         .reduce((s, r) => s + (r.points ?? 0), 0),
+      medianCycleTimeDays,
     };
 
     // -----------------------------------------------------------------------
@@ -408,20 +532,41 @@ export class WeekDetailService {
 
     const year = parseInt(match[1], 10);
     const weekNum = parseInt(match[2], 10);
+    const tz = this.configService.get<string>('TIMEZONE', 'UTC');
 
-    // Jan 4 is always in ISO week 1
-    const jan4 = new Date(Date.UTC(year, 0, 4));
-    const jan4Day = jan4.getUTCDay(); // 0=Sun, 1=Mon, ...
-    const daysToMon = jan4Day === 0 ? -6 : 1 - jan4Day;
-    const mondayOfWeek1 = new Date(jan4);
-    mondayOfWeek1.setUTCDate(jan4.getUTCDate() + daysToMon);
+    // Jan 4 is always in ISO week 1 — find Monday of week 1 in the configured timezone.
+    // We work in calendar-date space (not UTC) so that week boundaries align with
+    // local midnight, matching the bucketing logic in PlanningService.dateToWeekKey.
+    const jan4LocalParts = dateParts(new Date(Date.UTC(year, 0, 4)), tz);
+    const jan4LocalDate = new Date(Date.UTC(jan4LocalParts.year, jan4LocalParts.month, jan4LocalParts.day));
+    const jan4Dow = jan4LocalDate.getUTCDay(); // 0=Sun
+    const daysToMon = jan4Dow === 0 ? -6 : 1 - jan4Dow;
+    const week1MondayLocal = new Date(jan4LocalDate);
+    week1MondayLocal.setUTCDate(jan4LocalDate.getUTCDate() + daysToMon);
 
-    const weekStart = new Date(mondayOfWeek1);
-    weekStart.setUTCDate(mondayOfWeek1.getUTCDate() + (weekNum - 1) * 7);
+    // Monday of the requested week (calendar date arithmetic)
+    const weekMondayLocal = new Date(week1MondayLocal);
+    weekMondayLocal.setUTCDate(week1MondayLocal.getUTCDate() + (weekNum - 1) * 7);
 
-    const weekEnd = new Date(weekStart);
-    weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
-    weekEnd.setUTCHours(23, 59, 59, 999);
+    // Sunday of the requested week (calendar date, 6 days after Monday)
+    const weekSundayLocal = new Date(weekMondayLocal);
+    weekSundayLocal.setUTCDate(weekMondayLocal.getUTCDate() + 6);
+
+    // Convert calendar dates to UTC instants using the configured timezone.
+    const weekStart = startOfDayInTz(
+      weekMondayLocal.getUTCFullYear(),
+      weekMondayLocal.getUTCMonth(),
+      weekMondayLocal.getUTCDate(),
+      tz,
+    );
+    // weekEnd = start of the day AFTER Sunday, minus 1ms
+    const dayAfterWeekEnd = startOfDayInTz(
+      weekSundayLocal.getUTCFullYear(),
+      weekSundayLocal.getUTCMonth(),
+      weekSundayLocal.getUTCDate() + 1,
+      tz,
+    );
+    const weekEnd = new Date(dayAfterWeekEnd.getTime() - 1);
 
     return { weekStart, weekEnd };
   }
@@ -443,9 +588,12 @@ export class WeekDetailService {
         totalIssues: 0,
         completedIssues: 0,
         addedMidWeek: 0,
-        linkedToRoadmap: 0,
+        roadmapLinkedCount: 0,
+        incidentCount: 0,
+        failureCount: 0,
         totalPoints: 0,
         completedPoints: 0,
+        medianCycleTimeDays: null,
       },
       issues: [],
       boardConfig: {
@@ -454,4 +602,12 @@ export class WeekDetailService {
       },
     };
   }
+}
+
+function median(sorted: number[]): number | null {
+  if (sorted.length === 0) return null;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0
+    ? sorted[mid]
+    : (sorted[mid - 1] + sorted[mid]) / 2;
 }

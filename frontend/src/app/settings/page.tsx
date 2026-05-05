@@ -318,7 +318,7 @@ export default function SettingsPage() {
         </p>
         <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>Sync runs automatically every 30 minutes. Use this button to trigger an immediate sync.</span>
+          <span>Sync runs automatically once a day. Use this button to trigger an immediate sync.</span>
         </div>
         <div className="flex items-center gap-4">
           <button
@@ -559,11 +559,30 @@ export default function SettingsPage() {
                   label="Recovery Status Names"
                   value={config.recoveryStatusNames}
                   onChange={(v) => updateField('recoveryStatusNames', v)}
-                />
+                 />
                 <CsvField
                   label="Incident Labels"
                   value={config.incidentLabels}
                   onChange={(v) => updateField('incidentLabels', v)}
+                />
+              </div>
+            </div>
+
+            {/* ── Roadmap Coverage ──────────────────────────────────────── */}
+            <div className="rounded-lg border border-border bg-background p-4 space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Roadmap Coverage</h3>
+                <p className="mt-0.5 text-xs text-muted">
+                  Jira issue link type names (e.g. <code className="font-mono">is connected to</code>) that signal a direct
+                  roadmap link from a ticket to a JPD idea. Leave empty to disable direct-link coverage (issues must be
+                  linked via their epic). Comma-separated.
+                </p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <CsvField
+                  label="Roadmap Link Types"
+                  value={config.roadmapLinkTypes ?? []}
+                  onChange={(v) => updateField('roadmapLinkTypes', v)}
                 />
               </div>
             </div>

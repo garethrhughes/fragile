@@ -55,3 +55,4 @@ a new ADR is created for the replacement decision.
 | [0041](0041-postgres-advisory-lock-for-sync-serialisation.md) | PostgreSQL advisory lock for distributed sync serialisation | Accepted | 2026-04-25 |
 | [0042](0042-trend-display-snapshot-type-and-org-merge-strategy.md) | `trend-display` snapshot type, org-merge-from-per-board strategy, and trend array direction | Accepted | 2026-04-25 |
 | [0043](0043-ecs-fargate-replaces-app-runner.md) | ECS Fargate replaces App Runner as compute platform | Accepted | 2026-04-28 |
+| [0044](0044-roadmap-coverage-via-direct-issue-links.md) | Roadmap coverage via direct Jira issue links with per-board `roadmapLinkTypes` allowlist | Accepted | 2026-05-05 |

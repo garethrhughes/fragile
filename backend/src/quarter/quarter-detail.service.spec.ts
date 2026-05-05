@@ -257,6 +257,49 @@ describe('QuarterDetailService', () => {
       expect(result.issues[0].linkedToRoadmap).toBe(true);
     });
 
+    it('sets linkedToRoadmap via direct issue→idea link (Condition C)', async () => {
+      // ACC-1 has no epicKey but is directly linked to a JPD idea via a
+      // configured roadmapLinkType — it should still be linkedToRoadmap.
+      const config = boardConfigRepo.findOne['mock'].results[0]?.value ?? null;
+      const directLinkConfig = {
+        ...(config ?? {}),
+        roadmapLinkTypes: ['is connected to'],
+      };
+      boardConfigRepo.findOne.mockResolvedValue(directLinkConfig);
+      const sprintChangelog = makeChangelog({
+        issueKey: 'ACC-1',
+        field: 'Sprint',
+        changedAt: new Date('2026-01-05T00:00:00Z'),
+      });
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'ACC-1', epicKey: null, createdAt: new Date('2026-01-01T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([sprintChangelog]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([
+        { id: 1, jpdKey: 'JPD-1', description: null, startDateFieldId: null, targetDateFieldId: null, createdAt: new Date() } as RoadmapConfig,
+      ]);
+      const idea = { key: 'PT-1', jpdKey: 'JPD-1', deliveryIssueKeys: [], targetDate: new Date('2026-06-30T00:00:00Z') } as unknown as JpdIdea;
+      jpdIdeaRepo.find.mockResolvedValue([idea]);
+      // issueLinkRepo returns a link: ACC-1 → PT-1 via 'is connected to'
+      issueLinkRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn().mockResolvedValue([]),
+        getMany: jest.fn().mockResolvedValue([
+          { sourceIssueKey: 'ACC-1', targetIssueKey: 'PT-1', linkTypeName: 'is connected to' },
+        ]),
+      });
+
+      const result = await service.getDetail('ACC', '2026-Q1');
+      expect(result.issues[0].linkedToRoadmap).toBe(true);
+    });
+
     it('marks isIncident true for Critical Bug', async () => {
       const sprintChangelog = makeChangelog({
         issueKey: 'ACC-1',
@@ -639,6 +682,244 @@ describe('QuarterDetailService', () => {
       const result = await service.getDetail('ACC', '2026-Q1');
 
       expect(result.issues[0].isFailure).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // roadmapStatus 3-way enum
+  // -------------------------------------------------------------------------
+
+  describe('roadmapStatus', () => {
+    function makeSprintCl(issueKey: string, changedAt: Date): JiraChangelog {
+      return makeChangelog({ issueKey, field: 'Sprint', fromValue: null, toValue: 'Sprint 1', changedAt });
+    }
+    function makeDoneCl(issueKey: string, changedAt: Date): JiraChangelog {
+      return makeChangelog({ issueKey, field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt });
+    }
+
+    it('returns roadmapStatus=in-scope when completed on or before targetDate', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(null);
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'ACC-1', epicKey: 'EPIC-1', createdAt: new Date('2026-01-05T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeSprintCl('ACC-1', new Date('2026-01-05T09:00:00Z')),
+          makeDoneCl('ACC-1', new Date('2026-01-15T09:00:00Z')),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([
+        { id: 1, jpdKey: 'JPD-1', description: null, startDateFieldId: null, targetDateFieldId: null, createdAt: new Date() } as RoadmapConfig,
+      ]);
+      jpdIdeaRepo.find.mockResolvedValue([
+        { key: 'IDEA-1', jpdKey: 'JPD-1', deliveryIssueKeys: ['EPIC-1'], targetDate: new Date('2026-06-30T00:00:00Z') } as unknown as JpdIdea,
+      ]);
+
+      const result = await service.getDetail('ACC', '2026-Q1');
+      expect(result.issues[0].roadmapStatus).toBe('in-scope');
+      expect(result.issues[0].roadmapLinkSource).toBe('epic');
+    });
+
+    it('returns roadmapStatus=linked when linked but not completed on time', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(null);
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'ACC-1', epicKey: 'EPIC-1', status: 'In Progress', createdAt: new Date('2026-01-05T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeSprintCl('ACC-1', new Date('2026-01-05T09:00:00Z')),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([
+        { id: 1, jpdKey: 'JPD-1', description: null, startDateFieldId: null, targetDateFieldId: null, createdAt: new Date() } as RoadmapConfig,
+      ]);
+      jpdIdeaRepo.find.mockResolvedValue([
+        { key: 'IDEA-1', jpdKey: 'JPD-1', deliveryIssueKeys: ['EPIC-1'], targetDate: new Date('2025-12-31T00:00:00Z') } as unknown as JpdIdea,
+      ]);
+
+      const result = await service.getDetail('ACC', '2026-Q1');
+      expect(result.issues[0].roadmapStatus).toBe('linked');
+    });
+
+    it('returns roadmapStatus=none when no roadmap link', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(null);
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'ACC-1', epicKey: null, createdAt: new Date('2026-01-05T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeSprintCl('ACC-1', new Date('2026-01-05T09:00:00Z')),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+
+      const result = await service.getDetail('ACC', '2026-Q1');
+      expect(result.issues[0].roadmapStatus).toBe('none');
+      expect(result.issues[0].roadmapLinkSource).toBeNull();
+    });
+
+    it('returns roadmapStatus=none for cancelled issues', async () => {      boardConfigRepo.findOne.mockResolvedValue({
+        boardType: 'scrum',
+        doneStatusNames: ['Done'],
+        cancelledStatusNames: ['Cancelled'],
+        incidentIssueTypes: [],
+        incidentLabels: [],
+        incidentPriorities: [],
+        failureIssueTypes: [],
+        failureLabels: [],
+        failureLinkTypes: [],
+        roadmapLinkTypes: [],
+      } as unknown as BoardConfig);
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'ACC-1', epicKey: 'EPIC-1', status: 'Cancelled', createdAt: new Date('2026-01-05T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeSprintCl('ACC-1', new Date('2026-01-05T09:00:00Z')),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([
+        { id: 1, jpdKey: 'JPD-1', description: null, startDateFieldId: null, targetDateFieldId: null, createdAt: new Date() } as RoadmapConfig,
+      ]);
+      jpdIdeaRepo.find.mockResolvedValue([
+        { key: 'IDEA-1', jpdKey: 'JPD-1', deliveryIssueKeys: ['EPIC-1'], targetDate: new Date('2026-06-30T00:00:00Z') } as unknown as JpdIdea,
+      ]);
+
+      const result = await service.getDetail('ACC', '2026-Q1');
+      expect(result.issues[0].roadmapStatus).toBe('none');
+    });
+
+    it('returns roadmapStatus=linked when idea has null targetDate', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(null);
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'ACC-1', epicKey: 'EPIC-1', createdAt: new Date('2026-01-05T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeSprintCl('ACC-1', new Date('2026-01-05T09:00:00Z')),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([
+        { id: 1, jpdKey: 'JPD-1', description: null, startDateFieldId: null, targetDateFieldId: null, createdAt: new Date() } as RoadmapConfig,
+      ]);
+      jpdIdeaRepo.find.mockResolvedValue([
+        { key: 'IDEA-1', jpdKey: 'JPD-1', deliveryIssueKeys: ['EPIC-1'], targetDate: null } as unknown as JpdIdea,
+      ]);
+
+      const result = await service.getDetail('ACC', '2026-Q1');
+      expect(result.issues[0].roadmapStatus).toBe('linked');
+      expect(result.issues[0].roadmapLinkSource).toBe('epic');
+    });
+
+    it('summary.roadmapLinkedCount counts issues with roadmapStatus != none', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(null);
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'ACC-1', epicKey: 'EPIC-1', createdAt: new Date('2026-01-05T00:00:00Z') }),
+        makeIssue({ key: 'ACC-2', epicKey: null, createdAt: new Date('2026-01-05T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeSprintCl('ACC-1', new Date('2026-01-05T09:00:00Z')),
+          makeSprintCl('ACC-2', new Date('2026-01-05T09:00:00Z')),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([
+        { id: 1, jpdKey: 'JPD-1', description: null, startDateFieldId: null, targetDateFieldId: null, createdAt: new Date() } as RoadmapConfig,
+      ]);
+      jpdIdeaRepo.find.mockResolvedValue([
+        { key: 'IDEA-1', jpdKey: 'JPD-1', deliveryIssueKeys: ['EPIC-1'], targetDate: new Date('2026-06-30T00:00:00Z') } as unknown as JpdIdea,
+      ]);
+
+      const result = await service.getDetail('ACC', '2026-Q1');
+      expect(result.summary.roadmapLinkedCount).toBe(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // incidentCount and failureCount in summary
+  // -------------------------------------------------------------------------
+
+  describe('summary incidentCount and failureCount', () => {
+    it('incidentCount counts isIncident issues', async () => {
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardType: 'scrum',
+        doneStatusNames: ['Done'],
+        cancelledStatusNames: [],
+        incidentIssueTypes: ['Bug'],
+        incidentLabels: [],
+        incidentPriorities: [],
+        failureIssueTypes: [],
+        failureLabels: [],
+        failureLinkTypes: [],
+        roadmapLinkTypes: [],
+      } as unknown as BoardConfig);
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'ACC-1', issueType: 'Bug', createdAt: new Date('2026-01-05T00:00:00Z') }),
+        makeIssue({ key: 'ACC-2', issueType: 'Story', createdAt: new Date('2026-01-05T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeChangelog({ issueKey: 'ACC-1', field: 'Sprint', fromValue: null, toValue: 'Sprint 1', changedAt: new Date('2026-01-05T09:00:00Z') }),
+          makeChangelog({ issueKey: 'ACC-2', field: 'Sprint', fromValue: null, toValue: 'Sprint 1', changedAt: new Date('2026-01-05T09:00:00Z') }),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+
+      const result = await service.getDetail('ACC', '2026-Q1');
+      expect(result.summary.incidentCount).toBe(1);
+    });
+
+    it('failureCount counts isFailure issues', async () => {
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardType: 'scrum',
+        doneStatusNames: ['Done'],
+        cancelledStatusNames: [],
+        incidentIssueTypes: [],
+        incidentLabels: [],
+        incidentPriorities: [],
+        failureIssueTypes: [],
+        failureLabels: ['regression'],
+        failureLinkTypes: [],
+        roadmapLinkTypes: [],
+      } as unknown as BoardConfig);
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'ACC-1', labels: ['regression'], createdAt: new Date('2026-01-05T00:00:00Z') }),
+        makeIssue({ key: 'ACC-2', labels: [], createdAt: new Date('2026-01-05T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeChangelog({ issueKey: 'ACC-1', field: 'Sprint', fromValue: null, toValue: 'Sprint 1', changedAt: new Date('2026-01-05T09:00:00Z') }),
+          makeChangelog({ issueKey: 'ACC-2', field: 'Sprint', fromValue: null, toValue: 'Sprint 1', changedAt: new Date('2026-01-05T09:00:00Z') }),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+
+      const result = await service.getDetail('ACC', '2026-Q1');
+      expect(result.summary.failureCount).toBe(1);
     });
   });
 });

@@ -8,6 +8,7 @@ import {
   JiraIssue,
   JiraChangelog,
   JpdIdea,
+  JiraIssueLink,
   RoadmapConfig,
   BoardConfig,
 } from '../database/entities/index.js';
@@ -102,6 +103,7 @@ describe('RoadmapService', () => {
   let issueRepo: jest.Mocked<Repository<JiraIssue>>;
   let changelogRepo: jest.Mocked<Repository<JiraChangelog>>;
   let jpdIdeaRepo: jest.Mocked<Repository<JpdIdea>>;
+  let issueLinkRepo: jest.Mocked<Repository<JiraIssueLink>>;
   let roadmapConfigRepo: jest.Mocked<Repository<RoadmapConfig>>;
   let boardConfigRepo: jest.Mocked<Repository<BoardConfig>>;
   let syncService: jest.Mocked<SyncService>;
@@ -111,6 +113,7 @@ describe('RoadmapService', () => {
     issueRepo = mockRepo<JiraIssue>();
     changelogRepo = mockRepo<JiraChangelog>();
     jpdIdeaRepo = mockRepo<JpdIdea>();
+    issueLinkRepo = mockRepo<JiraIssueLink>();
     roadmapConfigRepo = mockRepo<RoadmapConfig>();
     boardConfigRepo = mockRepo<BoardConfig>();
     syncService = mockSyncService();
@@ -120,6 +123,7 @@ describe('RoadmapService', () => {
       issueRepo,
       changelogRepo,
       jpdIdeaRepo,
+      issueLinkRepo,
       roadmapConfigRepo,
       boardConfigRepo,
       syncService,
@@ -1002,13 +1006,13 @@ describe('RoadmapService', () => {
         };
 
         if (qbCallCount === 1) {
-          // "To Do" exit changelogs — board-entry in W02 (Jan 6)
+          // board-entry changelogs — toValue='To Do' is a default boardEntryStatus → W02
           qb.getMany.mockResolvedValue([
             {
               issueKey: 'PLAT-1',
               field: 'status',
-              fromValue: 'To Do',
-              toValue: 'In Progress',
+              fromValue: 'Backlog',
+              toValue: 'To Do',
               changedAt: new Date('2026-01-06T09:00:00Z'),
             },
           ]);
@@ -1040,6 +1044,137 @@ describe('RoadmapService', () => {
       const result = await service.getAccuracy('PLAT', undefined, undefined, '2026-W02');
       expect(result).toHaveLength(1);
       expect(result[0].sprintId).toBe('2026-W02');
+      expect(result[0].totalIssues).toBe(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // getKanbanWeeklyAccuracy — boardEntryDate uses toValue IN boardEntryStatuses
+  //
+  // The roadmap table for Kanban boards was using fromValue = 'To Do' (hardcoded,
+  // wrong direction) to detect when an issue entered the board. This caused the
+  // roadmap table to disagree with the week detail page (which was fixed first)
+  // and with the planning page (which always used toValue IN boardEntryStatuses).
+  // -------------------------------------------------------------------------
+
+  describe('getKanbanWeeklyAccuracy — boardEntryDate direction fix', () => {
+    const kanbanConfig = {
+      boardId: 'PLAT',
+      boardType: 'kanban',
+      doneStatusNames: ['Done'],
+      cancelledStatusNames: ['Cancelled', "Won't Do"],
+      backlogStatusIds: [],
+      dataStartDate: null,
+      boardEntryStatuses: null, // use defaults
+    } as unknown as BoardConfig;
+
+    function setupWeeklyAccuracyRepo(entryChangelog: object, doneChangelog?: object) {
+      let callCount = 0;
+      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
+        callCount++;
+        const qb = {
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          orderBy: jest.fn().mockReturnThis(),
+          getMany: jest.fn().mockResolvedValue([]),
+          getRawMany: jest.fn().mockResolvedValue([]),
+        };
+        if (callCount === 1) {
+          // board-entry changelogs query
+          qb.getMany.mockResolvedValue([entryChangelog]);
+        } else if (callCount === 2) {
+          // DISTINCT issueKey fallback
+          qb.getRawMany.mockResolvedValue([{ issueKey: 'PLAT-1' }]);
+        } else if (callCount === 3) {
+          // all status changelogs for completion/activity dates
+          qb.getMany.mockResolvedValue(doneChangelog ? [entryChangelog, doneChangelog] : [entryChangelog]);
+        }
+        return qb;
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+      jpdIdeaRepo.find.mockResolvedValue([]);
+    }
+
+    it('counts issue whose toValue is a board-entry status in W02', async () => {
+      // toValue='To Do' is a default boardEntryStatus → issue entered the board in W02
+      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig);
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', boardId: 'PLAT', createdAt: new Date('2025-11-01T00:00:00Z') }),
+      ]);
+      setupWeeklyAccuracyRepo({
+        issueKey: 'PLAT-1', field: 'status',
+        fromValue: 'Backlog', toValue: 'To Do',
+        changedAt: new Date('2026-01-06T09:00:00Z'), // W02
+      });
+
+      const result = await service.getAccuracy('PLAT', undefined, undefined, '2026-W02');
+      expect(result).toHaveLength(1);
+      expect(result[0].totalIssues).toBe(1);
+    });
+
+    it('does not count issue that only has fromValue=To Do transition (old wrong direction) when its toValue is not a board-entry status', async () => {
+      // fromValue='To Do', toValue='In Progress' — old code matched this; new code must NOT.
+      // Issue has createdAt well before W02, so it should not appear in W02 at all.
+      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig);
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', boardId: 'PLAT', createdAt: new Date('2025-11-01T00:00:00Z') }),
+      ]);
+      // The new query uses toValue IN boardEntryStatuses — 'In Progress' is NOT in that list,
+      // so the DB returns no board-entry changelogs. Simulate that here.
+      setupWeeklyAccuracyRepo(
+        // First call (board-entry query) returns empty — no toValue match
+        { issueKey: '__none__', field: 'status', fromValue: null, toValue: null, changedAt: new Date() },
+      );
+      // Override: first call returns empty array to simulate no DB match
+      let callCount = 0;
+      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
+        callCount++;
+        const qb = {
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          orderBy: jest.fn().mockReturnThis(),
+          getMany: jest.fn().mockResolvedValue([]),
+          getRawMany: jest.fn().mockResolvedValue([]),
+        };
+        if (callCount === 1) {
+          // board-entry query: toValue='In Progress' not in boardEntryStatuses → empty
+          qb.getMany.mockResolvedValue([]);
+        } else if (callCount === 2) {
+          // DISTINCT issueKey fallback — issue has some status changelogs
+          qb.getRawMany.mockResolvedValue([{ issueKey: 'PLAT-1' }]);
+        } else if (callCount === 3) {
+          // all status changelogs for completion/activity
+          qb.getMany.mockResolvedValue([{
+            issueKey: 'PLAT-1', field: 'status',
+            fromValue: 'To Do', toValue: 'In Progress',
+            changedAt: new Date('2026-01-06T09:00:00Z'),
+          }]);
+        }
+        return qb;
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+      jpdIdeaRepo.find.mockResolvedValue([]);
+
+      // No board-entry found → falls back to createdAt (Nov 2025) → excluded from W02.
+      const result = await service.getAccuracy('PLAT', undefined, undefined, '2026-W02');
+      expect(result).toHaveLength(0);
+    });
+
+    it('counts issue entered via "Open" (non-hardcoded default entry status) in correct week', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig);
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-2', boardId: 'PLAT', createdAt: new Date('2025-11-01T00:00:00Z') }),
+      ]);
+      setupWeeklyAccuracyRepo({
+        issueKey: 'PLAT-2', field: 'status',
+        fromValue: 'Backlog', toValue: 'Open',
+        changedAt: new Date('2026-01-06T09:00:00Z'), // W02
+      });
+
+      const result = await service.getAccuracy('PLAT', undefined, undefined, '2026-W02');
+      expect(result).toHaveLength(1);
       expect(result[0].totalIssues).toBe(1);
     });
   });
@@ -1286,6 +1421,221 @@ describe('RoadmapService', () => {
 
       const result = await service.getAccuracy('PLAT');
       expect(result).toEqual([]);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // calculateSprintAccuracy — direct-link coverage path (ADR 0044)
+  // -------------------------------------------------------------------------
+
+  describe('getAccuracy (scrum) — direct-link roadmap coverage', () => {
+    function setupDirectLinkScenario(opts: {
+      roadmapLinkTypes: string[];
+      issueEpicKey: string | null;
+      linkTypeName: string;
+      targetDate: Date;
+      resolvedAt: Date | null;
+      sprintState?: string;
+    }) {
+      const sprint = makeSprint({ state: opts.sprintState ?? 'closed' });
+      const issue = makeIssue({
+        key: 'ACC-99',
+        status: opts.resolvedAt ? 'Done' : 'In Progress',
+        epicKey: opts.issueEpicKey,
+      });
+
+      const boardConfig = {
+        boardType: 'scrum',
+        doneStatusNames: ['Done', 'Closed', 'Released'],
+        cancelledStatusNames: ["Cancelled", "Won't Do"],
+        inProgressStatusNames: ['In Progress'],
+        roadmapLinkTypes: opts.roadmapLinkTypes,
+      } as unknown as BoardConfig;
+
+      sprintRepo.find
+        .mockResolvedValueOnce([sprint])
+        .mockResolvedValueOnce([]);
+      issueRepo.find.mockResolvedValue([issue]);
+      boardConfigRepo.findOne.mockResolvedValue(boardConfig);
+
+      // RoadmapConfig + JpdIdea
+      const roadmapConfig = { jpdKey: 'PT' } as RoadmapConfig;
+      roadmapConfigRepo.find.mockResolvedValue([roadmapConfig]);
+      const idea = Object.assign(new JpdIdea(), {
+        key: 'PT-389',
+        jpdKey: 'PT',
+        targetDate: opts.targetDate,
+        startDate: new Date('2026-01-01'),
+        deliveryIssueKeys: [],
+        summary: 'Roadmap item',
+      });
+      jpdIdeaRepo.find.mockResolvedValue([idea]);
+
+      // changelog — two calls in getAccuracy:
+      //   1st: Sprint-field changelogs (used to reconstruct sprint membership)
+      //        → return a Sprint-add changelog so the issue lands in the sprint
+      //   2nd: status-field changelogs (used in calculateSprintAccuracy)
+      const sprintChangelog = [{
+        issueKey: 'ACC-99',
+        field: 'Sprint',
+        fromValue: null,
+        toValue: sprint.name,
+        changedAt: new Date(sprint.startDate.getTime() - 1000),
+      }];
+      const statusChangelogs = opts.resolvedAt
+        ? [{ issueKey: 'ACC-99', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: opts.resolvedAt }]
+        : [];
+      changelogRepo.createQueryBuilder = jest.fn()
+        .mockReturnValueOnce(buildQb(sprintChangelog))  // Sprint changelogs
+        .mockReturnValueOnce(buildQb(statusChangelogs)); // status changelogs
+
+      // issueLinkRepo — direct link ACC-99 → PT-389
+      const linkRow = { sourceIssueKey: 'ACC-99', targetIssueKey: 'PT-389', linkTypeName: opts.linkTypeName, isInward: false };
+      issueLinkRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue(
+          opts.roadmapLinkTypes.length > 0 &&
+          opts.roadmapLinkTypes.map((t) => t.toLowerCase()).includes(opts.linkTypeName.toLowerCase())
+            ? [linkRow]
+            : [],
+        ),
+      });
+    }
+
+    it('counts an issue with no epicKey as covered (Condition A) when directly linked to a JPD idea and resolved on time', async () => {
+      const targetDate = new Date('2026-06-30T00:00:00Z');
+      const resolvedAt = new Date('2026-06-15T10:00:00Z'); // before targetDate
+      setupDirectLinkScenario({
+        roadmapLinkTypes: ['is connected to'],
+        issueEpicKey: null,
+        linkTypeName: 'is connected to',
+        targetDate,
+        resolvedAt,
+      });
+
+      const result = await service.getAccuracy('ACC');
+      expect(result[0].coveredIssues).toBe(1);
+      expect(result[0].uncoveredIssues).toBe(0);
+    });
+
+    it('counts an issue with no epicKey as covered (Condition B) when directly linked, sprint is active, and targetDate not lapsed', async () => {
+      const futureTarget = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days from now
+      setupDirectLinkScenario({
+        roadmapLinkTypes: ['is connected to'],
+        issueEpicKey: null,
+        linkTypeName: 'is connected to',
+        targetDate: futureTarget,
+        resolvedAt: null,
+        sprintState: 'active',
+      });
+
+      const result = await service.getAccuracy('ACC');
+      expect(result[0].coveredIssues).toBe(1);
+    });
+
+    it('counts an issue with no epicKey as linkedNotCovered (amber) when directly linked but neither Condition A nor B applies', async () => {
+      const pastTarget = new Date('2026-01-10T00:00:00Z');
+      setupDirectLinkScenario({
+        roadmapLinkTypes: ['is connected to'],
+        issueEpicKey: null,
+        linkTypeName: 'is connected to',
+        targetDate: pastTarget,
+        resolvedAt: null, // not done, sprint closed — neither A nor B
+        sprintState: 'closed',
+      });
+
+      const result = await service.getAccuracy('ACC');
+      expect(result[0].coveredIssues).toBe(0);
+      expect(result[0].linkedCount).toBe(1); // amber
+    });
+
+    it('counts an issue as uncovered when roadmapLinkTypes is empty even if a link exists', async () => {
+      const targetDate = new Date('2026-06-30T00:00:00Z');
+      setupDirectLinkScenario({
+        roadmapLinkTypes: [], // feature disabled
+        issueEpicKey: null,
+        linkTypeName: 'is connected to',
+        targetDate,
+        resolvedAt: new Date('2026-06-15T10:00:00Z'),
+      });
+
+      const result = await service.getAccuracy('ACC');
+      expect(result[0].coveredIssues).toBe(0);
+      expect(result[0].linkedCount).toBe(0);
+      // issueLinkRepo should NOT be queried when roadmapLinkTypes is empty
+      expect(issueLinkRepo.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('uses epic link targetDate over direct link when issue has both', async () => {
+      const epicTargetDate = new Date('2026-03-31T00:00:00Z'); // earlier (epic)
+      const directTargetDate = new Date('2026-09-30T00:00:00Z'); // later (direct)
+      const resolvedAt = new Date('2026-04-15T10:00:00Z'); // after epicTargetDate but before directTargetDate
+
+      const sprint = makeSprint({ state: 'closed' });
+      const issue = makeIssue({ key: 'ACC-99', status: 'Done', epicKey: 'ACC-EPIC-1' });
+      const boardConfig = {
+        boardType: 'scrum',
+        doneStatusNames: ['Done', 'Closed', 'Released'],
+        cancelledStatusNames: ["Cancelled", "Won't Do"],
+        inProgressStatusNames: ['In Progress'],
+        roadmapLinkTypes: ['is connected to'],
+      } as unknown as BoardConfig;
+
+      sprintRepo.find
+        .mockResolvedValueOnce([sprint])
+        .mockResolvedValueOnce([]);
+      issueRepo.find.mockResolvedValue([issue]);
+      boardConfigRepo.findOne.mockResolvedValue(boardConfig);
+      roadmapConfigRepo.find.mockResolvedValue([{ jpdKey: 'PT' } as RoadmapConfig]);
+
+      // epic-linked idea (earlier targetDate)
+      const epicIdea = Object.assign(new JpdIdea(), {
+        key: 'PT-100',
+        jpdKey: 'PT',
+        targetDate: epicTargetDate,
+        startDate: new Date('2026-01-01'),
+        deliveryIssueKeys: ['ACC-EPIC-1'],
+        summary: 'Epic idea',
+      });
+      // direct-linked idea (later targetDate)
+      const directIdea = Object.assign(new JpdIdea(), {
+        key: 'PT-200',
+        jpdKey: 'PT',
+        targetDate: directTargetDate,
+        startDate: new Date('2026-01-01'),
+        deliveryIssueKeys: [],
+        summary: 'Direct idea',
+      });
+      jpdIdeaRepo.find.mockResolvedValue([epicIdea, directIdea]);
+
+      changelogRepo.createQueryBuilder = jest.fn()
+        .mockReturnValueOnce(buildQb([{  // Sprint changelogs
+          issueKey: 'ACC-99',
+          field: 'Sprint',
+          fromValue: null,
+          toValue: sprint.name,
+          changedAt: new Date(sprint.startDate.getTime() - 1000),
+        }]))
+        .mockReturnValueOnce(buildQb([{  // status changelogs
+          issueKey: 'ACC-99', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: resolvedAt,
+        }]));
+      issueLinkRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          { sourceIssueKey: 'ACC-99', targetIssueKey: 'PT-200', linkTypeName: 'is connected to' },
+        ]),
+      });
+
+      const result = await service.getAccuracy('ACC');
+      // resolvedAt (Apr 15) is AFTER epicTargetDate (Mar 31) → not covered if epic wins
+      // resolvedAt (Apr 15) is BEFORE directTargetDate (Sep 30) → covered if direct wins
+      // Epic takes priority → should be NOT covered (amber)
+      expect(result[0].coveredIssues).toBe(0);
+      expect(result[0].linkedCount).toBe(1);
     });
   });
 });

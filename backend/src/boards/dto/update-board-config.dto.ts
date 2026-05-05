@@ -83,4 +83,15 @@ export class UpdateBoardConfigDto {
   @IsArray()
   @IsString({ each: true })
   inProgressStatusNames?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Jira issue link type names (e.g. "is connected to") that signal a direct roadmap link from ' +
+      'an issue to a JPD idea. Empty array (default) disables the feature. (ADR 0044)',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  roadmapLinkTypes?: string[];
 }
