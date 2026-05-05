@@ -52,7 +52,7 @@ export interface QuarterDetailIssue {
   /** True if the issue's board-entry date is strictly after quarter start */
   addedMidQuarter: boolean;
 
-  /** True if the issue's epicKey is a member of the coveredEpicKeys set */
+  /** True if the issue is linked to a roadmap idea (via epicKey or direct issue link) and is not cancelled */
   linkedToRoadmap: boolean;
 
   /**
@@ -339,8 +339,6 @@ export class QuarterDetailService {
       //   none     = no link, or cancelled
       let roadmapStatus: 'in-scope' | 'linked' | 'none' = 'none';
       let roadmapLinkSource: 'direct' | 'epic' | null = null;
-      const linkedToRoadmap: boolean = directLinkIdeaMap.has(issue.key) ||
-        (issue.epicKey != null && epicIdeaMap.has(issue.epicKey));
 
       if (!cancelledStatusNames.includes(issue.status)) {
         const epicIdea = issue.epicKey !== null ? epicIdeaMap.get(issue.epicKey) : undefined;
@@ -392,6 +390,10 @@ export class QuarterDetailService {
       const jiraUrl = this.jiraBaseUrl
         ? `${this.jiraBaseUrl}/browse/${issue.key}`
         : '';
+
+      // Derive linkedToRoadmap from roadmapStatus so cancelled issues (which
+      // force roadmapStatus to 'none') cannot return linkedToRoadmap: true.
+      const linkedToRoadmap = roadmapStatus !== 'none';
 
       results.push({
         key: issue.key,

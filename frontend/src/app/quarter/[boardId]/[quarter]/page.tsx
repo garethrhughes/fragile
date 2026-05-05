@@ -163,8 +163,8 @@ function buildColumns(): Column<QuarterDetailIssue>[] {
             ? 'Linked to roadmap (direct) — not in window'
             : 'Linked to roadmap (via epic) — not in window'
         return (
-          <span title={tooltip} className={`inline-flex items-center gap-1 font-semibold ${colorClass}`}>
-            <Icon size={14} />
+          <span title={tooltip} aria-label={tooltip} className={`inline-flex items-center gap-1 font-semibold ${colorClass}`}>
+            <Icon size={14} aria-hidden="true" />
           </span>
         )
       },

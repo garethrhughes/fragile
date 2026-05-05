@@ -42,10 +42,6 @@ OpenCode config if no project config exists).
 
 Tell the user:
 
-**If the Jira MCP server is NOT configured:**
-
-Tell the user:
-
 > "The Jira MCP server is not configured — I need it to fetch ticket details from your
 > Jira instance. I'll run the **mcp-setup** skill now to add it."
 

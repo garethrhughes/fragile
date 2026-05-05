@@ -433,8 +433,8 @@ function buildColumns(): Column<SprintDetailIssue>[] {
             ? isInScope ? 'On roadmap (direct link)' : 'Linked to roadmap (direct link) — not in window'
             : isInScope ? 'On roadmap (via epic)' : 'Linked to roadmap (via epic) — not in window'
           return (
-            <span title={tooltip} className={`inline-flex items-center gap-1 font-semibold ${isInScope ? 'text-green-600' : 'text-amber-500'}`}>
-              <Icon size={14} />
+            <span title={tooltip} aria-label={tooltip} className={`inline-flex items-center gap-1 font-semibold ${isInScope ? 'text-green-600' : 'text-amber-500'}`}>
+              <Icon size={14} aria-hidden="true" />
             </span>
           )
         }

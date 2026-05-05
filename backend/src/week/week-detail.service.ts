@@ -476,8 +476,11 @@ export class WeekDetailService {
     // -----------------------------------------------------------------------
     // Step 9 — Build summary
     // -----------------------------------------------------------------------
+    // Only sample issues that were completed within the week window so the
+    // median reflects "cycle time for work delivered this week" (not all
+    // issues whose changelogs happen to be loaded).
     const cycleSamples = results
-      .filter((r) => r.cycleTimeDays !== null)
+      .filter((r) => r.completedInWeek && r.cycleTimeDays !== null)
       .map((r) => r.cycleTimeDays as number)
       .sort((a, b) => a - b);
 

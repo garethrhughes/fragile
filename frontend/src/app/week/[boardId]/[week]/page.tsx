@@ -195,8 +195,8 @@ function buildColumns(): Column<WeekDetailIssue>[] {
             ? `Linked to roadmap (direct) — not in window`
             : `Linked to roadmap (via epic) — not in window`
         return (
-          <span title={tooltip} className={`inline-flex items-center gap-1 font-semibold ${colorClass}`}>
-            <Icon size={14} />
+          <span title={tooltip} aria-label={tooltip} className={`inline-flex items-center gap-1 font-semibold ${colorClass}`}>
+            <Icon size={14} aria-hidden="true" />
           </span>
         )
       },
@@ -239,6 +239,7 @@ function buildColumns(): Column<WeekDetailIssue>[] {
 }
 
 function rowClassName(row: WeekDetailIssue): string {
+  // Priority order: incident > failure > mid-week addition > completed
   if (row.isIncident) return 'bg-red-50 dark:bg-red-950/20'
   if (row.isFailure) return 'bg-orange-50 dark:bg-orange-950/20'
   if (row.addedMidWeek) return 'bg-amber-50 dark:bg-amber-950/20'
