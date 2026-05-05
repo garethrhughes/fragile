@@ -239,10 +239,10 @@ function buildColumns(): Column<WeekDetailIssue>[] {
 }
 
 function rowClassName(row: WeekDetailIssue): string {
-  if (row.completedInWeek) return 'bg-green-50 dark:bg-green-950/20'
-  if (row.addedMidWeek) return 'bg-amber-50 dark:bg-amber-950/20'
   if (row.isIncident) return 'bg-red-50 dark:bg-red-950/20'
   if (row.isFailure) return 'bg-orange-50 dark:bg-orange-950/20'
+  if (row.addedMidWeek) return 'bg-amber-50 dark:bg-amber-950/20'
+  if (row.completedInWeek) return 'bg-green-50 dark:bg-green-950/20'
   return ''
 }
 
