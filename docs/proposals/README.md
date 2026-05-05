@@ -45,3 +45,4 @@
 | [0041](0041-roadmap-coverage-via-issue-links.md) | Roadmap Coverage via Jira Issue Links | Draft | 2026-04-30 |
 | [0042](0042-kanban-week-view-consistency.md) | Kanban Week View Consistency with Sprint View | Accepted | 2026-05-05 |
 | [0043](0043-support-report.md) | Support Ticket Report | Accepted | 2026-05-06 |
+| [0044](0044-support-sprint-membership-scope.md) | Support Report: Sprint-Membership Issue Scope | Accepted | 2026-05-06 |

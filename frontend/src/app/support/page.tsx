@@ -131,7 +131,8 @@ function SupportPageInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Load sprints when a single board is selected in sprint mode
+  // Load sprints when a single board is selected in sprint mode.
+  // Filter to active/closed only; sort descending (most recent first).
   useEffect(() => {
     if (!sprintModeAvailable || selectedBoards.length !== 1) {
       setSprints([])
@@ -141,10 +142,13 @@ function SupportPageInner() {
     getSprints(selectedBoards[0]!)
       .then((res) => {
         if (!cancelled) {
-          setSprints(res)
-          // Auto-select most-recent sprint if none in URL
-          if (res.length > 0 && !searchParams.get('sprintId')) {
-            replaceParams({ sprintId: String(res[res.length - 1]!.id) })
+          const filtered = res
+            .filter((s) => s.state === 'active' || s.state === 'closed')
+            // API already returns startDate DESC — most recent first; no sort needed
+          setSprints(filtered)
+          // Auto-select first (most recent) sprint if none in URL
+          if (filtered.length > 0 && !searchParams.get('sprintId')) {
+            replaceParams({ sprintId: String(filtered[0]!.id) })
           }
         }
       })
@@ -317,17 +321,19 @@ function SupportPageInner() {
         {/* Sprint selector */}
         {periodMode === 'sprint' && sprints.length > 0 && (
           <div>
-            <label className="mb-2 block text-sm font-medium text-muted">Sprint</label>
-            <div className="inline-flex flex-wrap gap-1">
+            <label htmlFor="sprint-select" className="mb-2 block text-sm font-medium text-muted">Sprint</label>
+            <select
+              id="sprint-select"
+              value={selectedSprintId}
+              onChange={(e) => replaceParams({ sprintId: e.target.value })}
+              className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            >
               {sprints.map((s) => (
-                <ToggleChip
-                  key={s.id}
-                  label={s.name}
-                  selected={selectedSprintId === String(s.id)}
-                  onClick={() => replaceParams({ sprintId: String(s.id) })}
-                />
+                <option key={s.id} value={String(s.id)}>
+                  {s.name}{s.state === 'active' ? ' (Active)' : ''}
+                </option>
               ))}
-            </div>
+            </select>
           </div>
         )}
       </div>
@@ -387,37 +393,43 @@ function SupportPageInner() {
                   totalIssues={pageState.summary.totalIssues}
                 />
 
-                {/* P50 card */}
-                <div className="rounded-xl border bg-card p-5 shadow-sm border-l-4 border-l-blue-400">
-                  <h3 className="text-sm font-medium text-muted">P50 Cycle Time</h3>
-                  <div className="mt-3 flex items-end gap-2">
-                    <span className="text-3xl font-bold tracking-tight">
-                      {pageState.summary.p50Days.toFixed(1)}
-                    </span>
-                    <span className="mb-1 text-sm text-muted">working days</span>
-                  </div>
-                  {pageState.summary.p50Days > 0 && (
-                    <div className="mt-3">
-                      <CycleTimeBandBadge band={classifyCycleTime(pageState.summary.p50Days)} />
-                    </div>
-                  )}
-                </div>
+                 {/* P50 card */}
+                 <div className="rounded-xl border bg-card p-5 shadow-sm border-l-4 border-l-blue-400">
+                   <h3 className="text-sm font-medium text-muted">P50 Cycle Time</h3>
+                   <div className="mt-3 flex items-end gap-2">
+                     <span className="text-3xl font-bold tracking-tight">
+                       {pageState.summary.p50Days.toFixed(1)}
+                     </span>
+                     <span className="mb-1 text-sm text-muted">working days</span>
+                   </div>
+                   {pageState.summary.p50Days > 0 && (
+                     <div className="mt-3">
+                       <CycleTimeBandBadge band={classifyCycleTime(pageState.summary.p50Days)} />
+                     </div>
+                   )}
+                   {periodMode === 'sprint' && (
+                     <p className="mt-2 text-xs text-muted">Completed tickets only</p>
+                   )}
+                 </div>
 
-                {/* P95 card */}
-                <div className="rounded-xl border bg-card p-5 shadow-sm border-l-4 border-l-purple-400">
-                  <h3 className="text-sm font-medium text-muted">P95 Cycle Time</h3>
-                  <div className="mt-3 flex items-end gap-2">
-                    <span className="text-3xl font-bold tracking-tight">
-                      {pageState.summary.p95Days.toFixed(1)}
-                    </span>
-                    <span className="mb-1 text-sm text-muted">working days</span>
-                  </div>
-                  {pageState.summary.p95Days > 0 && (
-                    <div className="mt-3">
-                      <CycleTimeBandBadge band={classifyCycleTime(pageState.summary.p95Days)} />
-                    </div>
-                  )}
-                </div>
+                 {/* P95 card */}
+                 <div className="rounded-xl border bg-card p-5 shadow-sm border-l-4 border-l-purple-400">
+                   <h3 className="text-sm font-medium text-muted">P95 Cycle Time</h3>
+                   <div className="mt-3 flex items-end gap-2">
+                     <span className="text-3xl font-bold tracking-tight">
+                       {pageState.summary.p95Days.toFixed(1)}
+                     </span>
+                     <span className="mb-1 text-sm text-muted">working days</span>
+                   </div>
+                   {pageState.summary.p95Days > 0 && (
+                     <div className="mt-3">
+                       <CycleTimeBandBadge band={classifyCycleTime(pageState.summary.p95Days)} />
+                     </div>
+                   )}
+                   {periodMode === 'sprint' && (
+                     <p className="mt-2 text-xs text-muted">Completed tickets only</p>
+                   )}
+                 </div>
               </div>
 
               {/* Distribution chart + per-board breakdown */}

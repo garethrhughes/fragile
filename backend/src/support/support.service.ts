@@ -58,12 +58,12 @@ export class SupportService {
   // ---------------------------------------------------------------------------
 
   async getSupportTickets(query: SupportQueryDto): Promise<SupportResult[]> {
-    const { startDate, endDate } = await this.resolvePeriod(query);
+    const { startDate, endDate, isSprint, sprintName } = await this.resolvePeriod(query);
     const boardIds = await this.resolveBoardIds(query.boardId);
 
     return Promise.all(
       boardIds.map((boardId) =>
-        this.getSupportResultForBoard(boardId, startDate, endDate),
+        this.getSupportResultForBoard(boardId, startDate, endDate, isSprint, sprintName),
       ),
     );
   }
@@ -104,6 +104,8 @@ export class SupportService {
     boardId: string,
     startDate: Date,
     endDate: Date,
+    isSprint: boolean = false,
+    sprintName?: string,
   ): Promise<SupportResult> {
     const config = await this.boardConfigRepo.findOne({ where: { boardId } });
     const supportLabels: string[] = config?.supportLabels ?? [];
@@ -123,9 +125,7 @@ export class SupportService {
       (i) => isWorkItem(i.issueType),
     );
 
-    const totalIssues = issues.length;
-
-    if (totalIssues === 0) {
+    if (issues.length === 0) {
       return { boardId, totalIssues: 0, supportIssues: 0, supportPercentage: 0, p50Days: 0, p95Days: 0, tickets: [] };
     }
 
@@ -144,6 +144,47 @@ export class SupportService {
       const list = changelogsByIssue.get(cl.issueKey) ?? [];
       list.push(cl);
       changelogsByIssue.set(cl.issueKey, list);
+    }
+
+    // Step 2b (sprint mode): Bulk-load sprint changelogs to determine membership
+    // An issue belongs to the target sprint if its name appears in any sprint
+    // changelog toValue (comma-separated) OR if its current sprintId matches.
+    let sprintMemberKeys: Set<string> | null = null;
+    if (isSprint && sprintName) {
+      const sprintChangelogs = await this.changelogRepo
+        .createQueryBuilder('cl')
+        .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
+        .andWhere('cl.field = :field', { field: 'Sprint' })
+        .getMany();
+
+      sprintMemberKeys = new Set<string>();
+      const sprintIssueMap = new Map<string, JiraChangelog[]>();
+      for (const cl of sprintChangelogs) {
+        const list = sprintIssueMap.get(cl.issueKey) ?? [];
+        list.push(cl);
+        sprintIssueMap.set(cl.issueKey, list);
+      }
+
+      // Pre-resolve sprint ID from name to avoid N+1 in the loop below
+      const sprintByName = await this.sprintRepo.findOne({ where: { name: sprintName, boardId } });
+      const sprintIdByName = sprintByName?.id;
+
+      for (const issue of issues) {
+        // Changelog membership: sprint name appears in any toValue
+        const logs = sprintIssueMap.get(issue.key) ?? [];
+        const inSprintViaChangelog = logs.some((cl) => {
+          const names = (cl.toValue ?? '').split(',').map((n) => n.trim());
+          return names.includes(sprintName);
+        });
+        // Current assignment fallback (covers issues added mid-sprint with no prior history)
+        const inSprintViaAssignment =
+          sprintIdByName !== undefined &&
+          issue.sprintId !== null &&
+          String(issue.sprintId) === String(sprintIdByName);
+        if (inSprintViaChangelog || inSprintViaAssignment) {
+          sprintMemberKeys.add(issue.key);
+        }
+      }
     }
 
     // Step 3: Bulk-load issue links for link-based classification
@@ -182,30 +223,17 @@ export class SupportService {
     const triagePrefix = triageBoardKey ? `${triageBoardKey}-` : null;
 
     // Step 6: Classify and compute cycle time
+    // Quarter mode: totalIssues = issues that completed within the period.
+    // Sprint mode: totalIssues = all sprint-member work items regardless of status.
+    let totalIssues = 0;
     const tickets: SupportTicketDto[] = [];
 
     for (const issue of issues) {
-      // --- Classify ---
-      const labelMatch =
-        supportLabels.length > 0 &&
-        Array.isArray(issue.labels) &&
-        (issue.labels as string[]).some((l) => supportLabels.includes(l));
+      // Sprint mode: skip issues that are not members of this sprint
+      if (isSprint && sprintMemberKeys !== null && !sprintMemberKeys.has(issue.key)) {
+        continue;
+      }
 
-      const linkMatch =
-        supportLinkType !== null &&
-        triagePrefix !== null &&
-        (linksByIssue.get(issue.key) ?? []).some(
-          (lnk) =>
-            lnk.linkTypeName === supportLinkType &&
-            lnk.targetIssueKey.startsWith(triagePrefix),
-        );
-
-      if (!labelMatch && !linkMatch) continue;
-
-      const matchReason: 'label' | 'link' | 'both' =
-        labelMatch && linkMatch ? 'both' : labelMatch ? 'label' : 'link';
-
-      // --- Cycle time ---
       const issueLogs = changelogsByIssue.get(issue.key) ?? [];
       const inProgressTransition = issueLogs.find((cl) =>
         inProgressNames.includes(cl.toValue ?? ''),
@@ -233,6 +261,35 @@ export class SupportService {
           cycleEnd = releaseDate;
         }
       }
+
+      if (isSprint) {
+        // Sprint mode: count all sprint members in denominator; no completion gate
+        totalIssues += 1;
+      } else {
+        // Quarter mode: only count issues that completed in the period
+        if (cycleEnd === null) continue;
+        totalIssues += 1;
+      }
+
+      // --- Classify ---
+      const labelMatch =
+        supportLabels.length > 0 &&
+        Array.isArray(issue.labels) &&
+        (issue.labels as string[]).some((l) => supportLabels.includes(l));
+
+      const linkMatch =
+        supportLinkType !== null &&
+        triagePrefix !== null &&
+        (linksByIssue.get(issue.key) ?? []).some(
+          (lnk) =>
+            lnk.linkTypeName === supportLinkType &&
+            lnk.targetIssueKey.startsWith(triagePrefix),
+        );
+
+      if (!labelMatch && !linkMatch) continue;
+
+      const matchReason: 'label' | 'link' | 'both' =
+        labelMatch && linkMatch ? 'both' : labelMatch ? 'label' : 'link';
 
       let cycleTimeDays: number | null = null;
       let startedAt: string | null = null;
@@ -304,16 +361,21 @@ export class SupportService {
 
   private async resolvePeriod(
     query: SupportQueryDto,
-  ): Promise<{ startDate: Date; endDate: Date }> {
+  ): Promise<{ startDate: Date; endDate: Date; isSprint: boolean; sprintName?: string }> {
     if (query.quarter) {
       const { startDate, endDate } = quarterToDates(query.quarter);
-      return { startDate, endDate };
+      return { startDate, endDate, isSprint: false };
     }
 
     if (query.sprintId) {
       const sprint = await this.sprintRepo.findOne({ where: { id: query.sprintId } });
       if (sprint?.startDate && sprint?.endDate) {
-        return { startDate: sprint.startDate, endDate: sprint.endDate };
+        return {
+          startDate: sprint.startDate,
+          endDate: sprint.endDate,
+          isSprint: true,
+          sprintName: sprint.name,
+        };
       }
     }
 
@@ -322,7 +384,7 @@ export class SupportService {
       const startDate = new Date(start);
       const endDate = new Date(end);
       if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
-        return { startDate, endDate };
+        return { startDate, endDate, isSprint: false };
       }
     }
 
@@ -330,6 +392,6 @@ export class SupportService {
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 90);
-    return { startDate, endDate };
+    return { startDate, endDate, isSprint: false };
   }
 }

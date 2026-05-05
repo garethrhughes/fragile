@@ -57,3 +57,4 @@ a new ADR is created for the replacement decision.
 | [0043](0043-ecs-fargate-replaces-app-runner.md) | ECS Fargate replaces App Runner as compute platform | Accepted | 2026-04-28 |
 | [0044](0044-roadmap-coverage-via-direct-issue-links.md) | Roadmap coverage via direct Jira issue links with per-board `roadmapLinkTypes` allowlist | Accepted | 2026-05-05 |
 | [0045](0045-support-ticket-report.md) | Support ticket report: per-board classification, cycle time, MCP tools | Accepted | 2026-05-06 |
+| [0046](0046-support-sprint-membership-population.md) | Support Report: sprint-membership-based issue population | Accepted | 2026-05-06 |
