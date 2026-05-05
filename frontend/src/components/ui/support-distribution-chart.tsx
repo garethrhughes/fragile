@@ -8,6 +8,10 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts'
+import type {
+  ValueType,
+  NameType,
+} from 'recharts/types/component/DefaultTooltipContent'
 
 interface SupportDistributionChartProps {
   supportIssues: number
@@ -51,9 +55,14 @@ export function SupportDistributionChart({
           ))}
         </Pie>
         <Tooltip
-          formatter={(value: number, name: string) => [
-            `${value} issues`,
-            name,
+          formatter={(
+            value: ValueType | undefined,
+            name: NameType | undefined,
+          ): [string, string] => [
+            value !== undefined && !Array.isArray(value)
+              ? `${Number(value)} issues`
+              : '',
+            String(name ?? ''),
           ]}
         />
         <Legend />

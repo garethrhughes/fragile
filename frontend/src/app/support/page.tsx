@@ -74,7 +74,11 @@ function SupportPageInner() {
   const allBoards = useBoardsStore((s) => s.allBoards)
   const boardsStatus = useBoardsStore((s) => s.status)
 
-  const selectedBoard = searchParams.get('board') ?? ''
+  const boardsParam = searchParams.get('boards')
+  const selectedBoards = useMemo<string[]>(
+    () => (boardsParam ? boardsParam.split(',').filter(Boolean) : allBoards),
+    [boardsParam, allBoards],
+  )
   const selectedQuarter = searchParams.get('quarter') ?? ''
 
   const [quarters, setQuarters] = useState<QuarterInfo[]>([])
@@ -108,7 +112,7 @@ function SupportPageInner() {
     setPageState({ status: 'loading' })
 
     const params = {
-      boardId: selectedBoard || undefined,
+      boardId: selectedBoards.join(',') || undefined,
       quarter: selectedQuarter,
     }
 
@@ -132,7 +136,7 @@ function SupportPageInner() {
     }
     void run()
     return () => { cancelled = true }
-  }, [selectedBoard, selectedQuarter, boardsStatus, retryKey])
+  }, [selectedBoards, selectedQuarter, boardsStatus, retryKey])
 
   // All tickets across boards for the table
   const allTickets = useMemo(() => {
@@ -148,8 +152,8 @@ function SupportPageInner() {
   )
 
   const handleBoardSelect = useCallback(
-    (boardId: string) => replaceParams({ board: boardId === selectedBoard ? null : boardId }),
-    [replaceParams, selectedBoard],
+    (boardId: string) => replaceParams({ boards: boardId === (selectedBoards[0] ?? '') && selectedBoards.length === 1 ? '' : boardId }),
+    [replaceParams, selectedBoards],
   )
 
   return (
@@ -169,17 +173,22 @@ function SupportPageInner() {
 
       {/* Filters */}
       <div className="space-y-4 rounded-xl border border-border bg-card p-4">
-        {/* Board selector — optional single board filter */}
+        {/* Board selector */}
         <div>
-          <label className="mb-2 block text-sm font-medium text-muted">
-            Board <span className="font-normal text-xs">(all boards if none selected)</span>
-          </label>
+          <label className="mb-2 block text-sm font-medium text-muted">Board</label>
           <div className="flex flex-wrap gap-2">
+            {/* All option */}
+            <BoardChip
+              boardId="All"
+              selected={selectedBoards.length === allBoards.length || selectedBoards.length === 0}
+              onClick={() => replaceParams({ boards: '' })}
+            />
+            {/* Individual boards */}
             {allBoards.map((boardId) => (
               <BoardChip
                 key={boardId}
                 boardId={boardId}
-                selected={selectedBoard === boardId}
+                selected={selectedBoards.length < allBoards.length && selectedBoards.includes(boardId)}
                 onClick={() => handleBoardSelect(boardId)}
               />
             ))}
@@ -245,7 +254,7 @@ function SupportPageInner() {
           {pageState.summary.totalIssues === 0 ? (
             <EmptyState
               title="No completed issues"
-              message={`No issues completed in ${selectedQuarter}${selectedBoard ? ` for board ${selectedBoard}` : ''}.`}
+              message={`No issues completed in ${selectedQuarter}${selectedBoards.length < allBoards.length ? ` for board ${selectedBoards.join(', ')}` : ''}.`}
             />
           ) : (
             <>
