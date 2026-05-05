@@ -318,7 +318,7 @@ export default function SettingsPage() {
         </p>
         <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>Sync runs automatically every 30 minutes. Use this button to trigger an immediate sync.</span>
+          <span>Sync runs automatically once a day. Use this button to trigger an immediate sync.</span>
         </div>
         <div className="flex items-center gap-4">
           <button
