@@ -30,6 +30,9 @@ export interface BoardConfig {
   inProgressStatusNames: string[];
   cancelledStatusNames: string[];
   roadmapLinkTypes: string[];
+  supportLabels: string[];
+  supportLinkType: string | null;
+  triageBoardKey: string | null;
 }
 
 export interface SprintAccuracy {
@@ -979,5 +982,81 @@ export function deleteSprintReport(boardId: string, sprintId: string): Promise<v
   return apiFetch(
     `/api/sprint-report/${encodeURIComponent(boardId)}/${encodeURIComponent(sprintId)}`,
     { method: 'DELETE' },
+  )
+}
+
+// ---- Support Report types and endpoints ----------------------------------
+
+export type SupportMatchReason = 'label' | 'link' | 'both'
+
+export interface SupportTicket {
+  issueKey: string
+  summary: string
+  issueType: string
+  boardId: string
+  cycleTimeDays: number | null
+  completedAt: string | null
+  startedAt: string | null
+  band: CycleTimeBand | null
+  jiraUrl: string
+  matchReason: SupportMatchReason
+}
+
+export interface SupportResult {
+  boardId: string
+  totalIssues: number
+  supportIssues: number
+  supportPercentage: number
+  p50Days: number
+  p95Days: number
+  tickets: SupportTicket[]
+}
+
+export interface SupportBoardBreakdown {
+  boardId: string
+  supportIssues: number
+  totalIssues: number
+  percentage: number
+}
+
+export interface SupportSummary {
+  totalIssues: number
+  supportIssues: number
+  supportPercentage: number
+  p50Days: number
+  p95Days: number
+  byBoard: SupportBoardBreakdown[]
+}
+
+export interface SupportQueryParams {
+  boardId?: string
+  quarter?: string
+  sprintId?: string
+  period?: string
+}
+
+export function getSupportTickets(
+  params: SupportQueryParams,
+): Promise<SupportResult[]> {
+  return apiFetch(
+    `/api/support${toQueryString({
+      boardId: params.boardId,
+      quarter: params.quarter,
+      sprintId: params.sprintId,
+      period: params.period,
+    })}`,
+  )
+}
+
+export function getSupportSummary(
+  params: SupportQueryParams,
+): Promise<SupportSummary> {
+  return apiFetch(
+    `/api/support/summary${toQueryString({
+      boardId: params.boardId,
+      quarter: params.quarter,
+      sprintId: params.sprintId,
+      period: params.period,
+    })}`,
   )
 }

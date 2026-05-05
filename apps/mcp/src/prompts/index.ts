@@ -397,6 +397,101 @@ export function registerPrompts(server: McpServer): void {
       };
     },
   );
+
+  server.prompt(
+    'support_health_report',
+    'Generate a support ticket health report for a quarter — showing support load %, p50/p95 cycle times, and a per-board breakdown. Includes guidance for reducing unplanned support work.',
+    {
+      quarter: z.string().optional().describe('Target quarter in YYYY-QN format. Defaults to the current quarter.'),
+    },
+    async ({ quarter }) => {
+      const report = await buildSupportHealthReport(quarter);
+      return {
+        messages: [
+          {
+            role: 'user' as const,
+            content: { type: 'text' as const, text: report },
+          },
+        ],
+      };
+    },
+  );
+}
+
+// ─── support_health_report ────────────────────────────────────────────────────
+
+interface SupportBoardBreakdown {
+  boardId: string;
+  supportIssues: number;
+  totalIssues: number;
+  percentage: number;
+}
+
+interface SupportSummary {
+  totalIssues: number;
+  supportIssues: number;
+  supportPercentage: number;
+  p50Days: number;
+  p95Days: number;
+  byBoard: SupportBoardBreakdown[];
+}
+
+async function buildSupportHealthReport(quarter?: string): Promise<string> {
+  const params: Record<string, string | undefined> = {};
+  if (quarter) params['quarter'] = quarter;
+
+  const [summary, syncStatus] = await Promise.all([
+    fetchJsonSafe<SupportSummary>('/api/support/summary', params),
+    fetchJsonSafe<SyncEntry[]>('/api/sync/status'),
+  ]);
+
+  const periodLabel = quarter ?? 'current quarter';
+
+  const lines: string[] = [
+    `# Support Health Report — ${periodLabel}`,
+    '',
+    '## Overview',
+  ];
+
+  if (summary === null) {
+    lines.push('_Support data unavailable._');
+  } else {
+    lines.push(
+      `- **Support load:** ${summary.supportPercentage.toFixed(1)}% (${summary.supportIssues} of ${summary.totalIssues} issues)`,
+      `- **P50 cycle time:** ${summary.p50Days.toFixed(1)} working days`,
+      `- **P95 cycle time:** ${summary.p95Days.toFixed(1)} working days`,
+      '',
+      '## Per-Board Breakdown',
+    );
+    if (summary.byBoard.length === 0) {
+      lines.push('_No boards with support tickets in this period._');
+    } else {
+      lines.push('| Board | Support | Total | % |', '|---|---|---|---|');
+      for (const b of summary.byBoard) {
+        lines.push(`| ${b.boardId} | ${b.supportIssues} | ${b.totalIssues} | ${b.percentage.toFixed(1)}% |`);
+      }
+    }
+  }
+
+  lines.push('', '## Data Freshness');
+  const syncEntries = Array.isArray(syncStatus) ? syncStatus : [];
+  if (syncEntries.length === 0) {
+    lines.push('_Sync status unavailable._');
+  } else {
+    lines.push('| Board | Last Sync | Status |', '|---|---|---|');
+    for (const entry of syncEntries) {
+      const staleFlag = isStale(entry.syncedAt) ? ' ⚠️ STALE' : '';
+      lines.push(`| ${entry.boardId} | ${formatAge(entry.syncedAt)}${staleFlag} | ${entry.status} |`);
+    }
+  }
+
+  lines.push(
+    '',
+    '## Guidance',
+    'Analyse the support load and cycle time above. Identify boards with high support percentages (>25%) or slow cycle times. Suggest root causes and concrete actions to reduce unplanned support work.',
+  );
+
+  return lines.join('\n');
 }
 
 // Export build functions for testing
@@ -405,6 +500,7 @@ export {
   buildSprintRetrospective,
   buildReleaseReadiness,
   buildQuarterlyPlanningReview,
+  buildSupportHealthReport,
 };
 
 // Re-export McpError for test use
