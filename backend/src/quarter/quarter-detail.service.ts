@@ -55,6 +55,14 @@ export interface QuarterDetailIssue {
   /** True if the issue's epicKey is a member of the coveredEpicKeys set */
   linkedToRoadmap: boolean;
 
+  /**
+   * Roadmap delivery status:
+   *   in-scope = linked to idea AND delivered on or before targetDate
+   *   linked   = linked to idea AND not yet delivered on time
+   *   none     = no roadmap link, or issue is cancelled
+   */
+  roadmapStatus: 'in-scope' | 'linked' | 'none';
+
   /** How the roadmap link was established: 'direct' (Condition C) | 'epic' (A/B) | null */
   roadmapLinkSource: 'direct' | 'epic' | null;
 
@@ -78,7 +86,9 @@ export interface QuarterDetailSummary {
   totalIssues: number;
   completedIssues: number;
   addedMidQuarter: number;
-  linkedToRoadmap: number;
+  roadmapLinkedCount: number;
+  incidentCount: number;
+  failureCount: number;
   totalPoints: number;
   completedPoints: number;
 }
@@ -145,6 +155,7 @@ export class QuarterDetailService {
     // -----------------------------------------------------------------------
     const boardConfig = await this.boardConfigRepo.findOne({ where: { boardId } });
     const doneStatuses: string[] = boardConfig?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
+    const cancelledStatusNames: string[] = boardConfig?.cancelledStatusNames ?? ['Cancelled', "Won't Do"];
     const incidentIssueTypes: string[] = boardConfig?.incidentIssueTypes ?? ['Bug', 'Incident'];
     const incidentLabels: string[] = boardConfig?.incidentLabels ?? [];
     const incidentPriorities: string[] = boardConfig?.incidentPriorities ?? ['Critical'];
@@ -274,32 +285,31 @@ export class QuarterDetailService {
     }
 
     // -----------------------------------------------------------------------
-    // Step 7 — Load RoadmapConfig, build coveredEpicKeys and directLinkIdeaMap
+    // Step 7 — Load RoadmapConfig, build allIdeas for roadmap linking
     // -----------------------------------------------------------------------
     const roadmapConfigs = await this.roadmapConfigRepo.find({ where: {} });
-    const coveredEpicKeys = new Set<string>();
     let allIdeas: JpdIdea[] = [];
 
     if (roadmapConfigs.length > 0) {
       const jpdKeys = roadmapConfigs.map((r) => r.jpdKey);
       allIdeas = await this.jpdIdeaRepo.find({ where: { jpdKey: In(jpdKeys) } });
-      for (const idea of allIdeas) {
-        for (const key of (idea.deliveryIssueKeys ?? [])) {
-          if (key) {
-            coveredEpicKeys.add(key);
-          }
-        }
-      }
     }
 
-    // Direct issue → idea links (ADR 0044 Condition C), using the same
-    // roadmapLinkTypes as the roadmap service for consistent coverage.
+    // Direct issue → idea links (ADR 0044 Condition C)
     const directLinkIdeaMap = await buildDirectLinkIdeaMap(
       this.issueLinkRepo,
       quarterIssueKeys,
       allIdeas,
       roadmapLinkTypes,
     );
+
+    // Epic → idea map (Condition A — epic key covered by a roadmap idea)
+    const epicIdeaMap = new Map<string, JpdIdea>();
+    for (const idea of allIdeas) {
+      for (const key of (idea.deliveryIssueKeys ?? [])) {
+        if (key) epicIdeaMap.set(key, idea);
+      }
+    }
 
     // -----------------------------------------------------------------------
     // Step 8 — Build per-issue result
@@ -323,17 +333,38 @@ export class QuarterDetailService {
       // addedMidQuarter: boardEntryDate is strictly after quarterStart
       const addedMidQuarter = boardEntryDate > quarterStart;
 
-      // linkedToRoadmap: epic-key path (Conditions A/B) OR direct issue link
-      // path (Condition C, ADR 0044) — consistent with roadmap.service.ts
-      const linkedViaEpic =
-        issue.epicKey != null && coveredEpicKeys.has(issue.epicKey);
-      const linkedViaDirect = directLinkIdeaMap.has(issue.key);
-      const linkedToRoadmap = linkedViaEpic || linkedViaDirect;
-      const roadmapLinkSource: 'direct' | 'epic' | null = linkedViaDirect
-        ? 'direct'
-        : linkedViaEpic
-          ? 'epic'
-          : null;
+      // roadmapStatus — Condition A only (no sprint state for quarter view)
+      //   in-scope = linked AND delivered on or before targetDate
+      //   linked   = linked AND not yet delivered on time
+      //   none     = no link, or cancelled
+      let roadmapStatus: 'in-scope' | 'linked' | 'none' = 'none';
+      let roadmapLinkSource: 'direct' | 'epic' | null = null;
+      const linkedToRoadmap: boolean = directLinkIdeaMap.has(issue.key) ||
+        (issue.epicKey != null && epicIdeaMap.has(issue.epicKey));
+
+      if (!cancelledStatusNames.includes(issue.status)) {
+        const epicIdea = issue.epicKey !== null ? epicIdeaMap.get(issue.epicKey) : undefined;
+        const directIdea = directLinkIdeaMap.get(issue.key);
+        const idea = epicIdea ?? directIdea;
+        if (idea) {
+          roadmapLinkSource = epicIdea ? 'epic' : 'direct';
+          if (idea.targetDate !== null) {
+            const targetEndOfDay = new Date(idea.targetDate.getTime());
+            targetEndOfDay.setUTCHours(23, 59, 59, 999);
+            const doneTransition = issueChangelogs.find(
+              (cl) =>
+                cl.field === 'status' &&
+                cl.toValue !== null &&
+                doneStatuses.includes(cl.toValue),
+            );
+            const resolvedDate = doneTransition?.changedAt ?? null;
+            const deliveredOnTime = resolvedDate !== null && resolvedDate <= targetEndOfDay;
+            roadmapStatus = deliveredOnTime ? 'in-scope' : 'linked';
+          } else {
+            roadmapStatus = 'linked';
+          }
+        }
+      }
 
       // isIncident: must match type/label AND pass priority AND-gate
       // (consistent with MttrService; incidentPriorities = [] means all priorities qualify)
@@ -374,6 +405,7 @@ export class QuarterDetailService {
         completedInQuarter,
         addedMidQuarter,
         linkedToRoadmap,
+        roadmapStatus,
         roadmapLinkSource,
         isIncident,
         isFailure,
@@ -398,7 +430,9 @@ export class QuarterDetailService {
       totalIssues: quarterIssues.length,
       completedIssues: results.filter((r) => r.completedInQuarter).length,
       addedMidQuarter: results.filter((r) => r.addedMidQuarter).length,
-      linkedToRoadmap: results.filter((r) => r.linkedToRoadmap).length,
+      roadmapLinkedCount: results.filter((r) => r.roadmapStatus !== 'none').length,
+      incidentCount: results.filter((r) => r.isIncident).length,
+      failureCount: results.filter((r) => r.isFailure).length,
       totalPoints: results.reduce((s, r) => s + (r.points ?? 0), 0),
       completedPoints: results
         .filter((r) => r.completedInQuarter)
@@ -461,7 +495,9 @@ export class QuarterDetailService {
         totalIssues: 0,
         completedIssues: 0,
         addedMidQuarter: 0,
-        linkedToRoadmap: 0,
+        roadmapLinkedCount: 0,
+        incidentCount: 0,
+        failureCount: 0,
         totalPoints: 0,
         completedPoints: 0,
       },

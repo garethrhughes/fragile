@@ -10,6 +10,7 @@ import {
   JpdIdea,
   JiraIssueLink,
 } from '../database/entities/index.js';
+import { WorkingTimeService, type WorkingTimeConfig } from '../metrics/working-time.service.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -69,7 +70,24 @@ function makeChangelog(overrides: Partial<JiraChangelog> = {}): JiraChangelog {
   } as unknown as JiraChangelog;
 }
 
-// 2026-W02 starts Monday 2026-01-05, ends Sunday 2026-01-11
+function mockWorkingTimeService(): jest.Mocked<WorkingTimeService> {
+  const DEFAULT_WT_CONFIG: WorkingTimeConfig = {
+    timezone: 'UTC',
+    workDays: [1, 2, 3, 4, 5],
+    hoursPerDay: 8,
+    holidays: [],
+  };
+  return {
+    getConfig: jest.fn().mockResolvedValue({}),
+    toConfig: jest.fn().mockReturnValue(DEFAULT_WT_CONFIG),
+    workingDaysBetween: jest.fn().mockImplementation(
+      (start: Date, end: Date) =>
+        Math.max(0, (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)),
+    ),
+  } as unknown as jest.Mocked<WorkingTimeService>;
+}
+
+
 const WEEK = '2026-W02';
 const WEEK_START = new Date('2026-01-05T00:00:00.000Z');
 
@@ -81,6 +99,7 @@ describe('WeekDetailService', () => {
   let roadmapConfigRepo: jest.Mocked<Repository<RoadmapConfig>>;
   let jpdIdeaRepo: jest.Mocked<Repository<JpdIdea>>;
   let issueLinkRepo: jest.Mocked<Repository<JiraIssueLink>>;
+  let workingTimeService: jest.Mocked<WorkingTimeService>;
 
   function kanbanConfig(overrides: object = {}): BoardConfig {
     return {
@@ -104,6 +123,7 @@ describe('WeekDetailService', () => {
     roadmapConfigRepo = mockRepo<RoadmapConfig>();
     jpdIdeaRepo = mockRepo<JpdIdea>();
     issueLinkRepo = mockRepo<JiraIssueLink>();
+    workingTimeService = mockWorkingTimeService();
 
     service = new WeekDetailService(
       issueRepo,
@@ -113,6 +133,7 @@ describe('WeekDetailService', () => {
       jpdIdeaRepo,
       issueLinkRepo,
       mockConfigService(),
+      workingTimeService,
     );
   });
 
@@ -345,7 +366,7 @@ describe('WeekDetailService', () => {
       expect(result.issues[0].isFailure).toBe(true);
     });
 
-    it('sets linkedToRoadmap when epicKey is in covered set', async () => {
+    it('sets roadmapStatus when epicKey is in covered set', async () => {
       boardConfigRepo.findOne.mockResolvedValue(kanbanConfig());
       const boardEntryCl = makeChangelog({
         issueKey: 'PLAT-1',
@@ -365,16 +386,16 @@ describe('WeekDetailService', () => {
         { id: 1, jpdKey: 'JPD-1', description: null, startDateFieldId: null, targetDateFieldId: null, createdAt: new Date() } as RoadmapConfig,
       ]);
       jpdIdeaRepo.find.mockResolvedValue([
-        { key: 'IDEA-1', jpdKey: 'JPD-1', deliveryIssueKeys: ['EPIC-1'] } as unknown as JpdIdea,
+        { key: 'IDEA-1', jpdKey: 'JPD-1', deliveryIssueKeys: ['EPIC-1'], targetDate: new Date('2026-06-30T00:00:00Z') } as unknown as JpdIdea,
       ]);
 
       const result = await service.getDetail('PLAT', WEEK);
-      expect(result.issues[0].linkedToRoadmap).toBe(true);
+      expect(result.issues[0].roadmapStatus).not.toBe('none');
     });
 
-    it('sets linkedToRoadmap via direct issue→idea link (Condition C)', async () => {
+    it('sets roadmapStatus via direct issue→idea link (Condition C)', async () => {
       // PLAT-1 has no epicKey but is directly linked to a JPD idea via a
-      // configured roadmapLinkType — it should still be linkedToRoadmap.
+      // configured roadmapLinkType — it should still be linked to roadmap.
       const config = kanbanConfig();
       (config as any).roadmapLinkTypes = ['is connected to'];
       boardConfigRepo.findOne.mockResolvedValue(config);
@@ -407,7 +428,7 @@ describe('WeekDetailService', () => {
       });
 
       const result = await service.getDetail('PLAT', WEEK);
-      expect(result.issues[0].linkedToRoadmap).toBe(true);
+      expect(result.issues[0].roadmapStatus).not.toBe('none');
     });
 
     it('builds jiraUrl when JIRA_BASE_URL is configured', async () => {
@@ -419,6 +440,7 @@ describe('WeekDetailService', () => {
         jpdIdeaRepo,
         issueLinkRepo,
         mockConfigService('https://myorg.atlassian.net'),
+        workingTimeService,
       );
       boardConfigRepo.findOne.mockResolvedValue(kanbanConfig());
       const boardEntryCl = makeChangelog({
@@ -821,6 +843,7 @@ describe('WeekDetailService', () => {
         jpdIdeaRepo,
         issueLinkRepo,
         mockConfigService('', timezone),
+        workingTimeService,
       );
     }
 
@@ -928,6 +951,345 @@ describe('WeekDetailService', () => {
       const result = await service.getDetail('PLAT', WEEK);
 
       expect(result.summary.totalIssues).toBe(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // roadmapStatus 3-way enum (AC1–AC3)
+  // -------------------------------------------------------------------------
+
+  describe('roadmapStatus', () => {
+    function setupRoadmapScenario(overrides: {
+      issueStatus?: string;
+      epicKey?: string | null;
+      directLink?: boolean;
+      completedAt?: Date | null;
+      targetDate?: Date;
+    }) {
+      const {
+        issueStatus = 'Done',
+        epicKey = 'EPIC-1',
+        directLink = false,
+        completedAt = new Date('2026-01-08T10:00:00Z'),
+        targetDate = new Date('2026-06-30T00:00:00Z'),
+      } = overrides;
+
+      boardConfigRepo.findOne.mockResolvedValue(
+        kanbanConfig({
+          cancelledStatusNames: ['Cancelled', "Won't Do"],
+          roadmapLinkTypes: directLink ? ['is connected to'] : [],
+        }),
+      );
+
+      const changelogs: JiraChangelog[] = [
+        makeChangelog({
+          issueKey: 'PLAT-1',
+          fromValue: 'Backlog',
+          toValue: 'To Do',
+          changedAt: new Date('2026-01-06T09:00:00Z'),
+        }),
+      ];
+      if (completedAt) {
+        changelogs.push(
+          makeChangelog({
+            issueKey: 'PLAT-1',
+            field: 'status',
+            fromValue: 'In Progress',
+            toValue: 'Done',
+            changedAt: completedAt,
+          }),
+        );
+      }
+
+      issueRepo.find.mockResolvedValue([
+        makeIssue({
+          key: 'PLAT-1',
+          epicKey: epicKey ?? null,
+          status: issueStatus,
+          createdAt: new Date('2025-12-01T00:00:00Z'),
+        }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue(changelogs),
+      });
+
+      roadmapConfigRepo.find.mockResolvedValue([
+        { id: 1, jpdKey: 'JPD-1', description: null, startDateFieldId: null, targetDateFieldId: null, createdAt: new Date() } as RoadmapConfig,
+      ]);
+
+      const ideaKey = directLink ? 'PT-1' : 'IDEA-1';
+      jpdIdeaRepo.find.mockResolvedValue([
+        {
+          key: ideaKey,
+          jpdKey: 'JPD-1',
+          deliveryIssueKeys: epicKey ? [epicKey] : [],
+          targetDate,
+        } as unknown as JpdIdea,
+      ]);
+
+      if (directLink) {
+        issueLinkRepo.createQueryBuilder = jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          getMany: jest.fn().mockResolvedValue([
+            { sourceIssueKey: 'PLAT-1', targetIssueKey: ideaKey, linkTypeName: 'is connected to' },
+          ]),
+        });
+      } else {
+        issueLinkRepo.createQueryBuilder = jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          getMany: jest.fn().mockResolvedValue([]),
+        });
+      }
+    }
+
+    it('returns roadmapStatus=in-scope when issue completed on or before targetDate (via epic)', async () => {
+      setupRoadmapScenario({
+        completedAt: new Date('2026-01-08T10:00:00Z'), // well before targetDate 2026-06-30
+        targetDate: new Date('2026-06-30T00:00:00Z'),
+      });
+      const result = await service.getDetail('PLAT', WEEK);
+      expect(result.issues[0].roadmapStatus).toBe('in-scope');
+      expect(result.issues[0].roadmapLinkSource).toBe('epic');
+    });
+
+    it('returns roadmapStatus=linked when issue linked but not completed on time', async () => {
+      setupRoadmapScenario({
+        issueStatus: 'In Progress',
+        completedAt: null,
+        targetDate: new Date('2026-01-01T00:00:00Z'), // targetDate already passed
+      });
+      const result = await service.getDetail('PLAT', WEEK);
+      expect(result.issues[0].roadmapStatus).toBe('linked');
+    });
+
+    it('returns roadmapStatus=none when issue has no roadmap link', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig());
+      const boardEntryCl = makeChangelog({ issueKey: 'PLAT-1', changedAt: new Date('2026-01-06T09:00:00Z') });
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', epicKey: null, createdAt: new Date('2025-12-01T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([boardEntryCl]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+      const result = await service.getDetail('PLAT', WEEK);
+      expect(result.issues[0].roadmapStatus).toBe('none');
+      expect(result.issues[0].roadmapLinkSource).toBeNull();
+    });
+
+    it('returns roadmapStatus=none for cancelled issues even when linked to roadmap', async () => {
+      setupRoadmapScenario({ issueStatus: 'Cancelled', completedAt: null });
+      const result = await service.getDetail('PLAT', WEEK);
+      expect(result.issues[0].roadmapStatus).toBe('none');
+    });
+
+    it('returns roadmapStatus=linked when idea has null targetDate', async () => {
+      setupRoadmapScenario({ completedAt: null, targetDate: null as unknown as Date });
+      const result = await service.getDetail('PLAT', WEEK);
+      expect(result.issues[0].roadmapStatus).toBe('linked');
+      expect(result.issues[0].roadmapLinkSource).toBe('epic');
+    });
+
+    it('gives epic link priority over direct link (AC3 — epic wins)', async () => {
+      // Issue has both an epicKey covered by an idea AND a direct link to a different idea.
+      // Epic should win: roadmapLinkSource = 'epic'.
+      boardConfigRepo.findOne.mockResolvedValue(
+        kanbanConfig({ cancelledStatusNames: ['Cancelled'], roadmapLinkTypes: ['is connected to'] }),
+      );
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', epicKey: 'EPIC-1', status: 'Done', createdAt: new Date('2025-12-01T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeChangelog({ issueKey: 'PLAT-1', fromValue: 'Backlog', toValue: 'To Do', changedAt: new Date('2026-01-06T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-1', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-01-08T10:00:00Z') }),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([
+        { id: 1, jpdKey: 'JPD-1', description: null, startDateFieldId: null, targetDateFieldId: null, createdAt: new Date() } as RoadmapConfig,
+      ]);
+      jpdIdeaRepo.find.mockResolvedValue([
+        { key: 'PT-1', jpdKey: 'JPD-1', deliveryIssueKeys: ['EPIC-1'], targetDate: new Date('2026-06-30T00:00:00Z') } as unknown as JpdIdea,
+      ]);
+      issueLinkRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          { sourceIssueKey: 'PLAT-1', targetIssueKey: 'PT-1', linkTypeName: 'is connected to' },
+        ]),
+      });
+      const result = await service.getDetail('PLAT', WEEK);
+      expect(result.issues[0].roadmapLinkSource).toBe('epic');
+    });
+
+    it('summary.roadmapLinkedCount counts issues with roadmapStatus != none', async () => {
+      setupRoadmapScenario({ completedAt: new Date('2026-01-08T10:00:00Z') });
+      const result = await service.getDetail('PLAT', WEEK);
+      expect(result.summary.roadmapLinkedCount).toBe(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // cycleTimeDays per issue and medianCycleTimeDays in summary (AC5–AC6)
+  // -------------------------------------------------------------------------
+
+  describe('cycleTimeDays', () => {
+    it('computes cycleTimeDays as working days from first inProgress to first done transition', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(
+        kanbanConfig({ inProgressStatusNames: ['In Progress'] }),
+      );
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', status: 'Done', createdAt: new Date('2025-12-01T00:00:00Z') }),
+      ]);
+      // workingDaysBetween mock returns simple day diff
+      const inProgressAt = new Date('2026-01-06T09:00:00Z');
+      const doneAt = new Date('2026-01-08T09:00:00Z'); // 2 days later
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeChangelog({ issueKey: 'PLAT-1', fromValue: 'Backlog', toValue: 'To Do', changedAt: new Date('2026-01-05T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-1', field: 'status', fromValue: 'To Do', toValue: 'In Progress', changedAt: inProgressAt }),
+          makeChangelog({ issueKey: 'PLAT-1', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: doneAt }),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+
+      const result = await service.getDetail('PLAT', WEEK);
+      expect(result.issues[0].cycleTimeDays).toBeCloseTo(2, 1);
+    });
+
+    it('returns cycleTimeDays=null when no inProgress transition exists', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(
+        kanbanConfig({ inProgressStatusNames: ['In Progress'] }),
+      );
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', status: 'Done', createdAt: new Date('2025-12-01T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeChangelog({ issueKey: 'PLAT-1', fromValue: 'Backlog', toValue: 'To Do', changedAt: new Date('2026-01-05T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-1', field: 'status', fromValue: 'To Do', toValue: 'Done', changedAt: new Date('2026-01-08T09:00:00Z') }),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+
+      const result = await service.getDetail('PLAT', WEEK);
+      expect(result.issues[0].cycleTimeDays).toBeNull();
+    });
+
+    it('computes medianCycleTimeDays as median of non-null cycleTimeDays values', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(
+        kanbanConfig({ inProgressStatusNames: ['In Progress'] }),
+      );
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', status: 'Done', createdAt: new Date('2025-12-01T00:00:00Z') }),
+        makeIssue({ key: 'PLAT-2', status: 'Done', createdAt: new Date('2025-12-01T00:00:00Z') }),
+        makeIssue({ key: 'PLAT-3', status: 'Done', createdAt: new Date('2025-12-01T00:00:00Z') }),
+      ]);
+      // workingDaysBetween returns day diff: PLAT-1=2d, PLAT-2=4d, PLAT-3=no inProgress→null
+      // median of [2, 4] = 3
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeChangelog({ issueKey: 'PLAT-1', fromValue: 'Backlog', toValue: 'To Do', changedAt: new Date('2026-01-05T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-1', field: 'status', fromValue: 'To Do', toValue: 'In Progress', changedAt: new Date('2026-01-06T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-1', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-01-08T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-2', fromValue: 'Backlog', toValue: 'To Do', changedAt: new Date('2026-01-05T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-2', field: 'status', fromValue: 'To Do', toValue: 'In Progress', changedAt: new Date('2026-01-05T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-2', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-01-09T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-3', fromValue: 'Backlog', toValue: 'To Do', changedAt: new Date('2026-01-05T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-3', field: 'status', fromValue: 'To Do', toValue: 'Done', changedAt: new Date('2026-01-08T09:00:00Z') }),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+
+      const result = await service.getDetail('PLAT', WEEK);
+      expect(result.summary.medianCycleTimeDays).toBeCloseTo(3, 1);
+    });
+
+    it('returns medianCycleTimeDays=null when no issues have cycleTimeDays', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig({ inProgressStatusNames: ['In Progress'] }));
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', status: 'In Progress', createdAt: new Date('2025-12-01T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeChangelog({ issueKey: 'PLAT-1', fromValue: 'Backlog', toValue: 'To Do', changedAt: new Date('2026-01-05T09:00:00Z') }),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+      const result = await service.getDetail('PLAT', WEEK);
+      expect(result.summary.medianCycleTimeDays).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // incidentCount and failureCount in summary (AC4)
+  // -------------------------------------------------------------------------
+
+  describe('summary incident and failure counts', () => {
+    it('incidentCount reflects number of incident issues in the week', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig({ incidentPriorities: [] }));
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', issueType: 'Bug', createdAt: new Date('2025-12-01T00:00:00Z') }),
+        makeIssue({ key: 'PLAT-2', issueType: 'Story', createdAt: new Date('2025-12-01T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeChangelog({ issueKey: 'PLAT-1', changedAt: new Date('2026-01-06T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-2', changedAt: new Date('2026-01-06T09:00:00Z') }),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+      const result = await service.getDetail('PLAT', WEEK);
+      expect(result.summary.incidentCount).toBe(1);
+    });
+
+    it('failureCount reflects number of failure issues in the week', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig());
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', labels: ['regression'], createdAt: new Date('2025-12-01T00:00:00Z') }),
+        makeIssue({ key: 'PLAT-2', issueType: 'Story', createdAt: new Date('2025-12-01T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeChangelog({ issueKey: 'PLAT-1', changedAt: new Date('2026-01-06T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-2', changedAt: new Date('2026-01-06T09:00:00Z') }),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+      const result = await service.getDetail('PLAT', WEEK);
+      expect(result.summary.failureCount).toBe(1);
     });
   });
 });

@@ -13,6 +13,7 @@ import { DataTable, type Column } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
 import { MetricHelp, type MetricDefinition } from '@/components/ui/metric-help'
+import { PriorityBadge } from '@/components/ui/priority-badge'
 
 // ---------------------------------------------------------------------------
 // Metric help definitions
@@ -28,8 +29,20 @@ const WEEK_HELP: MetricDefinition[] = [
     description: 'Issues that reached a Done status during this week.',
   },
   {
-    name: 'Cycle Time',
-    description: 'Median time from first In Progress transition to Done for issues completed this week.',
+    name: 'Cycle Time (Median)',
+    description: 'Median working days from first In Progress transition to Done for issues completed this week. Excludes weekends.',
+  },
+  {
+    name: 'Roadmap-Linked',
+    description: 'Issues linked to a roadmap idea (via epic or direct link). Green = delivered on time; amber = linked but not yet delivered on time.',
+  },
+  {
+    name: 'Incidents',
+    description: 'Issues matching the incident issue types, labels, or priorities configured for this board.',
+  },
+  {
+    name: 'Failures',
+    description: 'Issues matching the failure issue types or labels configured for this board.',
   },
 ]
 
@@ -82,7 +95,7 @@ function buildColumns(): Column<WeekDetailIssue>[] {
   return [
     {
       key: 'key',
-      label: 'Key',
+      label: 'Issue',
       sortable: true,
       render: (value, row) => {
         const key = String(value)
@@ -125,12 +138,7 @@ function buildColumns(): Column<WeekDetailIssue>[] {
       key: 'priority',
       label: 'Priority',
       sortable: true,
-      render: (value) =>
-        value !== null && value !== undefined && String(value) !== 'null' ? (
-          <span>{String(value)}</span>
-        ) : (
-          <span className="text-muted">—</span>
-        ),
+      render: (value) => <PriorityBadge priority={value as string | null} />,
     },
     {
       key: 'status',
@@ -146,36 +154,6 @@ function buildColumns(): Column<WeekDetailIssue>[] {
       },
     },
     {
-      key: 'points',
-      label: 'Points',
-      sortable: true,
-      render: (value) =>
-        value !== null && value !== undefined ? (
-          <span>{String(value)}</span>
-        ) : (
-          <span className="text-muted">—</span>
-        ),
-    },
-    {
-      key: 'epicKey',
-      label: 'Epic',
-      sortable: true,
-      render: (value) =>
-        value !== null && value !== undefined && String(value) !== 'null' ? (
-          <span className="font-mono text-xs">{String(value)}</span>
-        ) : (
-          <span className="text-muted">—</span>
-        ),
-    },
-    {
-      key: 'boardEntryDate',
-      label: 'Board Entry',
-      sortable: true,
-      render: (value) => (
-        <span className="text-xs">{formatDate(String(value))}</span>
-      ),
-    },
-    {
       key: 'completedInWeek',
       label: 'Completed',
       sortable: true,
@@ -188,28 +166,36 @@ function buildColumns(): Column<WeekDetailIssue>[] {
     },
     {
       key: 'addedMidWeek',
-      label: 'Mid-Week',
+      label: 'Mid-week',
       sortable: true,
       render: (value) =>
         value ? (
-          <span className="font-semibold text-amber-600">+</span>
+          <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+            ⚠ Mid-week
+          </span>
         ) : (
           <span className="text-muted">—</span>
         ),
     },
     {
-      key: 'linkedToRoadmap',
+      key: 'roadmapStatus',
       label: 'Roadmap',
       sortable: true,
       render: (value, row) => {
-        if (!value) return <span className="text-muted">—</span>
+        if (value === 'none' || !value) return <span className="text-muted">—</span>
         const isDirect = row.roadmapLinkSource === 'direct'
         const Icon = isDirect ? Link2 : GitBranch
-        const tooltip = isDirect
-          ? 'On roadmap (direct link)'
-          : 'On roadmap (via epic)'
+        const isInScope = value === 'in-scope'
+        const colorClass = isInScope
+          ? 'text-green-600'
+          : 'text-amber-600'
+        const tooltip = isInScope
+          ? isDirect ? 'On roadmap (direct link)' : 'On roadmap (via epic)'
+          : isDirect
+            ? `Linked to roadmap (direct) — not in window`
+            : `Linked to roadmap (via epic) — not in window`
         return (
-          <span title={tooltip} className="inline-flex items-center gap-1 font-semibold text-green-600">
+          <span title={tooltip} className={`inline-flex items-center gap-1 font-semibold ${colorClass}`}>
             <Icon size={14} />
           </span>
         )
@@ -241,11 +227,20 @@ function buildColumns(): Column<WeekDetailIssue>[] {
           <span className="text-muted">—</span>
         ),
     },
+    {
+      key: 'boardEntryDate',
+      label: 'Board Entry',
+      sortable: true,
+      render: (value) => (
+        <span className="text-xs">{formatDate(String(value))}</span>
+      ),
+    },
   ]
 }
 
 function rowClassName(row: WeekDetailIssue): string {
   if (row.completedInWeek) return 'bg-green-50 dark:bg-green-950/20'
+  if (row.addedMidWeek) return 'bg-amber-50 dark:bg-amber-950/20'
   if (row.isIncident) return 'bg-red-50 dark:bg-red-950/20'
   if (row.isFailure) return 'bg-orange-50 dark:bg-orange-950/20'
   return ''
@@ -407,7 +402,7 @@ export default function WeekDetailPage() {
       </div>
 
       {/* Summary bar */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8">
         <StatChip label="Total" value={summary.totalIssues} />
         <StatChip
           label="Completed"
@@ -421,14 +416,23 @@ export default function WeekDetailPage() {
         />
         <StatChip
           label="Roadmap-Linked"
-          value={summary.linkedToRoadmap}
-          highlight={summary.linkedToRoadmap > 0 ? 'good' : 'none'}
+          value={summary.roadmapLinkedCount}
+          highlight={summary.roadmapLinkedCount > 0 ? 'good' : 'none'}
+        />
+        <StatChip
+          label="Incidents"
+          value={summary.incidentCount}
+          highlight={summary.incidentCount > 0 ? 'danger' : 'none'}
+        />
+        <StatChip
+          label="Failures"
+          value={summary.failureCount}
+          highlight={summary.failureCount > 0 ? 'warn' : 'none'}
         />
         <StatChip label="Total Points" value={summary.totalPoints} />
         <StatChip
-          label="Completed Points"
-          value={summary.completedPoints}
-          highlight={summary.completedPoints > 0 ? 'good' : 'none'}
+          label="Median Cycle Time"
+          value={summary.medianCycleTimeDays !== null ? `${summary.medianCycleTimeDays}d` : '—'}
         />
       </div>
 

@@ -756,6 +756,104 @@ describe('SprintDetailService', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // priority field on issue
+  // ---------------------------------------------------------------------------
+
+  it('includes priority on each returned issue', async () => {
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue({
+      boardId: 'ACC',
+      boardType: 'scrum',
+      doneStatusNames: ['Done'],
+      failureIssueTypes: [],
+      failureLabels: [],
+      incidentIssueTypes: [],
+      incidentLabels: [],
+      cancelledStatusNames: ['Cancelled'],
+    } as unknown as BoardConfig);
+
+    issueRepo.find.mockResolvedValue([
+      {
+        key: 'ACC-1',
+        boardId: 'ACC',
+        issueType: 'Story',
+        summary: 'Priority test',
+        status: 'In Progress',
+        sprintId: 'sprint-1',
+        epicKey: null,
+        labels: [],
+        points: null,
+        priority: 'High',
+        createdAt: new Date('2026-01-03T00:00:00Z'),
+      } as unknown as JiraIssue,
+    ]);
+    roadmapConfigRepo.find.mockResolvedValue([]);
+
+    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() =>
+      makeQb([
+        {
+          issueKey: 'ACC-1',
+          field: 'Sprint',
+          toValue: 'Sprint 1',
+          fromValue: null,
+          changedAt: new Date('2026-01-04T00:00:00Z'),
+        },
+      ]),
+    );
+
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    expect(result.issues[0].priority).toBe('High');
+  });
+
+  it('includes null priority when issue has no priority set', async () => {
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue({
+      boardId: 'ACC',
+      boardType: 'scrum',
+      doneStatusNames: ['Done'],
+      failureIssueTypes: [],
+      failureLabels: [],
+      incidentIssueTypes: [],
+      incidentLabels: [],
+      cancelledStatusNames: ['Cancelled'],
+    } as unknown as BoardConfig);
+
+    issueRepo.find.mockResolvedValue([
+      {
+        key: 'ACC-1',
+        boardId: 'ACC',
+        issueType: 'Story',
+        summary: 'No priority',
+        status: 'In Progress',
+        sprintId: 'sprint-1',
+        epicKey: null,
+        labels: [],
+        points: null,
+        priority: null,
+        createdAt: new Date('2026-01-03T00:00:00Z'),
+      } as unknown as JiraIssue,
+    ]);
+    roadmapConfigRepo.find.mockResolvedValue([]);
+
+    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() =>
+      makeQb([
+        {
+          issueKey: 'ACC-1',
+          field: 'Sprint',
+          toValue: 'Sprint 1',
+          fromValue: null,
+          changedAt: new Date('2026-01-04T00:00:00Z'),
+        },
+      ]),
+    );
+
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    expect(result.issues[0].priority).toBeNull();
+  });
+
+  // ---------------------------------------------------------------------------
   // Epics excluded
   // ---------------------------------------------------------------------------
 

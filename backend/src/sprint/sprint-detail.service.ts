@@ -47,6 +47,9 @@ export interface SprintDetailIssue {
   /** Jira issue type, e.g. "Story", "Bug", "Task" */
   issueType: string;
 
+  /** Jira priority, e.g. "Highest", "High", "Medium", "Low", "Lowest". Null if not set. */
+  priority: string | null;
+
   /**
    * True if the issue was added to the sprint AFTER sprint start
    * (using the 5-minute grace period defined in PlanningService).
@@ -642,6 +645,7 @@ export class SprintDetailService {
         summary: issue.summary,
         currentStatus: issue.status,
         issueType: issue.issueType,
+        priority: issue.priority ?? null,
         addedMidSprint,
         roadmapStatus,
         roadmapLinkSource,

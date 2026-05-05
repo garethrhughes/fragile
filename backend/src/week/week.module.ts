@@ -8,6 +8,7 @@ import {
   JpdIdea,
   RoadmapConfig,
 } from '../database/entities/index.js';
+import { MetricsModule } from '../metrics/metrics.module.js';
 import { WeekController } from './week.controller.js';
 import { WeekDetailService } from './week-detail.service.js';
 
@@ -21,6 +22,7 @@ import { WeekDetailService } from './week-detail.service.js';
       JpdIdea,
       JiraIssueLink,
     ]),
+    MetricsModule,
   ],
   controllers: [WeekController],
   providers: [WeekDetailService],
