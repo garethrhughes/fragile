@@ -15,6 +15,7 @@ import {
   RoadmapConfig,
 } from '../database/entities/index.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
+import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
 
 // ---------------------------------------------------------------------------
 // Response interfaces (exported for use by the controller and frontend types)
@@ -53,6 +54,9 @@ export interface QuarterDetailIssue {
 
   /** True if the issue's epicKey is a member of the coveredEpicKeys set */
   linkedToRoadmap: boolean;
+
+  /** How the roadmap link was established: 'direct' (Condition C) | 'epic' (A/B) | null */
+  roadmapLinkSource: 'direct' | 'epic' | null;
 
   /** True if the issue matches incidentIssueTypes OR incidentLabels */
   isIncident: boolean;
@@ -147,6 +151,7 @@ export class QuarterDetailService {
     const failureIssueTypes: string[] = boardConfig?.failureIssueTypes ?? ['Bug', 'Incident'];
     const failureLabels: string[] = boardConfig?.failureLabels ?? ['regression', 'incident', 'hotfix'];
     const failureLinkTypes: string[] = boardConfig?.failureLinkTypes ?? [];
+    const roadmapLinkTypes: string[] = boardConfig?.roadmapLinkTypes ?? [];
     const boardType: string = boardConfig?.boardType ?? 'scrum';
     const backlogStatusIds: string[] = boardConfig?.backlogStatusIds ?? [];
 
@@ -269,15 +274,16 @@ export class QuarterDetailService {
     }
 
     // -----------------------------------------------------------------------
-    // Step 7 — Load RoadmapConfig and build coveredEpicKeys
+    // Step 7 — Load RoadmapConfig, build coveredEpicKeys and directLinkIdeaMap
     // -----------------------------------------------------------------------
     const roadmapConfigs = await this.roadmapConfigRepo.find({ where: {} });
     const coveredEpicKeys = new Set<string>();
+    let allIdeas: JpdIdea[] = [];
 
     if (roadmapConfigs.length > 0) {
       const jpdKeys = roadmapConfigs.map((r) => r.jpdKey);
-      const ideas = await this.jpdIdeaRepo.find({ where: { jpdKey: In(jpdKeys) } });
-      for (const idea of ideas) {
+      allIdeas = await this.jpdIdeaRepo.find({ where: { jpdKey: In(jpdKeys) } });
+      for (const idea of allIdeas) {
         for (const key of (idea.deliveryIssueKeys ?? [])) {
           if (key) {
             coveredEpicKeys.add(key);
@@ -285,6 +291,15 @@ export class QuarterDetailService {
         }
       }
     }
+
+    // Direct issue → idea links (ADR 0044 Condition C), using the same
+    // roadmapLinkTypes as the roadmap service for consistent coverage.
+    const directLinkIdeaMap = await buildDirectLinkIdeaMap(
+      this.issueLinkRepo,
+      quarterIssueKeys,
+      allIdeas,
+      roadmapLinkTypes,
+    );
 
     // -----------------------------------------------------------------------
     // Step 8 — Build per-issue result
@@ -308,9 +323,17 @@ export class QuarterDetailService {
       // addedMidQuarter: boardEntryDate is strictly after quarterStart
       const addedMidQuarter = boardEntryDate > quarterStart;
 
-      // linkedToRoadmap
-      const linkedToRoadmap =
+      // linkedToRoadmap: epic-key path (Conditions A/B) OR direct issue link
+      // path (Condition C, ADR 0044) — consistent with roadmap.service.ts
+      const linkedViaEpic =
         issue.epicKey != null && coveredEpicKeys.has(issue.epicKey);
+      const linkedViaDirect = directLinkIdeaMap.has(issue.key);
+      const linkedToRoadmap = linkedViaEpic || linkedViaDirect;
+      const roadmapLinkSource: 'direct' | 'epic' | null = linkedViaDirect
+        ? 'direct'
+        : linkedViaEpic
+          ? 'epic'
+          : null;
 
       // isIncident: must match type/label AND pass priority AND-gate
       // (consistent with MttrService; incidentPriorities = [] means all priorities qualify)
@@ -351,6 +374,7 @@ export class QuarterDetailService {
         completedInQuarter,
         addedMidQuarter,
         linkedToRoadmap,
+        roadmapLinkSource,
         isIncident,
         isFailure,
         labels: issue.labels,

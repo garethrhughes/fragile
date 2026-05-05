@@ -682,6 +682,11 @@ export class RoadmapService {
       boardConfig?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
     const backlogStatusIds: string[] = boardConfig?.backlogStatusIds ?? [];
 
+    // C-3: configurable board-entry status list — matches PlanningService.getKanbanWeeks.
+    const boardEntryStatuses: string[] = boardConfig?.boardEntryStatuses ?? [
+      'To Do', 'Backlog', 'Open', 'New', 'TODO', 'OPEN', 'Selected for Development',
+    ];
+
     // Load all Kanban issues for this board, excluding Epics and Sub-tasks
     const allIssues = (await this.issueRepo.find({ where: { boardId } })).filter(
       (i) => isWorkItem(i.issueType),
@@ -693,16 +698,19 @@ export class RoadmapService {
 
     const issueKeys = allIssues.map((i) => i.key);
 
-    // Bulk-load status changelogs for all these issues in one query
+    // Bulk-load the earliest board-entry changelog per issue.
+    // Board-entry = first transition *into* a boardEntryStatus (toValue IN list).
+    // This matches PlanningService.getKanbanWeeks — the roadmap table and the
+    // planning table now use the same bucketing logic.
     const changelogs = await this.changelogRepo
       .createQueryBuilder('cl')
       .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
       .andWhere('cl.field = :field', { field: 'status' })
-      .andWhere('cl.fromValue = :from', { from: 'To Do' })
+      .andWhere('cl.toValue IN (:...statuses)', { statuses: boardEntryStatuses })
       .orderBy('cl.changedAt', 'ASC')
       .getMany();
 
-    // Build map: issueKey → earliest date it left "To Do"
+    // Build map: issueKey → earliest date it entered the board
     const boardEntryDate = new Map<string, Date>();
     for (const cl of changelogs) {
       if (!boardEntryDate.has(cl.issueKey)) {

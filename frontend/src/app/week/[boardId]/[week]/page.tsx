@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
-import { Loader2, ExternalLink, AlertCircle } from 'lucide-react'
+import { Loader2, ExternalLink, AlertCircle, GitBranch, Link2 } from 'lucide-react'
 import {
   getWeekDetail,
   type WeekDetailResponse,
@@ -201,12 +201,19 @@ function buildColumns(): Column<WeekDetailIssue>[] {
       key: 'linkedToRoadmap',
       label: 'Roadmap',
       sortable: true,
-      render: (value) =>
-        value ? (
-          <span className="font-semibold text-green-600">✓</span>
-        ) : (
-          <span className="text-muted">—</span>
-        ),
+      render: (value, row) => {
+        if (!value) return <span className="text-muted">—</span>
+        const isDirect = row.roadmapLinkSource === 'direct'
+        const Icon = isDirect ? Link2 : GitBranch
+        const tooltip = isDirect
+          ? 'On roadmap (direct link)'
+          : 'On roadmap (via epic)'
+        return (
+          <span title={tooltip} className="inline-flex items-center gap-1 font-semibold text-green-600">
+            <Icon size={14} />
+          </span>
+        )
+      },
     },
     {
       key: 'isIncident',

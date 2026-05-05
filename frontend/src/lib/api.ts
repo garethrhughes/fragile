@@ -365,6 +365,7 @@ export interface WeekDetailIssue {
   completedInWeek: boolean
   addedMidWeek: boolean
   linkedToRoadmap: boolean
+  roadmapLinkSource: 'direct' | 'epic' | null
   isIncident: boolean
   isFailure: boolean
   labels: string[]
@@ -552,6 +553,7 @@ export interface QuarterDetailIssue {
   completedInQuarter: boolean
   addedMidQuarter: boolean
   linkedToRoadmap: boolean
+  roadmapLinkSource: 'direct' | 'epic' | null
   isIncident: boolean
   isFailure: boolean
   labels: string[]

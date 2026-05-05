@@ -425,11 +425,11 @@ function buildColumns(): Column<SprintDetailIssue>[] {
       render: (value, row) => {
         if (value === 'in-scope' || value === 'linked') {
           const isInScope = value === 'in-scope'
-          const isDirect = row?.roadmapLinkSource === 'direct'
+          const isDirect = row.roadmapLinkSource === 'direct'
           const Icon = isDirect ? Link2 : GitBranch
           const tooltip = isDirect
-            ? isInScope ? 'On roadmap (direct link) — on track' : 'On roadmap (direct link) — at risk'
-            : isInScope ? 'On roadmap (via epic) — on track' : 'On roadmap (via epic) — at risk'
+            ? isInScope ? 'On roadmap (direct link)' : 'Linked to roadmap (direct link) — not in window'
+            : isInScope ? 'On roadmap (via epic)' : 'Linked to roadmap (via epic) — not in window'
           return (
             <span title={tooltip} className={`inline-flex items-center gap-1 font-semibold ${isInScope ? 'text-green-600' : 'text-amber-500'}`}>
               <Icon size={14} />

@@ -15,6 +15,8 @@ import {
   RoadmapConfig,
 } from '../database/entities/index.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
+import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
+import { dateParts, startOfDayInTz } from '../metrics/tz-utils.js';
 
 // ---------------------------------------------------------------------------
 // Response interfaces (exported for use by the controller and frontend types)
@@ -53,6 +55,9 @@ export interface WeekDetailIssue {
 
   /** True if the issue's epicKey is a member of the coveredEpicKeys set */
   linkedToRoadmap: boolean;
+
+  /** How the roadmap link was established: 'direct' (Condition C) | 'epic' (A/B) | null */
+  roadmapLinkSource: 'direct' | 'epic' | null;
 
   /** True if the issue matches incidentIssueTypes OR incidentLabels */
   isIncident: boolean;
@@ -157,6 +162,7 @@ export class WeekDetailService {
     const failureLabels: string[] = boardConfig?.failureLabels ?? ['regression', 'incident', 'hotfix'];
     const failureLinkTypes: string[] = boardConfig?.failureLinkTypes ?? [];
     const backlogStatusIds: string[] = boardConfig?.backlogStatusIds ?? [];
+    const roadmapLinkTypes: string[] = boardConfig?.roadmapLinkTypes ?? [];
 
     // -----------------------------------------------------------------------
     // Step 3 — Load all issues for board
@@ -195,17 +201,35 @@ export class WeekDetailService {
 
     // -----------------------------------------------------------------------
     // Step 5 — Compute board-entry date per issue and exclude backlog items
-    //          (Kanban only: earliest status changelog where fromValue = 'To Do')
+    //
+    // Board-entry date = the earliest changelog where toValue is in the
+    // configured boardEntryStatuses list (first transition *into* a board-
+    // entry/staging status).  This matches the algorithm used by the planning
+    // overview (getKanbanWeeks) so both views agree on which week an issue
+    // entered the board.
+    //
+    // Previous implementation used fromValue === 'To Do' (first transition
+    // *out of* To Do).  That direction is wrong and hard-coded to a single
+    // status — it caused "1 ticket in overview, 0 in detail" divergence for
+    // issues that entered via Backlog, Open, or any other configured entry
+    // status.
     // -----------------------------------------------------------------------
+    const boardEntryStatuses: string[] = boardConfig?.boardEntryStatuses ?? [
+      'To Do', 'Backlog', 'Open', 'New', 'TODO', 'OPEN', 'Selected for Development',
+    ];
+
     const boardEntryDateByKey = new Map<string, Date>();
 
     for (const issue of issues) {
       const issueChangelogs = changelogsByIssue.get(issue.key) ?? [];
 
-      const toDoTransition = issueChangelogs.find(
-        (cl) => cl.field === 'status' && cl.fromValue === 'To Do',
+      const entryTransition = issueChangelogs.find(
+        (cl) =>
+          cl.field === 'status' &&
+          cl.toValue !== null &&
+          boardEntryStatuses.map((s) => s.toLowerCase()).includes(cl.toValue.toLowerCase()),
       );
-      const entryDate = toDoTransition ? toDoTransition.changedAt : issue.createdAt;
+      const entryDate = entryTransition ? entryTransition.changedAt : issue.createdAt;
 
       boardEntryDateByKey.set(issue.key, entryDate);
     }
@@ -224,8 +248,8 @@ export class WeekDetailService {
     const startBound = dataStartDate ? new Date(dataStartDate) : null;
     const startBoundedIssues = startBound
       ? filteredIssues.filter((issue) => {
-          const entryDate = boardEntryDateByKey.get(issue.key);
-          return entryDate !== undefined && entryDate >= startBound;
+          const entryDate = boardEntryDateByKey.get(issue.key) ?? issue.createdAt;
+          return entryDate >= startBound;
         })
       : filteredIssues;
 
@@ -233,8 +257,7 @@ export class WeekDetailService {
     // Step 6 — Filter issues to those whose boardEntryDate falls within the week
     // -----------------------------------------------------------------------
     const weekIssues = startBoundedIssues.filter((issue) => {
-      const entryDate = boardEntryDateByKey.get(issue.key);
-      if (!entryDate) return false;
+      const entryDate = boardEntryDateByKey.get(issue.key) ?? issue.createdAt;
       return entryDate >= weekStart && entryDate <= weekEnd;
     });
 
@@ -265,15 +288,16 @@ export class WeekDetailService {
     }
 
     // -----------------------------------------------------------------------
-    // Step 7 — Load RoadmapConfig and build coveredEpicKeys
+    // Step 7 — Load RoadmapConfig, build coveredEpicKeys and directLinkIdeaMap
     // -----------------------------------------------------------------------
     const roadmapConfigs = await this.roadmapConfigRepo.find({ where: {} });
     const coveredEpicKeys = new Set<string>();
+    let allIdeas: JpdIdea[] = [];
 
     if (roadmapConfigs.length > 0) {
       const jpdKeys = roadmapConfigs.map((r) => r.jpdKey);
-      const ideas = await this.jpdIdeaRepo.find({ where: { jpdKey: In(jpdKeys) } });
-      for (const idea of ideas) {
+      allIdeas = await this.jpdIdeaRepo.find({ where: { jpdKey: In(jpdKeys) } });
+      for (const idea of allIdeas) {
         for (const key of (idea.deliveryIssueKeys ?? [])) {
           if (key) {
             coveredEpicKeys.add(key);
@@ -281,6 +305,15 @@ export class WeekDetailService {
         }
       }
     }
+
+    // Direct issue → idea links (ADR 0044 Condition C), using the same
+    // roadmapLinkTypes as the roadmap service for consistent coverage.
+    const directLinkIdeaMap = await buildDirectLinkIdeaMap(
+      this.issueLinkRepo,
+      weekIssueKeys,
+      allIdeas,
+      roadmapLinkTypes,
+    );
 
     // 1-day grace period for addedMidWeek
     const gracePeriodEnd = new Date(weekStart.getTime() + 1 * 24 * 60 * 60 * 1000);
@@ -307,9 +340,17 @@ export class WeekDetailService {
       // addedMidWeek: boardEntryDate is > 1 day after week start
       const addedMidWeek = boardEntryDate > gracePeriodEnd;
 
-      // linkedToRoadmap
-      const linkedToRoadmap =
+      // linkedToRoadmap: epic-key path (Conditions A/B) OR direct issue link
+      // path (Condition C, ADR 0044) — consistent with roadmap.service.ts
+      const linkedViaEpic =
         issue.epicKey != null && coveredEpicKeys.has(issue.epicKey);
+      const linkedViaDirect = directLinkIdeaMap.has(issue.key);
+      const linkedToRoadmap = linkedViaEpic || linkedViaDirect;
+      const roadmapLinkSource: 'direct' | 'epic' | null = linkedViaDirect
+        ? 'direct'
+        : linkedViaEpic
+          ? 'epic'
+          : null;
 
       // isIncident: must match type/label AND pass priority AND-gate
       // (consistent with MttrService; incidentPriorities = [] means all priorities qualify)
@@ -347,6 +388,7 @@ export class WeekDetailService {
         completedInWeek,
         addedMidWeek,
         linkedToRoadmap,
+        roadmapLinkSource,
         isIncident,
         isFailure,
         labels: issue.labels,
@@ -408,20 +450,41 @@ export class WeekDetailService {
 
     const year = parseInt(match[1], 10);
     const weekNum = parseInt(match[2], 10);
+    const tz = this.configService.get<string>('TIMEZONE', 'UTC');
 
-    // Jan 4 is always in ISO week 1
-    const jan4 = new Date(Date.UTC(year, 0, 4));
-    const jan4Day = jan4.getUTCDay(); // 0=Sun, 1=Mon, ...
-    const daysToMon = jan4Day === 0 ? -6 : 1 - jan4Day;
-    const mondayOfWeek1 = new Date(jan4);
-    mondayOfWeek1.setUTCDate(jan4.getUTCDate() + daysToMon);
+    // Jan 4 is always in ISO week 1 — find Monday of week 1 in the configured timezone.
+    // We work in calendar-date space (not UTC) so that week boundaries align with
+    // local midnight, matching the bucketing logic in PlanningService.dateToWeekKey.
+    const jan4LocalParts = dateParts(new Date(Date.UTC(year, 0, 4)), tz);
+    const jan4LocalDate = new Date(Date.UTC(jan4LocalParts.year, jan4LocalParts.month, jan4LocalParts.day));
+    const jan4Dow = jan4LocalDate.getUTCDay(); // 0=Sun
+    const daysToMon = jan4Dow === 0 ? -6 : 1 - jan4Dow;
+    const week1MondayLocal = new Date(jan4LocalDate);
+    week1MondayLocal.setUTCDate(jan4LocalDate.getUTCDate() + daysToMon);
 
-    const weekStart = new Date(mondayOfWeek1);
-    weekStart.setUTCDate(mondayOfWeek1.getUTCDate() + (weekNum - 1) * 7);
+    // Monday of the requested week (calendar date arithmetic)
+    const weekMondayLocal = new Date(week1MondayLocal);
+    weekMondayLocal.setUTCDate(week1MondayLocal.getUTCDate() + (weekNum - 1) * 7);
 
-    const weekEnd = new Date(weekStart);
-    weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
-    weekEnd.setUTCHours(23, 59, 59, 999);
+    // Sunday of the requested week (calendar date, 6 days after Monday)
+    const weekSundayLocal = new Date(weekMondayLocal);
+    weekSundayLocal.setUTCDate(weekMondayLocal.getUTCDate() + 6);
+
+    // Convert calendar dates to UTC instants using the configured timezone.
+    const weekStart = startOfDayInTz(
+      weekMondayLocal.getUTCFullYear(),
+      weekMondayLocal.getUTCMonth(),
+      weekMondayLocal.getUTCDate(),
+      tz,
+    );
+    // weekEnd = start of the day AFTER Sunday, minus 1ms
+    const dayAfterWeekEnd = startOfDayInTz(
+      weekSundayLocal.getUTCFullYear(),
+      weekSundayLocal.getUTCMonth(),
+      weekSundayLocal.getUTCDate() + 1,
+      tz,
+    );
+    const weekEnd = new Date(dayAfterWeekEnd.getTime() - 1);
 
     return { weekStart, weekEnd };
   }

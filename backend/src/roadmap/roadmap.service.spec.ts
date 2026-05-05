@@ -1006,13 +1006,13 @@ describe('RoadmapService', () => {
         };
 
         if (qbCallCount === 1) {
-          // "To Do" exit changelogs — board-entry in W02 (Jan 6)
+          // board-entry changelogs — toValue='To Do' is a default boardEntryStatus → W02
           qb.getMany.mockResolvedValue([
             {
               issueKey: 'PLAT-1',
               field: 'status',
-              fromValue: 'To Do',
-              toValue: 'In Progress',
+              fromValue: 'Backlog',
+              toValue: 'To Do',
               changedAt: new Date('2026-01-06T09:00:00Z'),
             },
           ]);
@@ -1044,6 +1044,137 @@ describe('RoadmapService', () => {
       const result = await service.getAccuracy('PLAT', undefined, undefined, '2026-W02');
       expect(result).toHaveLength(1);
       expect(result[0].sprintId).toBe('2026-W02');
+      expect(result[0].totalIssues).toBe(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // getKanbanWeeklyAccuracy — boardEntryDate uses toValue IN boardEntryStatuses
+  //
+  // The roadmap table for Kanban boards was using fromValue = 'To Do' (hardcoded,
+  // wrong direction) to detect when an issue entered the board. This caused the
+  // roadmap table to disagree with the week detail page (which was fixed first)
+  // and with the planning page (which always used toValue IN boardEntryStatuses).
+  // -------------------------------------------------------------------------
+
+  describe('getKanbanWeeklyAccuracy — boardEntryDate direction fix', () => {
+    const kanbanConfig = {
+      boardId: 'PLAT',
+      boardType: 'kanban',
+      doneStatusNames: ['Done'],
+      cancelledStatusNames: ['Cancelled', "Won't Do"],
+      backlogStatusIds: [],
+      dataStartDate: null,
+      boardEntryStatuses: null, // use defaults
+    } as unknown as BoardConfig;
+
+    function setupWeeklyAccuracyRepo(entryChangelog: object, doneChangelog?: object) {
+      let callCount = 0;
+      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
+        callCount++;
+        const qb = {
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          orderBy: jest.fn().mockReturnThis(),
+          getMany: jest.fn().mockResolvedValue([]),
+          getRawMany: jest.fn().mockResolvedValue([]),
+        };
+        if (callCount === 1) {
+          // board-entry changelogs query
+          qb.getMany.mockResolvedValue([entryChangelog]);
+        } else if (callCount === 2) {
+          // DISTINCT issueKey fallback
+          qb.getRawMany.mockResolvedValue([{ issueKey: 'PLAT-1' }]);
+        } else if (callCount === 3) {
+          // all status changelogs for completion/activity dates
+          qb.getMany.mockResolvedValue(doneChangelog ? [entryChangelog, doneChangelog] : [entryChangelog]);
+        }
+        return qb;
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+      jpdIdeaRepo.find.mockResolvedValue([]);
+    }
+
+    it('counts issue whose toValue is a board-entry status in W02', async () => {
+      // toValue='To Do' is a default boardEntryStatus → issue entered the board in W02
+      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig);
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', boardId: 'PLAT', createdAt: new Date('2025-11-01T00:00:00Z') }),
+      ]);
+      setupWeeklyAccuracyRepo({
+        issueKey: 'PLAT-1', field: 'status',
+        fromValue: 'Backlog', toValue: 'To Do',
+        changedAt: new Date('2026-01-06T09:00:00Z'), // W02
+      });
+
+      const result = await service.getAccuracy('PLAT', undefined, undefined, '2026-W02');
+      expect(result).toHaveLength(1);
+      expect(result[0].totalIssues).toBe(1);
+    });
+
+    it('does not count issue that only has fromValue=To Do transition (old wrong direction) when its toValue is not a board-entry status', async () => {
+      // fromValue='To Do', toValue='In Progress' — old code matched this; new code must NOT.
+      // Issue has createdAt well before W02, so it should not appear in W02 at all.
+      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig);
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', boardId: 'PLAT', createdAt: new Date('2025-11-01T00:00:00Z') }),
+      ]);
+      // The new query uses toValue IN boardEntryStatuses — 'In Progress' is NOT in that list,
+      // so the DB returns no board-entry changelogs. Simulate that here.
+      setupWeeklyAccuracyRepo(
+        // First call (board-entry query) returns empty — no toValue match
+        { issueKey: '__none__', field: 'status', fromValue: null, toValue: null, changedAt: new Date() },
+      );
+      // Override: first call returns empty array to simulate no DB match
+      let callCount = 0;
+      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
+        callCount++;
+        const qb = {
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          orderBy: jest.fn().mockReturnThis(),
+          getMany: jest.fn().mockResolvedValue([]),
+          getRawMany: jest.fn().mockResolvedValue([]),
+        };
+        if (callCount === 1) {
+          // board-entry query: toValue='In Progress' not in boardEntryStatuses → empty
+          qb.getMany.mockResolvedValue([]);
+        } else if (callCount === 2) {
+          // DISTINCT issueKey fallback — issue has some status changelogs
+          qb.getRawMany.mockResolvedValue([{ issueKey: 'PLAT-1' }]);
+        } else if (callCount === 3) {
+          // all status changelogs for completion/activity
+          qb.getMany.mockResolvedValue([{
+            issueKey: 'PLAT-1', field: 'status',
+            fromValue: 'To Do', toValue: 'In Progress',
+            changedAt: new Date('2026-01-06T09:00:00Z'),
+          }]);
+        }
+        return qb;
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+      jpdIdeaRepo.find.mockResolvedValue([]);
+
+      // No board-entry found → falls back to createdAt (Nov 2025) → excluded from W02.
+      const result = await service.getAccuracy('PLAT', undefined, undefined, '2026-W02');
+      expect(result).toHaveLength(0);
+    });
+
+    it('counts issue entered via "Open" (non-hardcoded default entry status) in correct week', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig);
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-2', boardId: 'PLAT', createdAt: new Date('2025-11-01T00:00:00Z') }),
+      ]);
+      setupWeeklyAccuracyRepo({
+        issueKey: 'PLAT-2', field: 'status',
+        fromValue: 'Backlog', toValue: 'Open',
+        changedAt: new Date('2026-01-06T09:00:00Z'), // W02
+      });
+
+      const result = await service.getAccuracy('PLAT', undefined, undefined, '2026-W02');
+      expect(result).toHaveLength(1);
       expect(result[0].totalIssues).toBe(1);
     });
   });

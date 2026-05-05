@@ -257,6 +257,49 @@ describe('QuarterDetailService', () => {
       expect(result.issues[0].linkedToRoadmap).toBe(true);
     });
 
+    it('sets linkedToRoadmap via direct issue→idea link (Condition C)', async () => {
+      // ACC-1 has no epicKey but is directly linked to a JPD idea via a
+      // configured roadmapLinkType — it should still be linkedToRoadmap.
+      const config = boardConfigRepo.findOne['mock'].results[0]?.value ?? null;
+      const directLinkConfig = {
+        ...(config ?? {}),
+        roadmapLinkTypes: ['is connected to'],
+      };
+      boardConfigRepo.findOne.mockResolvedValue(directLinkConfig);
+      const sprintChangelog = makeChangelog({
+        issueKey: 'ACC-1',
+        field: 'Sprint',
+        changedAt: new Date('2026-01-05T00:00:00Z'),
+      });
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'ACC-1', epicKey: null, createdAt: new Date('2026-01-01T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([sprintChangelog]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([
+        { id: 1, jpdKey: 'JPD-1', description: null, startDateFieldId: null, targetDateFieldId: null, createdAt: new Date() } as RoadmapConfig,
+      ]);
+      const idea = { key: 'PT-1', jpdKey: 'JPD-1', deliveryIssueKeys: [], targetDate: new Date('2026-06-30T00:00:00Z') } as unknown as JpdIdea;
+      jpdIdeaRepo.find.mockResolvedValue([idea]);
+      // issueLinkRepo returns a link: ACC-1 → PT-1 via 'is connected to'
+      issueLinkRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn().mockResolvedValue([]),
+        getMany: jest.fn().mockResolvedValue([
+          { sourceIssueKey: 'ACC-1', targetIssueKey: 'PT-1', linkTypeName: 'is connected to' },
+        ]),
+      });
+
+      const result = await service.getDetail('ACC', '2026-Q1');
+      expect(result.issues[0].linkedToRoadmap).toBe(true);
+    });
+
     it('marks isIncident true for Critical Bug', async () => {
       const sprintChangelog = makeChangelog({
         issueKey: 'ACC-1',
