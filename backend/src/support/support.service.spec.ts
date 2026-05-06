@@ -88,6 +88,7 @@ function makeConfig(overrides: Partial<BoardConfig> = {}): BoardConfig {
     supportLabels: [],
     supportLinkType: null,
     triageBoardKey: null,
+    supportEpics: [],
     ...overrides,
   } as unknown as BoardConfig;
 }
@@ -269,7 +270,7 @@ describe('SupportService', () => {
 
   // ── Both criteria ─────────────────────────────────────────────────────────
 
-  it('reports matchReason=both when ticket matches label AND link', async () => {
+  it('reports matchReason=label+link when ticket matches label AND link', async () => {
     const config = makeConfig({ supportLabels: ['support'], supportLinkType: 'clones', triageBoardKey: 'TTB' });
     boardConfigRepo.findOne.mockResolvedValue(config);
     issueRepo.find.mockResolvedValue([makeIssue({ key: 'ACC-1', labels: ['support'] })]);
@@ -285,7 +286,7 @@ describe('SupportService', () => {
     const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
     // Should appear only once
     expect(result.supportIssues).toBe(1);
-    expect(result.tickets[0].matchReason).toBe('both');
+    expect(result.tickets[0].matchReason).toBe('label+link');
   });
 
   // ── Epic / subtask exclusion (ADR 0018) ───────────────────────────────────
@@ -660,5 +661,146 @@ describe('SupportService', () => {
     const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
     expect(result.totalIssues).toBe(0);
     expect(result.supportIssues).toBe(0);
+  });
+
+  // ── Epic classification (Proposal 0045) ──────────────────────────────────
+
+  it('classifies a ticket as support when its epicKey is in supportEpics', async () => {
+    const config = makeConfig({ supportEpics: ['PROJ-1'] });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', epicKey: 'PROJ-1', labels: [] }),
+    ]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', STARTED_AT),
+      makeChangelog('ACC-1', 'In Progress', 'Done', DONE_AT),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
+    expect(result.supportIssues).toBe(1);
+    expect(result.tickets[0].matchReason).toBe('epic');
+  });
+
+  it('does not classify a ticket when epicKey is not in supportEpics', async () => {
+    const config = makeConfig({ supportEpics: ['PROJ-1'] });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', epicKey: 'PROJ-99', labels: [] }),
+    ]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', STARTED_AT),
+      makeChangelog('ACC-1', 'In Progress', 'Done', DONE_AT),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
+    expect(result.supportIssues).toBe(0);
+  });
+
+  it('does not classify a ticket when epicKey is null and supportEpics is configured', async () => {
+    const config = makeConfig({ supportEpics: ['PROJ-1'] });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', epicKey: null, labels: [] }),
+    ]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', STARTED_AT),
+      makeChangelog('ACC-1', 'In Progress', 'Done', DONE_AT),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
+    expect(result.supportIssues).toBe(0);
+  });
+
+  it('epic match is case-insensitive', async () => {
+    const config = makeConfig({ supportEpics: ['proj-1'] });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', epicKey: 'PROJ-1', labels: [] }),
+    ]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', STARTED_AT),
+      makeChangelog('ACC-1', 'In Progress', 'Done', DONE_AT),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
+    expect(result.supportIssues).toBe(1);
+    expect(result.tickets[0].matchReason).toBe('epic');
+  });
+
+  it('does not activate epic signal when supportEpics is empty', async () => {
+    const config = makeConfig({ supportEpics: [] });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', epicKey: 'PROJ-1', labels: [] }),
+    ]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', STARTED_AT),
+      makeChangelog('ACC-1', 'In Progress', 'Done', DONE_AT),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
+    expect(result.supportIssues).toBe(0);
+  });
+
+  it('reports matchReason=epic+label when ticket matches epic AND label', async () => {
+    const config = makeConfig({ supportEpics: ['PROJ-1'], supportLabels: ['support'] });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', epicKey: 'PROJ-1', labels: ['support'] }),
+    ]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', STARTED_AT),
+      makeChangelog('ACC-1', 'In Progress', 'Done', DONE_AT),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
+    expect(result.supportIssues).toBe(1);
+    expect(result.tickets[0].matchReason).toBe('epic+label');
+  });
+
+  it('reports matchReason=epic+link when ticket matches epic AND link', async () => {
+    const config = makeConfig({ supportEpics: ['PROJ-1'], supportLinkType: 'clones', triageBoardKey: 'TTB' });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', epicKey: 'PROJ-1', labels: [] }),
+    ]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', STARTED_AT),
+      makeChangelog('ACC-1', 'In Progress', 'Done', DONE_AT),
+    ]);
+    issueLinkRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeLink('ACC-1', 'TTB-1', 'clones'),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
+    expect(result.supportIssues).toBe(1);
+    expect(result.tickets[0].matchReason).toBe('epic+link');
+  });
+
+  it('reports matchReason=epic+label+link when all three signals match', async () => {
+    const config = makeConfig({ supportEpics: ['PROJ-1'], supportLabels: ['support'], supportLinkType: 'clones', triageBoardKey: 'TTB' });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', epicKey: 'PROJ-1', labels: ['support'] }),
+    ]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', STARTED_AT),
+      makeChangelog('ACC-1', 'In Progress', 'Done', DONE_AT),
+    ]);
+    issueLinkRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeLink('ACC-1', 'TTB-1', 'clones'),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
+    expect(result.supportIssues).toBe(1);
+    expect(result.tickets[0].matchReason).toBe('epic+label+link');
   });
 });

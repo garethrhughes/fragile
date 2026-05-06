@@ -33,6 +33,7 @@ export interface BoardConfig {
   supportLabels: string[];
   supportLinkType: string | null;
   triageBoardKey: string | null;
+  supportEpics: string[];
 }
 
 export interface SprintAccuracy {
@@ -987,7 +988,14 @@ export function deleteSprintReport(boardId: string, sprintId: string): Promise<v
 
 // ---- Support Report types and endpoints ----------------------------------
 
-export type SupportMatchReason = 'label' | 'link' | 'both'
+export type SupportMatchReason =
+  | 'epic'
+  | 'label'
+  | 'link'
+  | 'epic+label'
+  | 'epic+link'
+  | 'label+link'
+  | 'epic+label+link'
 
 export interface SupportTicket {
   issueKey: string

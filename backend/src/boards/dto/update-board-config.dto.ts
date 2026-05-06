@@ -128,4 +128,16 @@ export class UpdateBoardConfigDto {
   @IsOptional()
   @IsString()
   triageBoardKey?: string | null;
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['PROJ-1', 'PROJ-2'],
+    description:
+      'Epic keys whose child tickets count as support work. ' +
+      'Comparison is case-insensitive. Empty array (default) disables epic-based classification. (ADR 0047)',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  supportEpics?: string[];
 }

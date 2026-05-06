@@ -123,4 +123,12 @@ export class BoardConfig {
    */
   @Column({ type: 'varchar', nullable: true, default: null })
   triageBoardKey!: string | null;
+
+  /**
+   * Epic keys whose child tickets count as support work
+   * (e.g. ["PROJ-1", "PROJ-2"]).  Comparison is case-insensitive.
+   * An empty array disables epic-based classification.  (ADR 0047)
+   */
+  @Column({ type: 'simple-json', default: '[]' })
+  supportEpics!: string[];
 }

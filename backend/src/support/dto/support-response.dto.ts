@@ -1,5 +1,19 @@
 import type { CycleTimeBand } from '../../metrics/cycle-time-bands.js';
 
+/**
+ * All non-empty subsets of the three classification signals {epic, label, link}.
+ * Replaces the previous `'label' | 'link' | 'both'` union.
+ * `'both'` is retired — the equivalent is now `'label+link'`.
+ */
+export type SupportMatchReason =
+  | 'epic'
+  | 'label'
+  | 'link'
+  | 'epic+label'
+  | 'epic+link'
+  | 'label+link'
+  | 'epic+label+link';
+
 export interface SupportTicketDto {
   issueKey: string;
   summary: string;
@@ -10,8 +24,8 @@ export interface SupportTicketDto {
   startedAt: string | null;
   band: CycleTimeBand | null;
   jiraUrl: string;
-  /** How this ticket was identified: 'label', 'link', or 'both' */
-  matchReason: 'label' | 'link' | 'both';
+  /** How this ticket was identified — one or more signals joined by '+' */
+  matchReason: SupportMatchReason;
 }
 
 export interface SupportResult {

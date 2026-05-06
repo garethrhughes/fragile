@@ -593,11 +593,16 @@ export default function SettingsPage() {
                 <h3 className="text-sm font-semibold text-foreground">Support Detection</h3>
                 <p className="mt-0.5 text-xs text-muted">
                   Criteria used to identify support tickets in the Support report. A ticket matches
-                  if it carries any of the configured labels <strong>or</strong> has a link of the
-                  configured type pointing to the triage board key prefix.
+                  if it belongs to any of the configured epics, carries any of the configured labels,
+                  <strong>or</strong> has a link of the configured type pointing to the triage board key prefix.
                 </p>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
+                <CsvField
+                  label="Support Epics"
+                  value={config.supportEpics ?? []}
+                  onChange={(v) => updateField('supportEpics', v)}
+                />
                 <CsvField
                   label="Support Labels"
                   value={config.supportLabels ?? []}

@@ -17,6 +17,7 @@ import { classifyCycleTime } from '../metrics/cycle-time-bands.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
 import type {
   SupportTicketDto,
+  SupportMatchReason,
   SupportResult,
   SupportSummaryDto,
   SupportBoardBreakdown,
@@ -112,6 +113,9 @@ export class SupportService {
     const supportLabels: string[] = config?.supportLabels ?? [];
     const supportLinkType: string | null = config?.supportLinkType ?? null;
     const triageBoardKey: string | null = config?.triageBoardKey ?? null;
+    const supportEpics: string[] = (config?.supportEpics ?? []).map((e) =>
+      e.toUpperCase(),
+    );
     const inProgressNames: string[] = config?.inProgressStatusNames ?? [
       'In Progress', 'In Review', 'Peer-Review', 'Peer Review', 'PEER REVIEW',
       'PEER CODE REVIEW', 'Ready for Review', 'In Test', 'IN TEST', 'QA',
@@ -273,6 +277,11 @@ export class SupportService {
       }
 
       // --- Classify ---
+      const epicMatch =
+        supportEpics.length > 0 &&
+        issue.epicKey != null &&
+        supportEpics.includes(issue.epicKey.toUpperCase());
+
       const labelMatch =
         supportLabels.length > 0 &&
         Array.isArray(issue.labels) &&
@@ -287,10 +296,13 @@ export class SupportService {
             lnk.targetIssueKey.startsWith(triagePrefix),
         );
 
-      if (!labelMatch && !linkMatch) continue;
+      if (!epicMatch && !labelMatch && !linkMatch) continue;
 
-      const matchReason: 'label' | 'link' | 'both' =
-        labelMatch && linkMatch ? 'both' : labelMatch ? 'label' : 'link';
+      const reasons: string[] = [];
+      if (epicMatch) reasons.push('epic');
+      if (labelMatch) reasons.push('label');
+      if (linkMatch) reasons.push('link');
+      const matchReason = reasons.join('+') as SupportMatchReason;
 
       let cycleTimeDays: number | null = null;
       let startedAt: string | null = null;
