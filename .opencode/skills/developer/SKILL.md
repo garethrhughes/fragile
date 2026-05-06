@@ -255,6 +255,65 @@ infosec steps:
 
 ---
 
+## Implementation Consistency
+
+You are responsible for ensuring all layers of the implementation are coherent with each
+other before raising a PR. The reviewer will check these — do not leave them to find
+problems you could have caught yourself.
+
+### UI ↔ Backend alignment
+- Every field returned by a new or modified API endpoint must be either rendered in the UI
+  or intentionally unused — if unused, say so in the PR description
+- Every field the UI reads or displays must have a corresponding field in the API response
+- Form inputs and submitted payloads must match the request DTO/schema exactly — no extra
+  fields silently dropped, no required fields missing from the form
+- Field names must be consistent across the API contract, database schema, and UI
+  (e.g. do not use `createdAt` in one place and `dateCreated` in another)
+- Validation rules must be enforced on both sides: a field marked required in the backend
+  DTO must also be required in the UI form, and vice versa
+- Enum/constant values used in the UI (status labels, type selectors, etc.) must exactly
+  match the values accepted and returned by the backend — no hardcoded UI strings that can
+  silently diverge from the backend
+
+### No missing fields
+- Before considering implementation complete, cross-reference the proposal's data model
+  or wireframes against your schema, DTO, and UI form
+- Every field present in the proposal must be implemented, or its omission explicitly
+  noted in the PR description with justification
+- Optional fields deferred to a future iteration must have a placeholder comment so they
+  are not silently forgotten
+
+### No introduced inconsistencies
+- Do not introduce naming conventions that clash with the existing conventions in the
+  same layer — check before inventing a new pattern
+- New error response shapes must match the project's existing error contract
+- New HTTP status codes must be consistent with how the rest of the API signals the same
+  conditions
+- Do not duplicate a shared type, constant, or enum that already exists — reuse it
+- New config keys must follow the same naming and grouping pattern as existing config keys
+
+### MCP package updates
+- If this PR adds, removes, or modifies a tool exposed via an MCP server, you must also
+  update the corresponding MCP package in the same PR
+- Register new tools in the MCP server's tool list
+- Unregister removed tools — do not leave dead tool definitions in the package
+- Keep tool input/output schemas in the MCP package in sync with the actual implementation
+
+### Documentation
+- Update the README (root and any relevant sub-package) if the change affects:
+  - setup or installation steps
+  - environment variables or configuration
+  - how to run, test, or deploy the project
+  - architecture or data flow descriptions
+  - any CLI commands or scripts
+- Add any new env var to `.env.example` with a comment describing it
+- Update API reference docs (Swagger, Redoc, or equivalent) for any new or changed endpoint
+  or field — regenerate if the project auto-generates them
+- Update the relevant runbook (`infra/README.md` or equivalent) for any infra change
+- Add a changelog entry if the project maintains a `CHANGELOG.md` or equivalent
+
+---
+
 ## New Dependencies & Supply Chain
 
 Always call out any new package, Terraform module, or provider being added. State:
