@@ -596,7 +596,99 @@ describe('SupportService', () => {
     expect(result.supportIssues).toBe(1);
   });
 
+  // ── Kanban board-entry filter ─────────────────────────────────────────────
+
+  it('kanban: excludes issues with no status changelog (never boarded)', async () => {
+    const config = makeConfig({ boardType: 'kanban', supportLabels: ['support'] });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'PLAT-1', labels: ['support'], status: 'To Do' }),
+    ]);
+    // No status changelogs at all — issue was never pulled onto the board
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const now = new Date();
+    const q = Math.floor(now.getUTCMonth() / 3) + 1;
+    const currentQuarter = `${now.getUTCFullYear()}-Q${q}`;
+    const [result] = await service.getSupportTickets({ boardId: 'PLAT', quarter: currentQuarter });
+    expect(result.totalIssues).toBe(0);
+    expect(result.supportIssues).toBe(0);
+  });
+
+  it('kanban: excludes issues whose board-entry date predates the period', async () => {
+    const now = new Date();
+    const q = Math.floor(now.getUTCMonth() / 3) + 1;
+    const currentQuarter = `${now.getUTCFullYear()}-Q${q}`;
+    const periodStart = new Date(Date.UTC(now.getUTCFullYear(), (q - 1) * 3, 1));
+    const beforePeriod = new Date(periodStart.getTime() - 30 * 86_400_000);
+
+    const config = makeConfig({ boardType: 'kanban', supportLabels: ['support'] });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'PLAT-1', labels: ['support'], status: 'In Progress' }),
+    ]);
+    // Issue entered the board (To Do → In Progress) 30 days before the period
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('PLAT-1', null, 'To Do', new Date(beforePeriod.getTime() - 5 * 86_400_000)),
+      makeChangelog('PLAT-1', 'To Do', 'In Progress', beforePeriod),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'PLAT', quarter: currentQuarter });
+    expect(result.totalIssues).toBe(0);
+    expect(result.supportIssues).toBe(0);
+  });
+
+  it('kanban: includes issues whose board-entry date falls within the period', async () => {
+    const now = new Date();
+    const q = Math.floor(now.getUTCMonth() / 3) + 1;
+    const currentQuarter = `${now.getUTCFullYear()}-Q${q}`;
+    const periodStart = new Date(Date.UTC(now.getUTCFullYear(), (q - 1) * 3, 1));
+    const inPeriod = new Date(periodStart.getTime() + 5 * 86_400_000);
+
+    const config = makeConfig({ boardType: 'kanban', supportLabels: ['support'] });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'PLAT-1', labels: ['support'], status: 'In Progress' }),
+    ]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('PLAT-1', null, 'To Do', inPeriod),
+      makeChangelog('PLAT-1', 'To Do', 'In Progress', new Date(inPeriod.getTime() + 86_400_000)),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'PLAT', quarter: currentQuarter });
+    expect(result.totalIssues).toBe(1);
+    expect(result.supportIssues).toBe(1);
+  });
+
   // ── Current quarter: inflight support tickets (Proposal 0044 extension) ──
+
+  it('current quarter: issue done before the period starts is excluded entirely', async () => {
+    // An issue whose Done transition predates startDate must not appear — it belongs
+    // to a previous period, not the current one.
+    const now = new Date();
+    const q = Math.floor(now.getUTCMonth() / 3) + 1;
+    const currentQuarter = `${now.getUTCFullYear()}-Q${q}`;
+    const periodStart = new Date(now.getUTCFullYear(), (q - 1) * 3, 1);
+    const doneLongAgo = new Date(periodStart.getTime() - 30 * 86_400_000); // 30 days before Q start
+
+    const config = makeConfig({ supportLabels: ['support'] });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', labels: ['support'], status: 'Done' }),
+    ]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', new Date(doneLongAgo.getTime() - 5 * 86_400_000)),
+      makeChangelog('ACC-1', 'In Progress', 'Done', doneLongAgo),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: currentQuarter });
+    expect(result.totalIssues).toBe(0);
+    expect(result.supportIssues).toBe(0);
+  });
 
   it('current quarter: inflight support ticket is included with null cycle time', async () => {
     // Use the actual current quarter label so quarterToDates produces a future endDate

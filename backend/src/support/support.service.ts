@@ -151,6 +151,46 @@ export class SupportService {
       changelogsByIssue.set(cl.issueKey, list);
     }
 
+    // Step 2a (Kanban boards only): exclude issues that have never been pulled
+    // onto the board.  Mirrors the logic in week-detail.service.ts.
+    // Primary signal: statusId in backlogStatusIds (if configured).
+    // Fallback: no status changelog at all = still in backlog, never boarded.
+    // Also compute board-entry date for the period filter below.
+    const isKanban = config?.boardType === 'kanban';
+    const backlogStatusIds: string[] = config?.backlogStatusIds ?? [];
+    const boardEntryStatuses: string[] = config?.boardEntryStatuses ?? [
+      'To Do', 'Backlog', 'Open', 'New', 'TODO', 'OPEN', 'Selected for Development',
+    ];
+    const boardEntryDateByKey = new Map<string, Date>();
+
+    const issueKeysWithStatusChangelog = new Set(changelogs.map((cl) => cl.issueKey));
+
+    const boardedIssues = isKanban
+      ? issues.filter((issue) => {
+          // Primary: explicit backlog status ID list
+          if (backlogStatusIds.length > 0 && issue.statusId !== null) {
+            return !backlogStatusIds.includes(issue.statusId);
+          }
+          // Fallback: has at least one status changelog entry
+          return issueKeysWithStatusChangelog.has(issue.key);
+        })
+      : issues;
+
+    if (isKanban) {
+      for (const issue of boardedIssues) {
+        const logs = changelogsByIssue.get(issue.key) ?? [];
+        const entryTransition = logs.find(
+          (cl) =>
+            cl.toValue !== null &&
+            boardEntryStatuses.map((s) => s.toLowerCase()).includes(cl.toValue.toLowerCase()),
+        );
+        boardEntryDateByKey.set(
+          issue.key,
+          entryTransition ? entryTransition.changedAt : issue.createdAt,
+        );
+      }
+    }
+
     // Step 2b (sprint mode): Bulk-load sprint changelogs to determine membership
     // An issue belongs to the target sprint if its name appears in any sprint
     // changelog toValue (comma-separated) OR if its current sprintId matches.
@@ -174,7 +214,7 @@ export class SupportService {
       const sprintByName = await this.sprintRepo.findOne({ where: { name: sprintName, boardId } });
       const sprintIdByName = sprintByName?.id;
 
-      for (const issue of issues) {
+      for (const issue of boardedIssues) {
         // Changelog membership: sprint name appears in any toValue
         const logs = sprintIssueMap.get(issue.key) ?? [];
         const inSprintViaChangelog = logs.some((cl) => {
@@ -233,10 +273,19 @@ export class SupportService {
     let totalIssues = 0;
     const tickets: SupportTicketDto[] = [];
 
-    for (const issue of issues) {
+    for (const issue of boardedIssues) {
       // Sprint mode: skip issues that are not members of this sprint
       if (isSprint && sprintMemberKeys !== null && !sprintMemberKeys.has(issue.key)) {
         continue;
+      }
+
+      // Kanban boards: skip issues whose board-entry date falls outside the period.
+      // This excludes tickets that were boarded (have a status changelog) but entered
+      // the board in a previous period and are still open — e.g. a ticket created and
+      // started in Q4 2025 that was never resolved should not appear in Q2 2026.
+      if (isKanban) {
+        const entryDate = boardEntryDateByKey.get(issue.key) ?? issue.createdAt;
+        if (entryDate < startDate || entryDate > endDate) continue;
       }
 
       const issueLogs = changelogsByIssue.get(issue.key) ?? [];
@@ -268,7 +317,18 @@ export class SupportService {
       }
 
       if (isSprint || isCurrentPeriod) {
-        // Sprint mode and current-quarter mode: count all members in denominator; no completion gate
+        // Sprint mode and current-quarter mode: count all members in denominator; no completion gate.
+        // Exception: if the issue is already done but its Done transition predates the period
+        // start, it was resolved in a previous period and must not appear here.
+        const donedBeforePeriod =
+          cycleEnd === null &&
+          doneStatuses.includes(issue.status ?? '') &&
+          issueLogs.some(
+            (cl) =>
+              doneStatuses.includes(cl.toValue ?? '') &&
+              cl.changedAt < startDate,
+          );
+        if (donedBeforePeriod) continue;
         totalIssues += 1;
       } else {
         // Past quarter mode: only count issues that completed in the period
@@ -306,7 +366,7 @@ export class SupportService {
 
       let cycleTimeDays: number | null = null;
       let startedAt: string | null = null;
-      let completedAt: string | null = null;
+      let completedAt: string | null = cycleEnd ? cycleEnd.toISOString() : null;
       let band = null;
 
       if (cycleEnd && inProgressTransition) {
@@ -317,7 +377,6 @@ export class SupportService {
 
         cycleTimeDays = round2(Math.max(0, rawDays));
         startedAt = cycleStart.toISOString();
-        completedAt = cycleEnd.toISOString();
         band = classifyCycleTime(cycleTimeDays);
       }
 
