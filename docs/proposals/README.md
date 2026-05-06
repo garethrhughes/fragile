@@ -50,3 +50,10 @@
 | [0046](0046-jira-sprint-report-api-for-planning-accuracy.md) | Jira Sprint Report API as Authoritative Source for Planning Accuracy | Rejected | 2026-05-06 |
 | [0047](0047-sync-cancelled-issues-and-multi-sprint-membership.md) | Sync: Include Cancelled Issues and Persist Multi-Sprint Membership | Accepted | 2026-05-06 |
 | [0048](0048-sprint-membership-service.md) | SprintMembershipService: Single Source of Truth for Sprint Membership Reconstruction | Accepted | 2026-05-06 |
+| [0049](0049-cfr-denominator-semantics.md) | CFR Denominator Semantics: Failures Per Deployment vs Failures Per Deployment-Day | Draft | 2026-05-06 |
+| [0050](0050-removed-set-semantics-in-planning-accuracy.md) | Removed-Set Semantics in Planning Accuracy | Draft | 2026-05-06 |
+| [0051](0051-sprint-report-scoring-na-handling.md) | Sprint Report Scoring: N/A Handling and Weight Renormalisation | Draft | 2026-05-06 |
+| [0052](0052-dora-band-boundary-canonicalisation.md) | DORA Band Boundary Canonicalisation: `<` vs `<=` | Draft | 2026-05-06 |
+| [0053](0053-roadmap-idea-epic-conflict-resolution.md) | Roadmap Idea ↔ Epic Conflict Resolution | Draft | 2026-05-06 |
+| [0054](0054-cycle-time-reopen-handling.md) | Cycle Time Reopen Handling: Pairing First-InProgress with Last-Done | Draft | 2026-05-06 |
+| [0055](0055-third-audit-clear-bug-fix-batch.md) | Third Audit: Clear Bug Fix Batch | Draft | 2026-05-06 |
