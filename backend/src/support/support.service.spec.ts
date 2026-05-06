@@ -397,13 +397,14 @@ describe('SupportService', () => {
       .mockResolvedValueOnce([makeIssue({ key: 'ACC-1', boardId: 'ACC', labels: [] })])
       .mockResolvedValueOnce([makeIssue({ key: 'BPT-1', boardId: 'BPT', labels: ['support'] })]);
 
-    const qb = changelogRepo.createQueryBuilder();
-    qb.getMany
-      .mockResolvedValueOnce([]) // ACC changelogs
-      .mockResolvedValueOnce([  // BPT changelogs
-        makeChangelog('BPT-1', 'To Do', 'In Progress', STARTED_AT),
-        makeChangelog('BPT-1', 'In Progress', 'Done', DONE_AT),
-      ]);
+    // Both boards share the same changelog mock (Promise.all ordering is non-deterministic).
+    // Use mockResolvedValue so every getMany call returns a superset that satisfies both boards:
+    // ACC-1 has a recent In Progress (no done) → counted; BPT-1 has Done in period → counted + support.
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', STARTED_AT),
+      makeChangelog('BPT-1', 'To Do', 'In Progress', STARTED_AT),
+      makeChangelog('BPT-1', 'In Progress', 'Done', DONE_AT),
+    ]);
 
     versionRepo.find.mockResolvedValue([]);
 
@@ -660,6 +661,63 @@ describe('SupportService', () => {
     versionRepo.find.mockResolvedValue([]);
 
     const [result] = await service.getSupportTickets({ boardId: 'PLAT', quarter: currentQuarter });
+    expect(result.totalIssues).toBe(1);
+    expect(result.supportIssues).toBe(1);
+  });
+
+  // ── Stale backlog filter ──────────────────────────────────────────────────
+
+  it('excludes To Do issues with no period activity and no active/recent sprint (SPS-59)', async () => {
+    // SPS-59: To Do since Aug 2025, last sprint (Sprint 2 - 2026) ended before Q2 2026 started.
+    // No status changelog entries in the period. Should be excluded from current-quarter view.
+    const now = new Date();
+    const q = Math.floor(now.getUTCMonth() / 3) + 1;
+    const currentQuarter = `${now.getUTCFullYear()}-Q${q}`;
+    const periodStart = new Date(Date.UTC(now.getUTCFullYear(), (q - 1) * 3, 1));
+    const beforePeriod = new Date(periodStart.getTime() - 30 * 86_400_000);
+
+    const config = makeConfig({ boardId: 'SPS', supportLabels: ['support'] });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'SPS-59', boardId: 'SPS', sprintId: '3359', status: 'To Do', labels: ['support'] }),
+    ]);
+    // Status changelog: last activity was before the period (moved to To Do in Feb)
+    changelogRepo.createQueryBuilder().getMany
+      .mockResolvedValueOnce([
+        makeChangelog('SPS-59', 'In Progress', 'To Do', beforePeriod),
+      ])
+      .mockResolvedValueOnce([]); // sprint changelogs
+    // Sprint 3359 is closed and started before the period
+    sprintRepo.createQueryBuilder().getMany.mockResolvedValueOnce([
+      { id: '3359', state: 'closed', startDate: new Date('2026-01-28T03:50:32Z') },
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'SPS', quarter: currentQuarter });
+    expect(result.totalIssues).toBe(0);
+    expect(result.supportIssues).toBe(0);
+  });
+
+  it('includes To Do issues with an active sprint even if no status activity this period', async () => {
+    const now = new Date();
+    const q = Math.floor(now.getUTCMonth() / 3) + 1;
+    const currentQuarter = `${now.getUTCFullYear()}-Q${q}`;
+
+    const config = makeConfig({ boardId: 'SPS', supportLabels: ['support'] });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'SPS-99', boardId: 'SPS', sprintId: '3906', status: 'To Do', labels: ['support'] }),
+    ]);
+    changelogRepo.createQueryBuilder().getMany
+      .mockResolvedValueOnce([]) // no status changelogs this period
+      .mockResolvedValueOnce([]); // sprint changelogs
+    // Sprint 3906 is active
+    sprintRepo.createQueryBuilder().getMany.mockResolvedValueOnce([
+      { id: '3906', state: 'active', startDate: new Date() },
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'SPS', quarter: currentQuarter });
     expect(result.totalIssues).toBe(1);
     expect(result.supportIssues).toBe(1);
   });

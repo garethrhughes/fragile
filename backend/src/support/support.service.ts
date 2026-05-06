@@ -198,15 +198,19 @@ export class SupportService {
     const sprintIds = [
       ...new Set(boardedIssues.map((i) => i.sprintId).filter((id): id is string => id !== null)),
     ];
-    const sprintStateById = new Map<string, string>();
+    const sprintById = new Map<string, { state: string; startDate: Date | null }>();
     if (sprintIds.length > 0) {
       const sprints = await this.sprintRepo
         .createQueryBuilder('s')
         .where('s.id IN (:...ids)', { ids: sprintIds })
-        .select(['s.id', 's.state'])
+        .select(['s.id', 's.state', 's.startDate'])
         .getMany();
-      for (const s of sprints) sprintStateById.set(String(s.id), s.state);
+      for (const s of sprints) sprintById.set(String(s.id), { state: s.state, startDate: s.startDate ?? null });
     }
+    // Derived: state-only map used by the future-sprint filter below
+    const sprintStateById = new Map<string, string>(
+      [...sprintById.entries()].map(([id, s]) => [id, s.state]),
+    );
 
     // Bulk-load sprint changelogs once so we can check historical membership below.
     const sprintChangelogsForFutureCheck = await this.changelogRepo
@@ -377,6 +381,24 @@ export class SupportService {
               cl.changedAt < startDate,
           );
         if (donedBeforePeriod) continue;
+
+        // Current-period mode: unresolved issues must show evidence of activity
+        // in this period to be counted. An issue is included if ANY of:
+        //   a) it has a status changelog entry on or after startDate (touched this period)
+        //   b) its current sprint is active
+        //   c) its current sprint is closed and started within this period
+        // Otherwise it is stale backlog (e.g. SPS-59 — To Do since 2025, last
+        // sprint ended before the period began).
+        if (cycleEnd === null) {
+          const hasRecentStatusActivity = issueLogs.some((cl) => cl.changedAt >= startDate);
+          const sprintId = issue.sprintId ? String(issue.sprintId) : null;
+          const sprint = sprintId ? sprintById.get(sprintId) : null;
+          const isActiveSprint = sprint?.state === 'active';
+          const isRecentClosedSprint =
+            sprint?.state === 'closed' && sprint.startDate !== null && sprint.startDate >= startDate;
+          if (!hasRecentStatusActivity && !isActiveSprint && !isRecentClosedSprint) continue;
+        }
+
         totalIssues += 1;
       } else {
         // Past quarter mode: only count issues that completed in the period
