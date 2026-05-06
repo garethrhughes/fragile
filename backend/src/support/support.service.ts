@@ -191,20 +191,69 @@ export class SupportService {
       }
     }
 
-    // Step 2b (sprint mode): Bulk-load sprint changelogs to determine membership
-    // An issue belongs to the target sprint if its name appears in any sprint
-    // changelog toValue (comma-separated) OR if its current sprintId matches.
+    // Step 2b: Exclude issues that only belong to future sprints.
+    // Load sprint states for every sprint referenced by the candidate issues,
+    // then drop any issue whose current sprintId maps to a future sprint AND
+    // which has no sprint changelog entry referencing a non-future sprint.
+    const sprintIds = [
+      ...new Set(boardedIssues.map((i) => i.sprintId).filter((id): id is string => id !== null)),
+    ];
+    const sprintStateById = new Map<string, string>();
+    if (sprintIds.length > 0) {
+      const sprints = await this.sprintRepo
+        .createQueryBuilder('s')
+        .where('s.id IN (:...ids)', { ids: sprintIds })
+        .select(['s.id', 's.state'])
+        .getMany();
+      for (const s of sprints) sprintStateById.set(String(s.id), s.state);
+    }
+
+    // Bulk-load sprint changelogs once so we can check historical membership below.
+    const sprintChangelogsForFutureCheck = await this.changelogRepo
+      .createQueryBuilder('cl')
+      .where('cl.issueKey IN (:...keys)', { keys: boardedIssues.map((i) => i.key) })
+      .andWhere('cl.field = :field', { field: 'Sprint' })
+      .getMany();
+    const sprintChangelogsByIssue = new Map<string, string[]>();
+    for (const cl of sprintChangelogsForFutureCheck) {
+      const list = sprintChangelogsByIssue.get(cl.issueKey) ?? [];
+      if (cl.toValue) list.push(cl.toValue);
+      sprintChangelogsByIssue.set(cl.issueKey, list);
+    }
+
+    // Sprint names for all non-future sprints — used to check historical membership.
+    const nonFutureSprintNames = new Set<string>();
+    for (const [id, state] of sprintStateById.entries()) {
+      if (state !== 'future') {
+        const sprint = await this.sprintRepo.findOne({ where: { id } });
+        if (sprint?.name) nonFutureSprintNames.add(sprint.name);
+      }
+    }
+
+    const activeCandidates = boardedIssues.filter((issue) => {
+      const currentSprintId = issue.sprintId ? String(issue.sprintId) : null;
+      const currentSprintState = currentSprintId ? (sprintStateById.get(currentSprintId) ?? null) : null;
+
+      // No sprint at all — not future, include it
+      if (currentSprintState === null) return true;
+      // Not a future sprint — include it
+      if (currentSprintState !== 'future') return true;
+
+      // Current sprint is future — only include if the issue has previously
+      // appeared in a non-future sprint (via sprint changelog)
+      const historicalSprints = sprintChangelogsByIssue.get(issue.key) ?? [];
+      return historicalSprints.some((entry) =>
+        entry.split(',').map((n) => n.trim()).some((name) => nonFutureSprintNames.has(name)),
+      );
+    });
+
+    // Step 2c (sprint mode): Determine sprint membership.
+    // Reuse the sprint changelogs already loaded in step 2b — no second query needed.
     let sprintMemberKeys: Set<string> | null = null;
     if (isSprint && sprintName) {
-      const sprintChangelogs = await this.changelogRepo
-        .createQueryBuilder('cl')
-        .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
-        .andWhere('cl.field = :field', { field: 'Sprint' })
-        .getMany();
-
       sprintMemberKeys = new Set<string>();
       const sprintIssueMap = new Map<string, JiraChangelog[]>();
-      for (const cl of sprintChangelogs) {
+      for (const cl of sprintChangelogsForFutureCheck) {
         const list = sprintIssueMap.get(cl.issueKey) ?? [];
         list.push(cl);
         sprintIssueMap.set(cl.issueKey, list);
@@ -214,7 +263,7 @@ export class SupportService {
       const sprintByName = await this.sprintRepo.findOne({ where: { name: sprintName, boardId } });
       const sprintIdByName = sprintByName?.id;
 
-      for (const issue of boardedIssues) {
+      for (const issue of activeCandidates) {
         // Changelog membership: sprint name appears in any toValue
         const logs = sprintIssueMap.get(issue.key) ?? [];
         const inSprintViaChangelog = logs.some((cl) => {
@@ -273,8 +322,7 @@ export class SupportService {
     let totalIssues = 0;
     const tickets: SupportTicketDto[] = [];
 
-    for (const issue of boardedIssues) {
-      // Sprint mode: skip issues that are not members of this sprint
+    for (const issue of activeCandidates) {
       if (isSprint && sprintMemberKeys !== null && !sprintMemberKeys.has(issue.key)) {
         continue;
       }
@@ -416,6 +464,7 @@ export class SupportService {
       return a.issueKey.localeCompare(b.issueKey);
     });
 
+    // eslint-disable-next-line no-console
     return { boardId, totalIssues, supportIssues, supportPercentage, p50Days, p95Days, tickets };
   }
 
