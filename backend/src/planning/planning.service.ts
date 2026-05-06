@@ -195,6 +195,8 @@ export class PlanningService {
 
     // Group changelogs by issue, keeping only those that reference this sprint
     const logsByIssue = new Map<string, JiraChangelog[]>();
+    // Track which issues have ANY sprint changelog (used by the fallback below)
+    const issueKeysWithAnySprintLog = new Set(sprintChangelogs.map((cl) => cl.issueKey));
     for (const cl of sprintChangelogs) {
       if (
         this.sprintValueContains(cl.fromValue, sprintName) ||
@@ -207,9 +209,13 @@ export class PlanningService {
     }
 
     // Also include issues currently assigned to this sprint with no changelog
-    // (they were likely created directly in the sprint)
+    // (they were likely created directly in the sprint).
+    // Only apply when the issue has NO sprint changelog at all — if it has
+    // sprint history mentioning other sprints, the sprintId field cannot be
+    // trusted as evidence of membership in this sprint (e.g. ACC-45 moved to
+    // refinement but Jira left sprintId pointing at the next sprint).
     const currentIssues = boardIssues.filter(
-      (i) => i.sprintId === sprint.id,
+      (i) => i.sprintId === sprint.id && !issueKeysWithAnySprintLog.has(i.key),
     );
     for (const issue of currentIssues) {
       if (!logsByIssue.has(issue.key)) {
