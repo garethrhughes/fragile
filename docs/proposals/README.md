@@ -49,3 +49,4 @@
 | [0045](0045-support-detection-epic-matching.md) | Support Detection: Epic-Based Classification | Accepted | 2026-05-06 |
 | [0046](0046-jira-sprint-report-api-for-planning-accuracy.md) | Jira Sprint Report API as Authoritative Source for Planning Accuracy | Rejected | 2026-05-06 |
 | [0047](0047-sync-cancelled-issues-and-multi-sprint-membership.md) | Sync: Include Cancelled Issues and Persist Multi-Sprint Membership | Accepted | 2026-05-06 |
+| [0048](0048-sprint-membership-service.md) | SprintMembershipService: Single Source of Truth for Sprint Membership Reconstruction | Accepted | 2026-05-06 |

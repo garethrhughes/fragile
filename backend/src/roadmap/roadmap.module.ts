@@ -5,7 +5,6 @@ import { RoadmapController } from './roadmap.controller.js';
 import {
   JiraSprint,
   JiraIssue,
-  JiraIssueSprint,
   JiraChangelog,
   JpdIdea,
   JiraIssueLink,
@@ -13,13 +12,13 @@ import {
   BoardConfig,
 } from '../database/entities/index.js';
 import { SyncModule } from '../sync/sync.module.js';
+import { SprintMembershipModule } from '../sprint-membership/sprint-membership.module.js';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([
       JiraSprint,
       JiraIssue,
-      JiraIssueSprint,
       JiraChangelog,
       JpdIdea,
       JiraIssueLink,
@@ -27,6 +26,7 @@ import { SyncModule } from '../sync/sync.module.js';
       BoardConfig,
     ]),
     forwardRef(() => SyncModule),
+    SprintMembershipModule,
   ],
   controllers: [RoadmapController],
   providers: [RoadmapService],

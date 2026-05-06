@@ -5,14 +5,15 @@ import { PlanningController } from './planning.controller.js';
 import {
   JiraSprint,
   JiraIssue,
-  JiraIssueSprint,
   JiraChangelog,
   BoardConfig,
 } from '../database/entities/index.js';
+import { SprintMembershipModule } from '../sprint-membership/sprint-membership.module.js';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([JiraSprint, JiraIssue, JiraIssueSprint, JiraChangelog, BoardConfig]),
+    TypeOrmModule.forFeature([JiraSprint, JiraIssue, JiraChangelog, BoardConfig]),
+    SprintMembershipModule,
   ],
   controllers: [PlanningController],
   providers: [PlanningService],

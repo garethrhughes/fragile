@@ -4,9 +4,12 @@ import { Repository } from 'typeorm';
 import { RoadmapService } from './roadmap.service.js';
 import { SyncService } from '../sync/sync.service.js';
 import {
+  SprintMembershipService,
+  SprintMembership,
+} from '../sprint-membership/sprint-membership.service.js';
+import {
   JiraSprint,
   JiraIssue,
-  JiraIssueSprint,
   JiraChangelog,
   JpdIdea,
   JiraIssueLink,
@@ -49,6 +52,64 @@ function mockSyncService(): jest.Mocked<SyncService> {
   return {
     syncRoadmaps: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<SyncService>;
+}
+
+function emptyMembership(): SprintMembership {
+  return {
+    committedKeys: new Set(),
+    addedKeys: new Set(),
+    removedKeys: new Set(),
+    currentMemberKeys: new Set(),
+    logsByIssue: new Map(),
+  };
+}
+
+interface MockSprintMembership {
+  service: jest.Mocked<SprintMembershipService>;
+  /** Seed a sprint's membership; subsequent calls overwrite the same sprint id. */
+  seed(
+    sprintId: string,
+    parts: { committed?: string[]; added?: string[]; removed?: string[] },
+  ): void;
+}
+
+function mockSprintMembership(): MockSprintMembership {
+  const memberships = new Map<string, SprintMembership>();
+
+  const reconstructMany = jest.fn(
+    async (input: { sprints: { id: string }[] }) => {
+      const result = new Map<string, SprintMembership>();
+      for (const s of input.sprints) {
+        result.set(s.id, memberships.get(s.id) ?? emptyMembership());
+      }
+      return result;
+    },
+  );
+
+  const reconstruct = jest.fn(async (input: { sprint: { id: string } }) => {
+    return memberships.get(input.sprint.id) ?? emptyMembership();
+  });
+
+  const service = {
+    reconstruct,
+    reconstructMany,
+  } as unknown as jest.Mocked<SprintMembershipService>;
+
+  return {
+    service,
+    seed(sprintId, parts) {
+      memberships.set(sprintId, {
+        committedKeys: new Set(parts.committed ?? []),
+        addedKeys: new Set(parts.added ?? []),
+        removedKeys: new Set(parts.removed ?? []),
+        currentMemberKeys: new Set([
+          ...(parts.committed ?? []),
+          ...(parts.added ?? []),
+        ]),
+        logsByIssue: new Map(),
+      });
+    },
+  };
 }
 
 function buildQb(results: object[]) {
@@ -101,29 +162,28 @@ describe('RoadmapService', () => {
   let service: RoadmapService;
   let sprintRepo: jest.Mocked<Repository<JiraSprint>>;
   let issueRepo: jest.Mocked<Repository<JiraIssue>>;
-  let issueSprintRepo: jest.Mocked<Repository<JiraIssueSprint>>;
   let changelogRepo: jest.Mocked<Repository<JiraChangelog>>;
   let jpdIdeaRepo: jest.Mocked<Repository<JpdIdea>>;
   let issueLinkRepo: jest.Mocked<Repository<JiraIssueLink>>;
   let roadmapConfigRepo: jest.Mocked<Repository<RoadmapConfig>>;
   let boardConfigRepo: jest.Mocked<Repository<BoardConfig>>;
   let syncService: jest.Mocked<SyncService>;
+  let membership: MockSprintMembership;
 
   beforeEach(() => {
     sprintRepo = mockRepo<JiraSprint>();
     issueRepo = mockRepo<JiraIssue>();
-    issueSprintRepo = mockRepo<JiraIssueSprint>();
     changelogRepo = mockRepo<JiraChangelog>();
     jpdIdeaRepo = mockRepo<JpdIdea>();
     issueLinkRepo = mockRepo<JiraIssueLink>();
     roadmapConfigRepo = mockRepo<RoadmapConfig>();
     boardConfigRepo = mockRepo<BoardConfig>();
     syncService = mockSyncService();
+    membership = mockSprintMembership();
 
     service = new RoadmapService(
       sprintRepo,
       issueRepo,
-      issueSprintRepo,
       changelogRepo,
       jpdIdeaRepo,
       issueLinkRepo,
@@ -131,6 +191,7 @@ describe('RoadmapService', () => {
       boardConfigRepo,
       syncService,
       mockConfigService(),
+      membership.service,
     );
   });
 
@@ -197,12 +258,10 @@ describe('RoadmapService', () => {
       const issue = makeIssue({ key: 'ACC-1', status: 'Done' });
       issueRepo.find.mockResolvedValue([issue]);
       roadmapConfigRepo.find.mockResolvedValue([]);
-      // No changelog — membership via JiraIssueSprint join table
-      issueSprintRepo.find.mockResolvedValue([
-        { issueKey: 'ACC-1', sprintId: 'sprint-1' } as JiraIssueSprint,
-      ]);
+      // Membership reconstructed by SprintMembershipService — issue committed.
+      membership.seed('sprint-1', { committed: ['ACC-1'] });
 
-      // Sprint field changelogs: empty (so issue is assigned at creation)
+      // Status changelogs (used by calculateSprintAccuracy): empty.
       changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb([]));
 
       const result = await service.getAccuracy('ACC');
@@ -225,30 +284,21 @@ describe('RoadmapService', () => {
         .mockResolvedValueOnce([sprint2])   // active sprints
         .mockResolvedValueOnce([sprint1]);  // closed sprints
 
-      // Issue currently in sprint-2 but its only changelog is sprint-1 related
+      // Issue currently in sprint-2 (carry-forward from sprint-1).
+      // SprintMembershipService is responsible for resolving the carry-forward
+      // semantics from the changelog + join table; here we just assert that
+      // RoadmapService includes whatever it returns.
       const issue = makeIssue({
         key: 'ACC-1', status: 'In Progress',
         createdAt: new Date('2026-01-01T00:00:00Z'),
       });
       issueRepo.find.mockResolvedValue([issue]);
 
-      // Changelog only mentions Sprint 1, not Sprint 2 (carry-forward scenario)
-      const carryForwardChangelog = {
-        issueKey: 'ACC-1',
-        field: 'Sprint',
-        fromValue: 'Sprint 1',
-        toValue: 'Sprint 1, Ready to estimate 2',
-        changedAt: new Date('2026-01-15T03:35:00Z'),
-      };
-      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(
-        buildQb([carryForwardChangelog]),
-      );
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb([]));
       roadmapConfigRepo.find.mockResolvedValue([]);
       jpdIdeaRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb([]));
-      // Issue is in sprint-2 via join table (carry-forward — no direct sprint-2 changelog)
-      issueSprintRepo.find.mockResolvedValue([
-        { issueKey: 'ACC-1', sprintId: 'sprint-2' } as JiraIssueSprint,
-      ]);
+      // Membership service places the issue in sprint-2 as a carry-over (committed).
+      membership.seed('sprint-2', { committed: ['ACC-1'] });
 
       const result = await service.getAccuracy('ACC');
       const sprint2Result = result.find((r) => r.sprintId === 'sprint-2');
@@ -256,7 +306,7 @@ describe('RoadmapService', () => {
       expect(sprint2Result!.totalIssues).toBe(1);
     });
 
-    it('excludes cancelled issues from totals (default "Cancelled")', async () => {
+    it('keeps cancelled issues in totals but classifies them as uncovered (default "Cancelled")', async () => {
       const sprint = makeSprint({ id: 'sprint-1' });
       sprintRepo.find
         .mockResolvedValueOnce([sprint])
@@ -266,12 +316,16 @@ describe('RoadmapService', () => {
       ]);
       roadmapConfigRepo.find.mockResolvedValue([]);
       changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb([]));
+      membership.seed('sprint-1', { committed: ['ACC-1'] });
 
       const result = await service.getAccuracy('ACC');
-      expect(result[0].totalIssues).toBe(0);
+      expect(result[0].totalIssues).toBe(1);
+      expect(result[0].coveredIssues).toBe(0);
+      expect(result[0].uncoveredIssues).toBe(1);
+      expect(result[0].linkedCount).toBe(0);
     });
 
-    it('excludes "Won\'t Do" cancelled issues', async () => {
+    it('keeps "Won\'t Do" cancelled issues in totals but classifies them as uncovered', async () => {
       const sprint = makeSprint({ id: 'sprint-1' });
       sprintRepo.find
         .mockResolvedValueOnce([sprint])
@@ -281,12 +335,15 @@ describe('RoadmapService', () => {
       ]);
       roadmapConfigRepo.find.mockResolvedValue([]);
       changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb([]));
+      membership.seed('sprint-1', { committed: ['ACC-1'] });
 
       const result = await service.getAccuracy('ACC');
-      expect(result[0].totalIssues).toBe(0);
+      expect(result[0].totalIssues).toBe(1);
+      expect(result[0].uncoveredIssues).toBe(1);
+      expect(result[0].linkedCount).toBe(0);
     });
 
-    it('respects custom cancelledStatusNames from boardConfig', async () => {
+    it('respects custom cancelledStatusNames from boardConfig (cancelled stays in total, classified uncovered)', async () => {
       boardConfigRepo.findOne.mockResolvedValue({
         boardId: 'ACC',
         boardType: 'scrum',
@@ -303,9 +360,12 @@ describe('RoadmapService', () => {
       ]);
       roadmapConfigRepo.find.mockResolvedValue([]);
       changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb([]));
+      membership.seed('sprint-1', { committed: ['ACC-1'] });
 
       const result = await service.getAccuracy('ACC');
-      expect(result[0].totalIssues).toBe(0);
+      expect(result[0].totalIssues).toBe(1);
+      expect(result[0].uncoveredIssues).toBe(1);
+      expect(result[0].linkedCount).toBe(0);
     });
   });
 
@@ -565,10 +625,8 @@ describe('RoadmapService', () => {
         epicKey: 'EPIC-1',
       });
       issueRepo.find.mockResolvedValue([issue]);
-      // No sprint changelog — membership via JiraIssueSprint join table
-      issueSprintRepo.find.mockResolvedValue([
-        { issueKey: 'ACC-1', sprintId: 'sprint-1' } as JiraIssueSprint,
-      ]);
+      // Membership service places ACC-1 in sprint-1 (committed).
+      membership.seed('sprint-1', { committed: ['ACC-1'] });
 
       // One JPD idea covering EPIC-1 within the sprint window
       const idea = {
@@ -585,32 +643,20 @@ describe('RoadmapService', () => {
       roadmapConfigRepo.find.mockResolvedValue([{ id: 1, jpdKey: 'ROADMAP' } as unknown as import('../database/entities/index.js').RoadmapConfig]);
       jpdIdeaRepo.find.mockResolvedValue([idea]);
 
-      // Sprint changelog: empty (issue assigned at creation)
-      // Status changelog: Done transition within the sprint window (before targetDate)
-      let qbCallCount = 0;
-      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-        qbCallCount++;
-        return {
-          where: jest.fn().mockReturnThis(),
-          andWhere: jest.fn().mockReturnThis(),
-          select: jest.fn().mockReturnThis(),
-          orderBy: jest.fn().mockReturnThis(),
-          getMany: jest.fn().mockResolvedValue(
-            qbCallCount === 1
-              ? [] // Sprint field changelogs (empty)
-              : [  // Status changelogs: Done transition
-                {
-                  issueKey: 'ACC-1',
-                  field: 'status',
-                  fromValue: 'In Progress',
-                  toValue: 'Done',
-                  changedAt: new Date('2026-01-10T12:00:00Z'),
-                },
-              ]
-          ),
-          getRawMany: jest.fn().mockResolvedValue([]),
-        };
-      });
+      // Status changelogs: Done transition within the sprint window (before targetDate).
+      // Sprint-field changelogs are no longer queried directly — that's the
+      // SprintMembershipService's responsibility.
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(
+        buildQb([
+          {
+            issueKey: 'ACC-1',
+            field: 'status',
+            fromValue: 'In Progress',
+            toValue: 'Done',
+            changedAt: new Date('2026-01-10T12:00:00Z'),
+          },
+        ]),
+      );
 
       const result = await service.getAccuracy('ACC');
       expect(result).toHaveLength(1);
@@ -729,10 +775,8 @@ describe('RoadmapService', () => {
         epicKey: 'EPIC-1',
       });
       issueRepo.find.mockResolvedValue([issue]);
-      // No sprint changelog — membership via JiraIssueSprint join table
-      issueSprintRepo.find.mockResolvedValue([
-        { issueKey: 'ACC-1', sprintId: 'sprint-1' } as JiraIssueSprint,
-      ]);
+      // Membership service places ACC-1 in sprint-1 (committed).
+      membership.seed('sprint-1', { committed: ['ACC-1'] });
 
       const idea = {
         key: 'JPD-1',
@@ -1473,6 +1517,8 @@ describe('RoadmapService', () => {
         .mockResolvedValueOnce([]);
       issueRepo.find.mockResolvedValue([issue]);
       boardConfigRepo.findOne.mockResolvedValue(boardConfig);
+      // Membership service places ACC-99 in the sprint (committed at start).
+      membership.seed(sprint.id, { committed: ['ACC-99'] });
 
       // RoadmapConfig + JpdIdea
       const roadmapConfig = { jpdKey: 'PT' } as RoadmapConfig;
@@ -1487,23 +1533,13 @@ describe('RoadmapService', () => {
       });
       jpdIdeaRepo.find.mockResolvedValue([idea]);
 
-      // changelog — two calls in getAccuracy:
-      //   1st: Sprint-field changelogs (used to reconstruct sprint membership)
-      //        → return a Sprint-add changelog so the issue lands in the sprint
-      //   2nd: status-field changelogs (used in calculateSprintAccuracy)
-      const sprintChangelog = [{
-        issueKey: 'ACC-99',
-        field: 'Sprint',
-        fromValue: null,
-        toValue: sprint.name,
-        changedAt: new Date(sprint.startDate!.getTime() - 1000),
-      }];
+      // changelog — RoadmapService no longer queries Sprint-field changelogs
+      // (handled by SprintMembershipService). Only status changelogs remain,
+      // used by calculateSprintAccuracy to find the Done transition timestamp.
       const statusChangelogs = opts.resolvedAt
         ? [{ issueKey: 'ACC-99', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: opts.resolvedAt }]
         : [];
-      changelogRepo.createQueryBuilder = jest.fn()
-        .mockReturnValueOnce(buildQb(sprintChangelog))  // Sprint changelogs
-        .mockReturnValueOnce(buildQb(statusChangelogs)); // status changelogs
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb(statusChangelogs));
 
       // issueLinkRepo — direct link ACC-99 → PT-389
       const linkRow = { sourceIssueKey: 'ACC-99', targetIssueKey: 'PT-389', linkTypeName: opts.linkTypeName, isInward: false };
@@ -1605,6 +1641,8 @@ describe('RoadmapService', () => {
       issueRepo.find.mockResolvedValue([issue]);
       boardConfigRepo.findOne.mockResolvedValue(boardConfig);
       roadmapConfigRepo.find.mockResolvedValue([{ jpdKey: 'PT' } as RoadmapConfig]);
+      // Membership service places ACC-99 in the sprint (committed at start).
+      membership.seed(sprint.id, { committed: ['ACC-99'] });
 
       // epic-linked idea (earlier targetDate)
       const epicIdea = Object.assign(new JpdIdea(), {
@@ -1626,17 +1664,12 @@ describe('RoadmapService', () => {
       });
       jpdIdeaRepo.find.mockResolvedValue([epicIdea, directIdea]);
 
-      changelogRepo.createQueryBuilder = jest.fn()
-        .mockReturnValueOnce(buildQb([{  // Sprint changelogs
-          issueKey: 'ACC-99',
-          field: 'Sprint',
-          fromValue: null,
-          toValue: sprint.name,
-          changedAt: new Date(sprint.startDate!.getTime() - 1000),
-        }]))
-        .mockReturnValueOnce(buildQb([{  // status changelogs
+      // Only status changelogs queried by RoadmapService now.
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(
+        buildQb([{
           issueKey: 'ACC-99', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: resolvedAt,
-        }]));
+        }]),
+      );
       issueLinkRepo.createQueryBuilder = jest.fn().mockReturnValue({
         select: jest.fn().mockReturnThis(),
         where: jest.fn().mockReturnThis(),

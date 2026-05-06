@@ -14,7 +14,6 @@ import { In, Repository } from 'typeorm';
 import {
   JiraSprint,
   JiraIssue,
-  JiraIssueSprint,
   JiraChangelog,
   JpdIdea,
   JiraIssueLink,
@@ -22,6 +21,7 @@ import {
   BoardConfig,
 } from '../database/entities/index.js';
 import { SyncService } from '../sync/sync.service.js';
+import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { dateParts, midnightInTz } from '../metrics/tz-utils.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
@@ -63,8 +63,6 @@ export class RoadmapService {
     private readonly sprintRepo: Repository<JiraSprint>,
     @InjectRepository(JiraIssue)
     private readonly issueRepo: Repository<JiraIssue>,
-    @InjectRepository(JiraIssueSprint)
-    private readonly issueSprintRepo: Repository<JiraIssueSprint>,
     @InjectRepository(JiraChangelog)
     private readonly changelogRepo: Repository<JiraChangelog>,
     @InjectRepository(JpdIdea)
@@ -78,6 +76,7 @@ export class RoadmapService {
     @Inject(forwardRef(() => SyncService))
     private readonly syncService: SyncService,
     private readonly configService: ConfigService,
+    private readonly sprintMembership: SprintMembershipService,
   ) {}
 
   async getAccuracy(
@@ -161,145 +160,32 @@ export class RoadmapService {
       return this.emptyAccuracyForSprints(sprints);
     }
 
-    const allBoardKeys = allBoardIssues.map((i) => i.key);
     const issueByKey = new Map<string, JiraIssue>(allBoardIssues.map((i) => [i.key, i]));
 
-    // Bulk-load all Sprint-field changelogs for all board issues in one query
-    const allSprintChangelogs = await this.changelogRepo
-      .createQueryBuilder('cl')
-      .where('cl.issueKey IN (:...keys)', { keys: allBoardKeys })
-      .andWhere('cl.field = :field', { field: 'Sprint' })
-      .orderBy('cl.changedAt', 'ASC')
-      .getMany();
-
-    // Build per-sprint issue sets by replaying Sprint-field changelogs,
-    // using the same algorithm as sprint-detail.service.ts.
-    const sprintSet = new Set(sprints.map((s) => s.id));
-    const sprintByName = new Map<string, JiraSprint>(sprints.map((s) => [s.name, s]));
-    const issuesBySprint = new Map<string, Set<string>>();
-    for (const s of sprints) {
-      issuesBySprint.set(s.id, new Set<string>());
-    }
-
-    // Load JiraIssueSprint membership for target sprints — replaces the
-    // deprecated issue.sprintId column fallback (ADR 0048).
-    const memberRows = await this.issueSprintRepo.find({
-      where: { sprintId: In([...sprintSet]) },
+    // Reconstruct membership for all target sprints in one pass via the
+    // canonical SprintMembershipService (ADR 0049). Roadmap semantics:
+    // an issue belongs to a sprint if it was a member at *any point* during
+    // the sprint window — i.e. committed (in at start, including carry-overs)
+    // OR added mid-sprint. Removed-mid-sprint issues are still included
+    // because they consumed sprint capacity.
+    const membershipBySprint = await this.sprintMembership.reconstructMany({
+      sprints,
+      boardId,
+      boardIssues: allBoardIssues,
     });
-    const membersBySprintId = new Map<string, Set<string>>();
-    for (const row of memberRows) {
-      const set = membersBySprintId.get(row.sprintId) ?? new Set<string>();
-      set.add(row.issueKey);
-      membersBySprintId.set(row.sprintId, set);
-    }
 
-    // Group changelogs by issue key for efficient per-issue replay
-    const changelogsByIssue = new Map<string, typeof allSprintChangelogs>();
-    for (const cl of allSprintChangelogs) {
-      const list = changelogsByIssue.get(cl.issueKey) ?? [];
-      list.push(cl);
-      changelogsByIssue.set(cl.issueKey, list);
-    }
-
-    // For each board issue, figure out which target sprints it belongs to
-    for (const issue of allBoardIssues) {
-      const logs = changelogsByIssue.get(issue.key) ?? [];
-
-      // Collect names of all target sprints this issue ever appeared in
-      // via changelogs — also handle issues with no changelogs (assigned at creation)
-      const sprintNamesToCheck = new Set<string>();
-
-      // Issues in a target sprint with no sprint changelog were created directly
-      // into that sprint. Use JiraIssueSprint join table instead of sprintId column.
-      if (logs.length === 0) {
-        for (const [sid, members] of membersBySprintId) {
-          if (members.has(issue.key)) {
-            issuesBySprint.get(sid)!.add(issue.key);
-          }
-        }
-        continue;
-      }
-
-      // Collect sprint names referenced in changelogs that correspond to our target sprints
-      for (const cl of logs) {
-        for (const sprint of sprints) {
-          if (
-            sprintValueContainsName(cl.fromValue, sprint.name) ||
-            sprintValueContainsName(cl.toValue, sprint.name)
-          ) {
-            sprintNamesToCheck.add(sprint.name);
-          }
-        }
-      }
-
-      // Fallback: issue has sprint membership in JiraIssueSprint for a target
-      // sprint, but no changelog entry mentions that sprint by name (e.g. Jira
-      // carried the issue forward without emitting a Sprint-field changelog).
-      for (const [sid, members] of membersBySprintId) {
-        if (members.has(issue.key)) {
-          const targetSprint = sprints.find((s) => s.id === sid);
-          if (targetSprint && !sprintNamesToCheck.has(targetSprint.name)) {
-            issuesBySprint.get(targetSprint.id)!.add(issue.key);
-            // Fall through — still replay changelogs for other target sprints
-          }
-        }
-      }
-
-      // For each referenced target sprint, replay the changelog to determine
-      // whether the issue was a member at any point during that sprint window
-      for (const sprintName of sprintNamesToCheck) {
-        const sprint = sprintByName.get(sprintName);
-        if (!sprint) continue;
-
-        const sprintStart = sprint.startDate;
-        const sprintEnd = sprint.endDate ?? new Date();
-
-        if (!sprintStart) {
-          // No start date: include if any changelog mentions this sprint
-          issuesBySprint.get(sprint.id)!.add(issue.key);
-          continue;
-        }
-
-        const effectiveStart = new Date(sprintStart.getTime() + ROADMAP_GRACE_PERIOD_MS);
-
-        // Determine state at sprint start
-        const inSprintAtStart = wasInSprintByName(logs, sprintName, sprintStart);
-        let inSprintAtEnd = inSprintAtStart;
-
-        for (const cl of logs) {
-          if (cl.changedAt <= sprintStart) continue;
-          if (cl.changedAt > sprintEnd) break;
-
-          if (sprintValueContainsName(cl.toValue, sprintName)) {
-            inSprintAtEnd = true;
-          }
-          if (
-            sprintValueContainsName(cl.fromValue, sprintName) &&
-            !sprintValueContainsName(cl.toValue, sprintName)
-          ) {
-            inSprintAtEnd = false;
-          }
-        }
-
-        // Also handle issues created directly into the sprint after grace period
-        const createdMidSprint =
-          logs.length > 0 &&
-          issue.createdAt > effectiveStart &&
-          issue.createdAt <= sprintEnd &&
-          !inSprintAtStart;
-
-        if (inSprintAtStart || inSprintAtEnd || createdMidSprint) {
-          issuesBySprint.get(sprint.id)!.add(issue.key);
-        }
-      }
-    }
-
-    // Materialise issue lists per sprint
+    // Materialise issue lists per sprint as the union of committed + added.
     const issueListBySprint = new Map<string, JiraIssue[]>();
-    for (const [sid, keySet] of issuesBySprint) {
+    for (const sprint of sprints) {
+      const m = membershipBySprint.get(sprint.id);
+      const keys = new Set<string>();
+      if (m) {
+        for (const k of m.committedKeys) keys.add(k);
+        for (const k of m.addedKeys) keys.add(k);
+      }
       issueListBySprint.set(
-        sid,
-        [...keySet].map((k) => issueByKey.get(k)!).filter(Boolean),
+        sprint.id,
+        [...keys].map((k) => issueByKey.get(k)!).filter(Boolean),
       );
     }
 
@@ -879,12 +765,13 @@ export class RoadmapService {
     _inProgressStatusNames: string[], // accepted for API clarity; not used in core predicate
     roadmapLinkTypes: string[] = [],
   ): Promise<RoadmapSprintAccuracy> {
-    // Exclude Epics, Sub-tasks, and cancelled issues from all coverage metrics.
-    // Cancelled issues are removed from both numerator and denominator so they
-    // do not inflate the amber count or drag down the coverage percentage.
-    const filteredIssues = sprintIssues.filter(
-      (i) => isWorkItem(i.issueType) && !cancelledStatusNames.includes(i.status),
-    );
+    // Exclude Epics and Sub-tasks (per ADR 0018). Cancelled issues remain in
+    // the total so the overview matches the sprint-detail issue count — users
+    // were confused by the silent exclusion. Cancelled issues with a roadmap
+    // link are skipped from the amber/green classification below so they do
+    // not unfairly drag `roadmapOnTimeRate`; they always land in
+    // `uncoveredIssues`.
+    const filteredIssues = sprintIssues.filter((i) => isWorkItem(i.issueType));
 
     if (filteredIssues.length === 0) {
       return this.emptyAccuracy(sprint);
@@ -942,6 +829,10 @@ export class RoadmapService {
     today.setUTCHours(0, 0, 0, 0); // start of today UTC
 
     for (const issue of filteredIssues) {
+      // Cancelled issues stay in the total but never count as covered or
+      // amber — they have no meaningful delivery signal.
+      if (cancelledStatusNames.includes(issue.status)) continue;
+
       // Epic link takes priority; fall back to direct link (ADR 0044)
       const epicIdea = issue.epicKey ? epicIdeaMap.get(issue.epicKey) : undefined;
       const directIdea = directLinkIdeaMap.get(issue.key);
@@ -1093,57 +984,4 @@ export class RoadmapService {
   private emptyAccuracyForSprints(sprints: JiraSprint[]): RoadmapSprintAccuracy[] {
     return sprints.map((s) => this.emptyAccuracy(s));
   }
-}
-
-// ---------------------------------------------------------------------------
-// Module-level constants
-// ---------------------------------------------------------------------------
-
-/** Grace period matching PlanningService — absorbs Jira's bulk-add delay */
-const ROADMAP_GRACE_PERIOD_MS = 5 * 60 * 1000;
-
-// ---------------------------------------------------------------------------
-// Pure helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Returns true if `sprintName` appears as an exact token in a comma-separated
- * Sprint field value (prevents "Sprint 1" matching "Sprint 10").
- */
-function sprintValueContainsName(
-  value: string | null,
-  sprintName: string,
-): boolean {
-  if (!value) return false;
-  return value.split(',').some((s) => s.trim() === sprintName);
-}
-
-/**
- * Replay Sprint-field changelogs to determine whether an issue was in
- * `sprintName` at or just after `date` (using a 5-minute grace period).
- * Returns true for issues with no changelogs (assigned at creation).
- */
-function wasInSprintByName(
-  sprintChangelogs: { changedAt: Date; fromValue: string | null; toValue: string | null }[],
-  sprintName: string,
-  date: Date,
-): boolean {
-  const effectiveDate = new Date(date.getTime() + ROADMAP_GRACE_PERIOD_MS);
-  let inSprint = false;
-
-  for (const cl of sprintChangelogs) {
-    if (cl.changedAt > effectiveDate) break;
-    if (sprintValueContainsName(cl.toValue, sprintName)) {
-      inSprint = true;
-    }
-    if (
-      sprintValueContainsName(cl.fromValue, sprintName) &&
-      !sprintValueContainsName(cl.toValue, sprintName)
-    ) {
-      inSprint = false;
-    }
-  }
-
-  if (sprintChangelogs.length === 0) return true;
-  return inSprint;
 }

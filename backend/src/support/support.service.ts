@@ -4,7 +4,6 @@ import { Repository, In } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import {
   JiraIssue,
-  JiraIssueSprint,
   JiraChangelog,
   JiraVersion,
   JiraSprint,
@@ -16,6 +15,7 @@ import { quarterToDates } from '../metrics/period-utils.js';
 import { percentile, round2 } from '../metrics/statistics.js';
 import { classifyCycleTime } from '../metrics/cycle-time-bands.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
+import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
 import type {
   SupportTicketDto,
   SupportMatchReason,
@@ -33,8 +33,6 @@ export class SupportService {
   constructor(
     @InjectRepository(JiraIssue)
     private readonly issueRepo: Repository<JiraIssue>,
-    @InjectRepository(JiraIssueSprint)
-    private readonly issueSprintRepo: Repository<JiraIssueSprint>,
     @InjectRepository(JiraChangelog)
     private readonly changelogRepo: Repository<JiraChangelog>,
     @InjectRepository(JiraVersion)
@@ -47,6 +45,7 @@ export class SupportService {
     private readonly issueLinkRepo: Repository<JiraIssueLink>,
     private readonly configService: ConfigService,
     private readonly workingTimeService: WorkingTimeService,
+    private readonly sprintMembership: SprintMembershipService,
   ) {
     const baseUrl = this.configService.get<string>('JIRA_BASE_URL', '');
     if (!baseUrl) {
@@ -194,107 +193,83 @@ export class SupportService {
       }
     }
 
-    // Step 2b: Exclude issues that only belong to future sprints.
-    // Load JiraIssueSprint membership for all candidate issues, then load
-    // sprint state for each referenced sprint.
-    const issMemberRows = await this.issueSprintRepo
-      .createQueryBuilder('isp')
-      .where('isp.issueKey IN (:...keys)', { keys: boardedIssues.map((i) => i.key) })
+    // Step 2b: Sprint membership via SprintMembershipService (single source of truth).
+    //
+    // Two questions need answering:
+    //   (i)  current-period gate — is the issue a member (during the sprint's
+    //        own window) of any active sprint, or any closed sprint that started
+    //        within [startDate, endDate]?
+    //   (ii) sprint-mode — is the issue a member of the named sprint at any point
+    //        during its window?
+    //
+    // We collect the relevant sprints once and call reconstructMany once.
+    const periodSprints = await this.sprintRepo
+      .createQueryBuilder('s')
+      .where('s.boardId = :boardId', { boardId })
+      .andWhere(
+        "(s.state = 'active' OR (s.state = 'closed' AND s.startDate >= :startDate AND s.startDate <= :endDate))",
+        { startDate, endDate },
+      )
       .getMany();
-    // Build Map<issueKey, Set<sprintId>>
-    const sprintIdsByIssue = new Map<string, Set<string>>();
-    for (const row of issMemberRows) {
-      const set = sprintIdsByIssue.get(row.issueKey) ?? new Set<string>();
-      set.add(row.sprintId);
-      sprintIdsByIssue.set(row.issueKey, set);
+
+    const sprintsToReconstruct: JiraSprint[] = [...periodSprints];
+    let namedSprint: JiraSprint | null = null;
+    if (isSprint && sprintName) {
+      namedSprint = await this.sprintRepo.findOne({ where: { name: sprintName, boardId } });
+      if (namedSprint && !sprintsToReconstruct.some((s) => s.id === namedSprint!.id)) {
+        sprintsToReconstruct.push(namedSprint);
+      }
     }
-    const allIssueMemberSprintIds = [...new Set(issMemberRows.map((r) => r.sprintId))];
-    const sprintById = new Map<string, { state: string; startDate: Date | null }>();
-    if (allIssueMemberSprintIds.length > 0) {
-      const sprints = await this.sprintRepo
-        .createQueryBuilder('s')
-        .where('s.id IN (:...ids)', { ids: allIssueMemberSprintIds })
-        .select(['s.id', 's.state', 's.startDate'])
-        .getMany();
-      for (const s of sprints) sprintById.set(String(s.id), { state: s.state, startDate: s.startDate ?? null });
+
+    const memberships =
+      sprintsToReconstruct.length > 0
+        ? await this.sprintMembership.reconstructMany({
+            sprints: sprintsToReconstruct,
+            boardId,
+            boardIssues: boardedIssues,
+          })
+        : new Map();
+
+    // Build Map<issueKey, Set<sprintId>> covering "ever a member during sprint window"
+    // across all reconstructed sprints. Used by the current-period gate.
+    const periodMembershipByIssue = new Map<string, Set<string>>();
+    for (const sprint of periodSprints) {
+      const m = memberships.get(sprint.id);
+      if (!m) continue;
+      const allKeys = new Set<string>([
+        ...m.committedKeys,
+        ...m.addedKeys,
+        ...m.removedKeys,
+        ...m.currentMemberKeys,
+      ]);
+      for (const key of allKeys) {
+        const set = periodMembershipByIssue.get(key) ?? new Set<string>();
+        set.add(sprint.id);
+        periodMembershipByIssue.set(key, set);
+      }
     }
-    // Derived: state-only map used by the future-sprint filter below
-    const sprintStateById = new Map<string, string>(
-      [...sprintById.entries()].map(([id, s]) => [id, s.state]),
+    // Sprint state lookup for the current-period gate (active vs recent-closed).
+    const periodSprintById = new Map<string, { state: string; startDate: Date | null }>(
+      periodSprints.map((s) => [s.id, { state: s.state, startDate: s.startDate ?? null }]),
     );
 
-    // Bulk-load sprint changelogs once so we can check historical membership below.
-    const sprintChangelogsForFutureCheck = await this.changelogRepo
-      .createQueryBuilder('cl')
-      .where('cl.issueKey IN (:...keys)', { keys: boardedIssues.map((i) => i.key) })
-      .andWhere('cl.field = :field', { field: 'Sprint' })
-      .getMany();
-    const sprintChangelogsByIssue = new Map<string, string[]>();
-    for (const cl of sprintChangelogsForFutureCheck) {
-      const list = sprintChangelogsByIssue.get(cl.issueKey) ?? [];
-      if (cl.toValue) list.push(cl.toValue);
-      sprintChangelogsByIssue.set(cl.issueKey, list);
-    }
-
-    // Sprint names for all non-future sprints — used to check historical membership.
-    const nonFutureSprintNames = new Set<string>();
-    for (const [id, state] of sprintStateById.entries()) {
-      if (state !== 'future') {
-        const sprint = await this.sprintRepo.findOne({ where: { id } });
-        if (sprint?.name) nonFutureSprintNames.add(sprint.name);
-      }
-    }
-
-    const activeCandidates = boardedIssues.filter((issue) => {
-      const issueSprintIds = [...(sprintIdsByIssue.get(issue.key) ?? new Set())];
-      // No sprint membership at all — not future, include it
-      if (issueSprintIds.length === 0) return true;
-      // Include if any of the issue's sprints is non-future
-      const allFuture = issueSprintIds.every(
-        (sid) => (sprintStateById.get(String(sid)) ?? null) === 'future',
-      );
-      if (!allFuture) return true;
-
-      // All current sprints are future — only include if the issue has previously
-      // appeared in a non-future sprint (via sprint changelog)
-      const historicalSprints = sprintChangelogsByIssue.get(issue.key) ?? [];
-      return historicalSprints.some((entry) =>
-        entry.split(',').map((n) => n.trim()).some((name) => nonFutureSprintNames.has(name)),
-      );
-    });
-
-    // Step 2c (sprint mode): Determine sprint membership.
-    // Reuse the sprint changelogs already loaded in step 2b — no second query needed.
+    // Sprint-mode membership: union of committed/added/removed/current for the
+    // named sprint — i.e. "was the issue ever a member of this sprint during
+    // its window?"
     let sprintMemberKeys: Set<string> | null = null;
-    if (isSprint && sprintName) {
-      sprintMemberKeys = new Set<string>();
-      const sprintIssueMap = new Map<string, JiraChangelog[]>();
-      for (const cl of sprintChangelogsForFutureCheck) {
-        const list = sprintIssueMap.get(cl.issueKey) ?? [];
-        list.push(cl);
-        sprintIssueMap.set(cl.issueKey, list);
-      }
-
-      // Pre-resolve sprint ID from name to avoid N+1 in the loop below
-      const sprintByName = await this.sprintRepo.findOne({ where: { name: sprintName, boardId } });
-      const sprintIdByName = sprintByName?.id;
-
-      for (const issue of activeCandidates) {
-        // Changelog membership: sprint name appears in any toValue
-        const logs = sprintIssueMap.get(issue.key) ?? [];
-        const inSprintViaChangelog = logs.some((cl) => {
-          const names = (cl.toValue ?? '').split(',').map((n) => n.trim());
-          return names.includes(sprintName);
-        });
-        // Current assignment fallback (covers issues added mid-sprint with no prior history)
-        const inSprintViaAssignment =
-          sprintIdByName !== undefined &&
-          (sprintIdsByIssue.get(issue.key) ?? new Set()).has(String(sprintIdByName));
-        if (inSprintViaChangelog || inSprintViaAssignment) {
-          sprintMemberKeys.add(issue.key);
-        }
-      }
+    if (isSprint && namedSprint) {
+      const m = memberships.get(namedSprint.id);
+      sprintMemberKeys = m
+        ? new Set<string>([
+            ...m.committedKeys,
+            ...m.addedKeys,
+            ...m.removedKeys,
+            ...m.currentMemberKeys,
+          ])
+        : new Set();
     }
+
+    const activeCandidates = boardedIssues;
 
     // Step 3: Bulk-load issue links for link-based classification
     let linksByIssue = new Map<string, JiraIssueLink[]>();
@@ -402,12 +377,13 @@ export class SupportService {
         // sprint ended before the period began).
         if (cycleEnd === null) {
           const hasRecentStatusActivity = issueLogs.some((cl) => cl.changedAt >= startDate);
-          // Check any of the issue's current sprints for active/recent-closed state
-          const issueSprintIdSet = sprintIdsByIssue.get(issue.key) ?? new Set<string>();
+          // Check any of the issue's period sprints for active/recent-closed state.
+          // Membership comes from SprintMembershipService (single source of truth).
+          const issueSprintIdSet = periodMembershipByIssue.get(issue.key) ?? new Set<string>();
           let isActiveSprint = false;
           let isRecentClosedSprint = false;
           for (const sid of issueSprintIdSet) {
-            const sprint = sprintById.get(String(sid));
+            const sprint = periodSprintById.get(sid);
             if (sprint?.state === 'active') { isActiveSprint = true; break; }
             if (sprint?.state === 'closed' && sprint.startDate !== null && sprint.startDate >= startDate) {
               isRecentClosedSprint = true;

@@ -60,3 +60,4 @@ a new ADR is created for the replacement decision.
 | [0046](0046-support-sprint-membership-population.md) | Support Report: sprint-membership-based issue population | Accepted | 2026-05-06 |
 | [0047](0047-support-detection-epic-based-classification.md) | Support Detection: epic-based classification with composite `matchReason` | Accepted | 2026-05-06 |
 | [0048](0048-sync-cancelled-issues-and-multi-sprint-membership.md) | Sync: include cancelled issues via JQL and persist multi-sprint membership | Accepted | 2026-05-06 |
+| [0049](0049-sprint-membership-service.md) | Single `SprintMembershipService` for sprint membership reconstruction | Accepted | 2026-05-06 |

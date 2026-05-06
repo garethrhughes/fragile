@@ -3,7 +3,6 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import {
   JiraIssue,
-  JiraIssueSprint,
   JiraChangelog,
   JiraVersion,
   JiraSprint,
@@ -14,13 +13,13 @@ import {
 import { SupportController } from './support.controller.js';
 import { SupportService } from './support.service.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
+import { SprintMembershipModule } from '../sprint-membership/sprint-membership.module.js';
 
 @Module({
   imports: [
     ConfigModule,
     TypeOrmModule.forFeature([
       JiraIssue,
-      JiraIssueSprint,
       JiraChangelog,
       JiraVersion,
       JiraSprint,
@@ -28,6 +27,7 @@ import { WorkingTimeService } from '../metrics/working-time.service.js';
       JiraIssueLink,
       WorkingTimeConfigEntity,
     ]),
+    SprintMembershipModule,
   ],
   controllers: [SupportController],
   providers: [SupportService, WorkingTimeService],

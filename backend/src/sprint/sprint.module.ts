@@ -4,7 +4,6 @@ import {
   BoardConfig,
   JiraChangelog,
   JiraIssue,
-  JiraIssueSprint,
   JiraIssueLink,
   JiraSprint,
   JpdIdea,
@@ -13,13 +12,13 @@ import {
 import { SprintController } from './sprint.controller.js';
 import { SprintDetailService } from './sprint-detail.service.js';
 import { MetricsModule } from '../metrics/metrics.module.js';
+import { SprintMembershipModule } from '../sprint-membership/sprint-membership.module.js';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([
       JiraSprint,
       JiraIssue,
-      JiraIssueSprint,
       JiraChangelog,
       BoardConfig,
       JpdIdea,
@@ -27,6 +26,7 @@ import { MetricsModule } from '../metrics/metrics.module.js';
       JiraIssueLink,
     ]),
     MetricsModule,
+    SprintMembershipModule,
   ],
   controllers: [SprintController],
   providers: [SprintDetailService],

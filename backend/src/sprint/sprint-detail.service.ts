@@ -11,7 +11,6 @@ import {
   BoardConfig,
   JiraChangelog,
   JiraIssue,
-  JiraIssueSprint,
   JiraIssueLink,
   JiraSprint,
   JpdIdea,
@@ -20,6 +19,7 @@ import {
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
+import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
 
 // ---------------------------------------------------------------------------
 // Response interfaces (exported for use by the controller and frontend types)
@@ -173,12 +173,6 @@ export interface SprintDetailResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const SPRINT_GRACE_PERIOD_MS = 5 * 60 * 1000; // 5 minutes
-
-// ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
 
@@ -192,8 +186,6 @@ export class SprintDetailService {
     private readonly sprintRepo: Repository<JiraSprint>,
     @InjectRepository(JiraIssue)
     private readonly issueRepo: Repository<JiraIssue>,
-    @InjectRepository(JiraIssueSprint)
-    private readonly issueSprintRepo: Repository<JiraIssueSprint>,
     @InjectRepository(JiraChangelog)
     private readonly changelogRepo: Repository<JiraChangelog>,
     @InjectRepository(BoardConfig)
@@ -206,6 +198,7 @@ export class SprintDetailService {
     private readonly issueLinkRepo: Repository<JiraIssueLink>,
     private readonly configService: ConfigService,
     private readonly workingTimeService: WorkingTimeService,
+    private readonly sprintMembership: SprintMembershipService,
   ) {
     const baseUrl = this.configService.get<string>('JIRA_BASE_URL', '');
     if (!baseUrl) {
@@ -283,145 +276,24 @@ export class SprintDetailService {
       return this.buildEmptyResponse(sprint, boardConfigShape);
     }
 
-    const allKeys = boardIssues.map((i) => i.key);
     const issueByKey = new Map<string, JiraIssue>(
       boardIssues.map((i) => [i.key, i]),
     );
 
     // -----------------------------------------------------------------------
-    // Query 4: Bulk-load Sprint-field changelogs for all board issue keys
+    // Sprint membership reconstruction — delegated to the canonical service
+    // (ADR 0049). Owns its own queries for changelogs, closed sprint names,
+    // and the JiraIssueSprint join table.
     // -----------------------------------------------------------------------
-    const sprintChangelogs = await this.changelogRepo
-      .createQueryBuilder('cl')
-      .where('cl.issueKey IN (:...keys)', { keys: allKeys })
-      .andWhere('cl.field = :field', { field: 'Sprint' })
-      .orderBy('cl.changedAt', 'ASC')
-      .getMany();
-
-    // -----------------------------------------------------------------------
-    // Sprint membership reconstruction (mirrors PlanningService algorithm)
-    // -----------------------------------------------------------------------
-    const sprintName = sprint.name;
-
-    // Group Sprint-field changelogs by issue, keeping only those that reference
-    // this sprint by name
-    const logsByIssue = new Map<string, JiraChangelog[]>();
-    for (const cl of sprintChangelogs) {
-      if (
-        sprintValueContains(cl.fromValue, sprintName) ||
-        sprintValueContains(cl.toValue, sprintName)
-      ) {
-        const list = logsByIssue.get(cl.issueKey) ?? [];
-        list.push(cl);
-        logsByIssue.set(cl.issueKey, list);
-      }
-    }
-
-    // Include issues currently assigned to this sprint with no changelog
-    // (created directly into the sprint — PlanningService pattern §4b)
-    // Use JiraIssueSprint join table instead of the deprecated sprintId column.
-    const sprintMemberRows = await this.issueSprintRepo.find({
-      where: { sprintId: sprint.id },
+    const membership = await this.sprintMembership.reconstruct({
+      sprint,
+      boardId,
+      boardIssues,
     });
-    const sprintMemberKeys = new Set(sprintMemberRows.map((r) => r.issueKey));
-    for (const issue of boardIssues) {
-      if (sprintMemberKeys.has(issue.key) && !logsByIssue.has(issue.key)) {
-        logsByIssue.set(issue.key, []);
-      }
-    }
 
-    if (logsByIssue.size === 0) {
-      return this.buildEmptyResponse(sprint, boardConfigShape);
-    }
-
-    // Classify each issue as committed, added, or removed
+    const { committedKeys, addedKeys, removedKeys, logsByIssue } = membership;
     const sprintStart = sprint.startDate;
     const sprintEnd = sprint.endDate ?? new Date();
-
-    const committedKeys = new Set<string>();
-    const addedKeys = new Set<string>();
-    const removedKeys = new Set<string>();
-
-    if (sprintStart) {
-      // -----------------------------------------------------------------------
-      // Query 5: Load closed sprint names for carry-over detection.
-      // Deferred to here so the query only runs when there are issues and
-      // changelogs to classify. Only issues moved from a closed sprint are
-      // genuine carry-overs; moves from future/groomed sprints are additions.
-      // Only `name` is selected to minimise the data fetched.
-      // -----------------------------------------------------------------------
-      const closedSprintsForBoard = await this.sprintRepo.find({
-        where: { boardId, state: 'closed' },
-        select: ['name'],
-      });
-      const closedSprintNames = new Set(closedSprintsForBoard.map((s) => s.name));
-
-      const effectiveSprintStart = new Date(
-        sprintStart.getTime() + SPRINT_GRACE_PERIOD_MS,
-      );
-
-      for (const [issueKey, logs] of logsByIssue) {
-        const issue = issueByKey.get(issueKey);
-        const createdAt = issue?.createdAt;
-
-        // Issues with no sprint changelog were assigned at creation.
-        // If created after the grace period, treat as mid-sprint addition.
-        const createdMidSprint =
-          logs.length === 0 &&
-          createdAt != null &&
-          createdAt > effectiveSprintStart;
-
-        const wasAtStart =
-          !createdMidSprint &&
-          wasInSprintAtDate(logs, sprintName, sprintStart);
-
-        let inSprintAtEnd = wasAtStart || createdMidSprint;
-        let wasAddedDuringSprint = createdMidSprint;
-        // Carry-overs from a previous sprint are treated as committed, not added.
-        // See proposal 0038: when fromValue contains a different sprint name, the
-        // issue was moved via Jira's "Complete Sprint" carry-over flow.
-        let wasCarryOver = false;
-
-        for (const cl of logs) {
-          if (cl.changedAt <= sprintStart) continue;
-          if (cl.changedAt > sprintEnd) break; // ignore post-sprint changes
-
-          if (sprintValueContains(cl.toValue, sprintName)) {
-            if (!inSprintAtEnd && !wasAtStart) {
-              if (isCarryOverFromSprint(cl.fromValue, sprintName, closedSprintNames)) {
-                wasCarryOver = true;
-              } else {
-                wasAddedDuringSprint = true;
-              }
-            }
-            inSprintAtEnd = true;
-          }
-          if (
-            sprintValueContains(cl.fromValue, sprintName) &&
-            !sprintValueContains(cl.toValue, sprintName)
-          ) {
-            inSprintAtEnd = false;
-          }
-        }
-
-        if (wasAtStart || wasCarryOver) {
-          committedKeys.add(issueKey);
-          if (!inSprintAtEnd) {
-            removedKeys.add(issueKey);
-          }
-        } else if (wasAddedDuringSprint) {
-          addedKeys.add(issueKey);
-          if (!inSprintAtEnd) {
-            removedKeys.add(issueKey);
-          }
-        }
-      }
-    } else {
-      // No start date — treat all issues with changelogs as committed
-      for (const issueKey of logsByIssue.keys()) {
-        committedKeys.add(issueKey);
-      }
-    }
 
     // Build final issue set: (committed ∪ added) \ removed
     const finalIssueKeys = new Set<string>([...committedKeys, ...addedKeys]);
@@ -746,84 +618,6 @@ export class SprintDetailService {
 // ---------------------------------------------------------------------------
 // Pure helpers (module-level, not exported)
 // ---------------------------------------------------------------------------
-
-/**
- * Exact sprint-name match inside a comma-separated Sprint field value.
- * Prevents "Sprint 1" from matching "Sprint 10".
- */
-function sprintValueContains(
-  value: string | null,
-  sprintName: string,
-): boolean {
-  if (!value) return false;
-  return value.split(',').some((s) => s.trim() === sprintName);
-}
-
-/**
- * Returns true when a Sprint-field changelog `fromValue` indicates that
- * the issue was carried over from a **closed** sprint — i.e. it was moved
- * from a completed sprint into the current one via Jira's "Complete Sprint"
- * carry-over flow.
- *
- * Issues moved from future/groomed sprints (not in closedSprintNames) are
- * NOT carry-overs — they are mid-sprint scope additions.
- *
- * When Jira's "Complete Sprint" carry-over runs, the changelog entry has:
- *   fromValue: "<previous sprint name>"
- *   toValue:   "<current sprint name>"
- *
- * A backlog addition has fromValue = null or "".
- * See ADR 0039.
- */
-function isCarryOverFromSprint(
-  fromValue: string | null,
-  currentSprintName: string,
-  closedSprintNames: Set<string>,
-): boolean {
-  if (!fromValue) return false;
-  return fromValue.split(',').some((s) => {
-    const name = s.trim();
-    return name !== '' && name !== currentSprintName && closedSprintNames.has(name);
-  });
-}
-
-/**
- * Check if an issue was in the sprint at the given date by replaying
- * Sprint-field changelogs. Applies a 5-minute grace period to absorb
- * Jira's bulk-add delay.
- *
- * Returns true when sprintChangelogs.length === 0 (issue created directly
- * in the sprint with no changelog — see proposal §6c).
- */
-function wasInSprintAtDate(
-  sprintChangelogs: JiraChangelog[],
-  sprintName: string,
-  date: Date,
-): boolean {
-  const effectiveDate = new Date(date.getTime() + SPRINT_GRACE_PERIOD_MS);
-  let inSprint = false;
-
-  for (const cl of sprintChangelogs) {
-    if (cl.changedAt > effectiveDate) break;
-
-    if (sprintValueContains(cl.toValue, sprintName)) {
-      inSprint = true;
-    }
-    if (
-      sprintValueContains(cl.fromValue, sprintName) &&
-      !sprintValueContains(cl.toValue, sprintName)
-    ) {
-      inSprint = false;
-    }
-  }
-
-  // No changelog = issue was assigned at creation
-  if (sprintChangelogs.length === 0) {
-    return true;
-  }
-
-  return inSprint;
-}
 
 /**
  * Compute the median of a sorted array of numbers.

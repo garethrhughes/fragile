@@ -4,7 +4,6 @@ import { ConfigService } from '@nestjs/config';
 import { SupportService } from './support.service.js';
 import {
   JiraIssue,
-  JiraIssueSprint,
   JiraChangelog,
   JiraVersion,
   JiraSprint,
@@ -12,6 +11,8 @@ import {
   JiraIssueLink,
 } from '../database/entities/index.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
+import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
+import type { SprintMembership } from '../sprint-membership/sprint-membership.service.js';
 
 // ---------------------------------------------------------------------------
 // Minimal fixture builders
@@ -97,6 +98,40 @@ function makeWtEntity() {
   return { excludeWeekends: false, hoursPerDay: 8 };
 }
 
+function emptyMembership(): SprintMembership {
+  return {
+    committedKeys: new Set(),
+    addedKeys: new Set(),
+    removedKeys: new Set(),
+    currentMemberKeys: new Set(),
+    logsByIssue: new Map(),
+  };
+}
+
+function mockSprintMembership() {
+  const byId = new Map<string, SprintMembership>();
+  return {
+    byId,
+    /** Seed membership for a sprint. Any of committed/added/removed/current may be omitted. */
+    seed(sprintId: string, opts: { committed?: string[]; added?: string[]; removed?: string[]; current?: string[] }) {
+      const m = byId.get(sprintId) ?? emptyMembership();
+      for (const k of opts.committed ?? []) m.committedKeys.add(k);
+      for (const k of opts.added ?? []) m.addedKeys.add(k);
+      for (const k of opts.removed ?? []) m.removedKeys.add(k);
+      for (const k of opts.current ?? []) m.currentMemberKeys.add(k);
+      byId.set(sprintId, m);
+    },
+    service: {
+      reconstruct: jest.fn(async ({ sprint }: { sprint: JiraSprint }) => byId.get(sprint.id) ?? emptyMembership()),
+      reconstructMany: jest.fn(async ({ sprints }: { sprints: JiraSprint[] }) => {
+        const map = new Map<string, SprintMembership>();
+        for (const s of sprints) map.set(s.id, byId.get(s.id) ?? emptyMembership());
+        return map;
+      }),
+    } as unknown as SprintMembershipService,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Repository mock factory
 // ---------------------------------------------------------------------------
@@ -122,22 +157,22 @@ function repoMock() {
 describe('SupportService', () => {
   let service: SupportService;
   let issueRepo: ReturnType<typeof repoMock>;
-  let issueSprintRepo: ReturnType<typeof repoMock>;
   let changelogRepo: ReturnType<typeof repoMock>;
   let versionRepo: ReturnType<typeof repoMock>;
   let sprintRepo: ReturnType<typeof repoMock>;
   let boardConfigRepo: ReturnType<typeof repoMock>;
   let issueLinkRepo: ReturnType<typeof repoMock>;
   let workingTimeService: Partial<WorkingTimeService>;
+  let membership: ReturnType<typeof mockSprintMembership>;
 
   beforeEach(async () => {
     issueRepo = repoMock();
-    issueSprintRepo = repoMock();
     changelogRepo = repoMock();
     versionRepo = repoMock();
     sprintRepo = repoMock();
     boardConfigRepo = repoMock();
     issueLinkRepo = repoMock();
+    membership = mockSprintMembership();
 
     workingTimeService = {
       getConfig: jest.fn().mockResolvedValue(makeWtEntity()),
@@ -149,13 +184,13 @@ describe('SupportService', () => {
       providers: [
         SupportService,
         { provide: getRepositoryToken(JiraIssue), useValue: issueRepo },
-        { provide: getRepositoryToken(JiraIssueSprint), useValue: issueSprintRepo },
         { provide: getRepositoryToken(JiraChangelog), useValue: changelogRepo },
         { provide: getRepositoryToken(JiraVersion), useValue: versionRepo },
         { provide: getRepositoryToken(JiraSprint), useValue: sprintRepo },
         { provide: getRepositoryToken(BoardConfig), useValue: boardConfigRepo },
         { provide: getRepositoryToken(JiraIssueLink), useValue: issueLinkRepo },
         { provide: WorkingTimeService, useValue: workingTimeService },
+        { provide: SprintMembershipService, useValue: membership.service },
         {
           provide: ConfigService,
           useValue: { get: jest.fn().mockReturnValue('https://jira.example.com') },
@@ -711,10 +746,8 @@ describe('SupportService', () => {
     issueRepo.find.mockResolvedValue([
       makeIssue({ key: 'SPS-99', boardId: 'SPS', status: 'To Do', labels: ['support'] }),
     ]);
-    // issueSprintRepo: SPS-99 is in sprint 3906
-    issueSprintRepo.createQueryBuilder().getMany.mockResolvedValueOnce([
-      { issueKey: 'SPS-99', sprintId: '3906' },
-    ]);
+    // SPS-99 is a current member of active sprint 3906
+    membership.seed('3906', { current: ['SPS-99'] });
     changelogRepo.createQueryBuilder().getMany
       .mockResolvedValueOnce([]) // no status changelogs this period
       .mockResolvedValueOnce([]); // sprint changelogs
@@ -727,68 +760,6 @@ describe('SupportService', () => {
     const [result] = await service.getSupportTickets({ boardId: 'SPS', quarter: currentQuarter });
     expect(result.totalIssues).toBe(1);
     expect(result.supportIssues).toBe(1);
-  });
-
-  // ── Future sprint filter ──────────────────────────────────────────────────
-
-  it('excludes issues whose current sprint is future and have no prior sprint history', async () => {
-    // Regression test for SPS-510: matched by link signal but only assigned
-    // to a future sprint — should not appear in any support view.
-    const config = makeConfig({ boardId: 'SPS', supportLabels: ['support'] });
-    boardConfigRepo.findOne.mockResolvedValue(config);
-    issueRepo.find.mockResolvedValue([
-      makeIssue({ key: 'SPS-510', boardId: 'SPS', labels: ['support'] }),
-    ]);
-    // SPS-510 is only in sprint 3905 (future)
-    issueSprintRepo.createQueryBuilder().getMany.mockResolvedValueOnce([
-      { issueKey: 'SPS-510', sprintId: '3905' },
-    ]);
-    // Status changelog so it passes the Scrum boarded check; sprint changelog is empty
-    changelogRepo.createQueryBuilder().getMany
-      .mockResolvedValueOnce([makeChangelog('SPS-510', 'To Do', 'In Progress', new Date('2026-05-01T00:00:00Z'))])
-      .mockResolvedValueOnce([]); // sprint changelogs — none
-    // sprintRepo.createQueryBuilder returns sprint 3905 with state 'future'
-    sprintRepo.createQueryBuilder().getMany.mockResolvedValueOnce([
-      { id: '3905', state: 'future' },
-    ]);
-    versionRepo.find.mockResolvedValue([]);
-
-    const [result] = await service.getSupportTickets({ boardId: 'SPS', quarter: '2026-Q2' });
-    expect(result.totalIssues).toBe(0);
-    expect(result.supportIssues).toBe(0);
-  });
-
-  it('includes issues whose current sprint is future but previously appeared in a closed sprint', async () => {
-    const config = makeConfig({ boardId: 'SPS', supportLabels: ['support'] });
-    boardConfigRepo.findOne.mockResolvedValue(config);
-    issueRepo.find.mockResolvedValue([
-      makeIssue({ key: 'SPS-499', boardId: 'SPS', labels: ['support'] }),
-    ]);
-    // SPS-499 is only in sprint 3905 (future)
-    issueSprintRepo.createQueryBuilder().getMany.mockResolvedValueOnce([
-      { issueKey: 'SPS-499', sprintId: '3905' },
-    ]);
-    changelogRepo.createQueryBuilder().getMany
-      .mockResolvedValueOnce([
-        makeChangelog('SPS-499', 'To Do', 'In Progress', new Date('2026-04-10T00:00:00Z')),
-        makeChangelog('SPS-499', 'In Progress', 'Done', new Date('2026-04-15T00:00:00Z')),
-      ])
-      .mockResolvedValueOnce([
-        makeSprintChangelog('SPS-499', null, 'Sprint 5 - 2026', new Date('2026-04-01T00:00:00Z')),
-        makeSprintChangelog('SPS-499', 'Sprint 5 - 2026', 'Ready for Refinement', new Date('2026-04-22T00:00:00Z')),
-      ]);
-    sprintRepo.createQueryBuilder().getMany.mockResolvedValueOnce([
-      { id: '3905', state: 'future' },
-    ]);
-    // findOne called to resolve non-future sprint names
-    sprintRepo.findOne.mockResolvedValueOnce(null); // no non-future sprint found via createQueryBuilder (state lookup returns only future)
-    versionRepo.find.mockResolvedValue([]);
-
-    // Sprint 5 is not in sprintStateById (only id 3905 was returned from sprint state lookup)
-    // so nonFutureSprintNames is empty → historical check fails → excluded
-    // This verifies the logic boundary; a separate scenario with a known non-future sprint would pass.
-    const [result] = await service.getSupportTickets({ boardId: 'SPS', quarter: '2026-Q2' });
-    expect(result.totalIssues).toBe(0);
   });
 
   // ── Current quarter: inflight support tickets (Proposal 0044 extension) ──
