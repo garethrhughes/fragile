@@ -58,12 +58,12 @@ export class SupportService {
   // ---------------------------------------------------------------------------
 
   async getSupportTickets(query: SupportQueryDto): Promise<SupportResult[]> {
-    const { startDate, endDate, isSprint, sprintName } = await this.resolvePeriod(query);
+    const { startDate, endDate, isSprint, sprintName, isCurrentPeriod } = await this.resolvePeriod(query);
     const boardIds = await this.resolveBoardIds(query.boardId);
 
     return Promise.all(
       boardIds.map((boardId) =>
-        this.getSupportResultForBoard(boardId, startDate, endDate, isSprint, sprintName),
+        this.getSupportResultForBoard(boardId, startDate, endDate, isSprint, sprintName, isCurrentPeriod),
       ),
     );
   }
@@ -106,6 +106,7 @@ export class SupportService {
     endDate: Date,
     isSprint: boolean = false,
     sprintName?: string,
+    isCurrentPeriod: boolean = false,
   ): Promise<SupportResult> {
     const config = await this.boardConfigRepo.findOne({ where: { boardId } });
     const supportLabels: string[] = config?.supportLabels ?? [];
@@ -262,11 +263,11 @@ export class SupportService {
         }
       }
 
-      if (isSprint) {
-        // Sprint mode: count all sprint members in denominator; no completion gate
+      if (isSprint || isCurrentPeriod) {
+        // Sprint mode and current-quarter mode: count all members in denominator; no completion gate
         totalIssues += 1;
       } else {
-        // Quarter mode: only count issues that completed in the period
+        // Past quarter mode: only count issues that completed in the period
         if (cycleEnd === null) continue;
         totalIssues += 1;
       }
@@ -361,10 +362,11 @@ export class SupportService {
 
   private async resolvePeriod(
     query: SupportQueryDto,
-  ): Promise<{ startDate: Date; endDate: Date; isSprint: boolean; sprintName?: string }> {
+  ): Promise<{ startDate: Date; endDate: Date; isSprint: boolean; sprintName?: string; isCurrentPeriod: boolean }> {
     if (query.quarter) {
       const { startDate, endDate } = quarterToDates(query.quarter);
-      return { startDate, endDate, isSprint: false };
+      const isCurrentPeriod = endDate > new Date();
+      return { startDate, endDate, isSprint: false, isCurrentPeriod };
     }
 
     if (query.sprintId) {
@@ -375,6 +377,7 @@ export class SupportService {
           endDate: sprint.endDate,
           isSprint: true,
           sprintName: sprint.name,
+          isCurrentPeriod: false,
         };
       }
     }
@@ -384,14 +387,14 @@ export class SupportService {
       const startDate = new Date(start);
       const endDate = new Date(end);
       if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
-        return { startDate, endDate, isSprint: false };
+        return { startDate, endDate, isSprint: false, isCurrentPeriod: false };
       }
     }
 
-    // Default: last 90 days
+    // Default: last 90 days — treat as current period since it ends now
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 90);
-    return { startDate, endDate, isSprint: false };
+    return { startDate, endDate, isSprint: false, isCurrentPeriod: true };
   }
 }

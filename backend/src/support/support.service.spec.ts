@@ -406,11 +406,12 @@ describe('SupportService', () => {
     versionRepo.find.mockResolvedValue([]);
 
     const summary = await service.getSupportSummary({});
-    // ACC-1 has no done transition in period → totalIssues for ACC = 0.
-    // BPT-1 completes in period and is labelled support → totalIssues = 1, supportIssues = 1.
-    expect(summary.totalIssues).toBe(1);
+    // Default period = last 90 days = current period → no completion gate.
+    // ACC-1 is in-progress (no done transition) but still counted in totalIssues.
+    // BPT-1 completes in period and is labelled support.
+    expect(summary.totalIssues).toBe(2);
     expect(summary.supportIssues).toBe(1);
-    expect(summary.supportPercentage).toBe(100);
+    expect(summary.supportPercentage).toBe(50);
     expect(summary.byBoard).toHaveLength(2);
   });
 
@@ -592,5 +593,72 @@ describe('SupportService', () => {
     // Quarter mode: ACC-2 never completes → not in denominator
     expect(result.totalIssues).toBe(1);
     expect(result.supportIssues).toBe(1);
+  });
+
+  // ── Current quarter: inflight support tickets (Proposal 0044 extension) ──
+
+  it('current quarter: inflight support ticket is included with null cycle time', async () => {
+    // Use the actual current quarter label so quarterToDates produces a future endDate
+    const now = new Date();
+    const q = Math.floor(now.getUTCMonth() / 3) + 1;
+    const currentQuarter = `${now.getUTCFullYear()}-Q${q}`;
+
+    const config = makeConfig({ supportLabels: ['support'] });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', labels: ['support'], status: 'In Progress' }),
+    ]);
+    // Status changelog: In Progress, but no Done transition
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', new Date()),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: currentQuarter });
+    expect(result.supportIssues).toBe(1);
+    expect(result.tickets[0].issueKey).toBe('ACC-1');
+    expect(result.tickets[0].cycleTimeDays).toBeNull();
+    expect(result.tickets[0].completedAt).toBeNull();
+    expect(result.tickets[0].band).toBeNull();
+  });
+
+  it('current quarter: totalIssues counts all work items including in-progress', async () => {
+    const now = new Date();
+    const q = Math.floor(now.getUTCMonth() / 3) + 1;
+    const currentQuarter = `${now.getUTCFullYear()}-Q${q}`;
+
+    const config = makeConfig({ supportLabels: ['support'] });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', labels: ['support'], status: 'In Progress' }), // inflight support
+      makeIssue({ key: 'ACC-2', labels: [], status: 'In Progress' }),           // inflight non-support
+    ]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', new Date()),
+      makeChangelog('ACC-2', 'To Do', 'In Progress', new Date()),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: currentQuarter });
+    expect(result.totalIssues).toBe(2);
+    expect(result.supportIssues).toBe(1);
+    expect(result.supportPercentage).toBe(50);
+  });
+
+  it('past quarter: inflight support ticket is excluded (no completion gate bypass)', async () => {
+    // 2026-Q1 is a past quarter — inflight issues must NOT appear
+    const config = makeConfig({ supportLabels: ['support'] });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', labels: ['support'], status: 'In Progress' }), // never completes
+    ]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', STARTED_AT),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
+    expect(result.totalIssues).toBe(0);
+    expect(result.supportIssues).toBe(0);
   });
 });
