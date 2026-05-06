@@ -328,8 +328,8 @@ describe('CfrService', () => {
           failureLinkTypes: [],
         } as never,
         issues: [
-          { key: 'ACC-1', issueType: 'Story', fixVersion: 'v1.0', labels: [] } as JiraIssue,
-          { key: 'ACC-2', issueType: 'Bug',   fixVersion: 'v1.0', labels: [] } as JiraIssue,
+          { key: 'ACC-1', issueType: 'Story', fixVersion: 'v1.0', labels: [] } as unknown as JiraIssue,
+          { key: 'ACC-2', issueType: 'Bug',   fixVersion: 'v1.0', labels: [] } as unknown as JiraIssue,
         ],
         versions: [
           { name: 'v1.0', releaseDate: new Date('2025-02-01'), projectKey: 'ACC', released: true } as JiraVersion,
@@ -356,8 +356,8 @@ describe('CfrService', () => {
           failureLinkTypes: ['is caused by'],
         } as never,
         issues: [
-          { key: 'ACC-1', issueType: 'Bug', fixVersion: 'v1.0', labels: [] } as JiraIssue,
-          { key: 'ACC-2', issueType: 'Bug', fixVersion: 'v1.0', labels: [] } as JiraIssue,
+          { key: 'ACC-1', issueType: 'Bug', fixVersion: 'v1.0', labels: [] } as unknown as JiraIssue,
+          { key: 'ACC-2', issueType: 'Bug', fixVersion: 'v1.0', labels: [] } as unknown as JiraIssue,
         ],
         versions: [
           { name: 'v1.0', releaseDate: new Date('2025-02-01'), projectKey: 'ACC', released: true } as JiraVersion,
@@ -375,7 +375,7 @@ describe('CfrService', () => {
 
     it('excludes versions outside the period', () => {
       const slice = makeSlice({
-        issues: [{ key: 'ACC-1', issueType: 'Story', fixVersion: 'v2.0', labels: [] } as JiraIssue],
+        issues: [{ key: 'ACC-1', issueType: 'Story', fixVersion: 'v2.0', labels: [] } as unknown as JiraIssue],
         versions: [
           // Outside period — must not count
           { name: 'v2.0', releaseDate: new Date('2025-06-01'), projectKey: 'ACC', released: true } as JiraVersion,

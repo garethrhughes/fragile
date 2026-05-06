@@ -5,6 +5,7 @@ import { RoadmapController } from './roadmap.controller.js';
 import {
   JiraSprint,
   JiraIssue,
+  JiraIssueSprint,
   JiraChangelog,
   JpdIdea,
   JiraIssueLink,
@@ -18,6 +19,7 @@ import { SyncModule } from '../sync/sync.module.js';
     TypeOrmModule.forFeature([
       JiraSprint,
       JiraIssue,
+      JiraIssueSprint,
       JiraChangelog,
       JpdIdea,
       JiraIssueLink,

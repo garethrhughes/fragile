@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import {
   JiraIssue,
+  JiraIssueSprint,
   JiraChangelog,
   JiraVersion,
   JiraSprint,
@@ -19,6 +20,7 @@ import { WorkingTimeService } from '../metrics/working-time.service.js';
     ConfigModule,
     TypeOrmModule.forFeature([
       JiraIssue,
+      JiraIssueSprint,
       JiraChangelog,
       JiraVersion,
       JiraSprint,

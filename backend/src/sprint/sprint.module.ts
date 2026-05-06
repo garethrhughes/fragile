@@ -4,6 +4,7 @@ import {
   BoardConfig,
   JiraChangelog,
   JiraIssue,
+  JiraIssueSprint,
   JiraIssueLink,
   JiraSprint,
   JpdIdea,
@@ -18,6 +19,7 @@ import { MetricsModule } from '../metrics/metrics.module.js';
     TypeOrmModule.forFeature([
       JiraSprint,
       JiraIssue,
+      JiraIssueSprint,
       JiraChangelog,
       BoardConfig,
       JpdIdea,

@@ -6,6 +6,7 @@ import { SyncService } from '../sync/sync.service.js';
 import {
   JiraSprint,
   JiraIssue,
+  JiraIssueSprint,
   JiraChangelog,
   JpdIdea,
   JiraIssueLink,
@@ -84,7 +85,6 @@ function makeIssue(overrides: Partial<JiraIssue> = {}): JiraIssue {
     labels: [],
     epicKey: null,
     fixVersion: null,
-    sprintId: null,
     createdAt: new Date('2026-01-01T00:00:00Z'),
     priority: null,
     points: null,
@@ -101,6 +101,7 @@ describe('RoadmapService', () => {
   let service: RoadmapService;
   let sprintRepo: jest.Mocked<Repository<JiraSprint>>;
   let issueRepo: jest.Mocked<Repository<JiraIssue>>;
+  let issueSprintRepo: jest.Mocked<Repository<JiraIssueSprint>>;
   let changelogRepo: jest.Mocked<Repository<JiraChangelog>>;
   let jpdIdeaRepo: jest.Mocked<Repository<JpdIdea>>;
   let issueLinkRepo: jest.Mocked<Repository<JiraIssueLink>>;
@@ -111,6 +112,7 @@ describe('RoadmapService', () => {
   beforeEach(() => {
     sprintRepo = mockRepo<JiraSprint>();
     issueRepo = mockRepo<JiraIssue>();
+    issueSprintRepo = mockRepo<JiraIssueSprint>();
     changelogRepo = mockRepo<JiraChangelog>();
     jpdIdeaRepo = mockRepo<JpdIdea>();
     issueLinkRepo = mockRepo<JiraIssueLink>();
@@ -121,6 +123,7 @@ describe('RoadmapService', () => {
     service = new RoadmapService(
       sprintRepo,
       issueRepo,
+      issueSprintRepo,
       changelogRepo,
       jpdIdeaRepo,
       issueLinkRepo,
@@ -164,7 +167,7 @@ describe('RoadmapService', () => {
         .mockResolvedValueOnce([]);
       // Only an Epic on the board — should be filtered out
       issueRepo.find.mockResolvedValue([
-        makeIssue({ key: 'ACC-EPIC', issueType: 'Epic', sprintId: 'sprint-1' }),
+        makeIssue({ key: 'ACC-EPIC', issueType: 'Epic' }),
       ]);
       changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb([]));
 
@@ -178,7 +181,7 @@ describe('RoadmapService', () => {
         .mockResolvedValueOnce([sprint])
         .mockResolvedValueOnce([]);
       issueRepo.find.mockResolvedValue([
-        makeIssue({ key: 'ACC-2', issueType: 'Sub-task', sprintId: 'sprint-1' }),
+        makeIssue({ key: 'ACC-2', issueType: 'Sub-task' }),
       ]);
       changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb([]));
 
@@ -191,9 +194,13 @@ describe('RoadmapService', () => {
       sprintRepo.find
         .mockResolvedValueOnce([sprint])
         .mockResolvedValueOnce([]);
-      const issue = makeIssue({ key: 'ACC-1', sprintId: 'sprint-1', status: 'Done' });
+      const issue = makeIssue({ key: 'ACC-1', status: 'Done' });
       issueRepo.find.mockResolvedValue([issue]);
       roadmapConfigRepo.find.mockResolvedValue([]);
+      // No changelog — membership via JiraIssueSprint join table
+      issueSprintRepo.find.mockResolvedValue([
+        { issueKey: 'ACC-1', sprintId: 'sprint-1' } as JiraIssueSprint,
+      ]);
 
       // Sprint field changelogs: empty (so issue is assigned at creation)
       changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb([]));
@@ -220,7 +227,7 @@ describe('RoadmapService', () => {
 
       // Issue currently in sprint-2 but its only changelog is sprint-1 related
       const issue = makeIssue({
-        key: 'ACC-1', sprintId: 'sprint-2', status: 'In Progress',
+        key: 'ACC-1', status: 'In Progress',
         createdAt: new Date('2026-01-01T00:00:00Z'),
       });
       issueRepo.find.mockResolvedValue([issue]);
@@ -238,6 +245,10 @@ describe('RoadmapService', () => {
       );
       roadmapConfigRepo.find.mockResolvedValue([]);
       jpdIdeaRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb([]));
+      // Issue is in sprint-2 via join table (carry-forward — no direct sprint-2 changelog)
+      issueSprintRepo.find.mockResolvedValue([
+        { issueKey: 'ACC-1', sprintId: 'sprint-2' } as JiraIssueSprint,
+      ]);
 
       const result = await service.getAccuracy('ACC');
       const sprint2Result = result.find((r) => r.sprintId === 'sprint-2');
@@ -251,7 +262,7 @@ describe('RoadmapService', () => {
         .mockResolvedValueOnce([sprint])
         .mockResolvedValueOnce([]);
       issueRepo.find.mockResolvedValue([
-        makeIssue({ key: 'ACC-1', sprintId: 'sprint-1', status: 'Cancelled' }),
+        makeIssue({ key: 'ACC-1', status: 'Cancelled' }),
       ]);
       roadmapConfigRepo.find.mockResolvedValue([]);
       changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb([]));
@@ -266,7 +277,7 @@ describe('RoadmapService', () => {
         .mockResolvedValueOnce([sprint])
         .mockResolvedValueOnce([]);
       issueRepo.find.mockResolvedValue([
-        makeIssue({ key: 'ACC-1', sprintId: 'sprint-1', status: "Won't Do" }),
+        makeIssue({ key: 'ACC-1', status: "Won't Do" }),
       ]);
       roadmapConfigRepo.find.mockResolvedValue([]);
       changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb([]));
@@ -288,7 +299,7 @@ describe('RoadmapService', () => {
         .mockResolvedValueOnce([sprint])
         .mockResolvedValueOnce([]);
       issueRepo.find.mockResolvedValue([
-        makeIssue({ key: 'ACC-1', sprintId: 'sprint-1', status: 'Rejected' }),
+        makeIssue({ key: 'ACC-1', status: 'Rejected' }),
       ]);
       roadmapConfigRepo.find.mockResolvedValue([]);
       changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb([]));
@@ -550,11 +561,14 @@ describe('RoadmapService', () => {
 
       const issue = makeIssue({
         key: 'ACC-1',
-        sprintId: 'sprint-1',
         status: 'Done',
         epicKey: 'EPIC-1',
       });
       issueRepo.find.mockResolvedValue([issue]);
+      // No sprint changelog — membership via JiraIssueSprint join table
+      issueSprintRepo.find.mockResolvedValue([
+        { issueKey: 'ACC-1', sprintId: 'sprint-1' } as JiraIssueSprint,
+      ]);
 
       // One JPD idea covering EPIC-1 within the sprint window
       const idea = {
@@ -619,7 +633,6 @@ describe('RoadmapService', () => {
 
       const issue = makeIssue({
         key: 'ACC-1',
-        sprintId: 'sprint-1',
         status: 'Done',
         epicKey: 'EPIC-1',
       });
@@ -712,11 +725,14 @@ describe('RoadmapService', () => {
 
       const issue = makeIssue({
         key: 'ACC-1',
-        sprintId: 'sprint-1',
         status: overrides.issueStatus,
         epicKey: 'EPIC-1',
       });
       issueRepo.find.mockResolvedValue([issue]);
+      // No sprint changelog — membership via JiraIssueSprint join table
+      issueSprintRepo.find.mockResolvedValue([
+        { issueKey: 'ACC-1', sprintId: 'sprint-1' } as JiraIssueSprint,
+      ]);
 
       const idea = {
         key: 'JPD-1',
@@ -1480,7 +1496,7 @@ describe('RoadmapService', () => {
         field: 'Sprint',
         fromValue: null,
         toValue: sprint.name,
-        changedAt: new Date(sprint.startDate.getTime() - 1000),
+        changedAt: new Date(sprint.startDate!.getTime() - 1000),
       }];
       const statusChangelogs = opts.resolvedAt
         ? [{ issueKey: 'ACC-99', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: opts.resolvedAt }]
@@ -1616,7 +1632,7 @@ describe('RoadmapService', () => {
           field: 'Sprint',
           fromValue: null,
           toValue: sprint.name,
-          changedAt: new Date(sprint.startDate.getTime() - 1000),
+          changedAt: new Date(sprint.startDate!.getTime() - 1000),
         }]))
         .mockReturnValueOnce(buildQb([{  // status changelogs
           issueKey: 'ACC-99', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: resolvedAt,

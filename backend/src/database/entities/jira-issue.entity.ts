@@ -32,9 +32,6 @@ export class JiraIssue {
   @Column({ type: 'float', nullable: true })
   points!: number | null;
 
-  @Column({ type: 'varchar', nullable: true })
-  sprintId!: string | null;
-
   @Column()
   boardId!: string;
 

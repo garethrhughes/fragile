@@ -20,6 +20,14 @@ export class JiraChangelog {
   @Column({ type: 'varchar', nullable: true })
   toValue!: string | null;
 
+  /** Comma-separated sprint IDs from the Jira changelog `from` field (Sprint field only). */
+  @Column({ type: 'varchar', nullable: true })
+  fromId!: string | null;
+
+  /** Comma-separated sprint IDs from the Jira changelog `to` field (Sprint field only). */
+  @Column({ type: 'varchar', nullable: true })
+  toId!: string | null;
+
   @Column({ type: 'timestamptz' })
   changedAt!: Date;
 }

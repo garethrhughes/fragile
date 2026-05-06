@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import {
   JiraSprint,
   JiraIssue,
+  JiraIssueSprint,
   JiraChangelog,
   BoardConfig,
   JpdIdea,
@@ -68,6 +69,7 @@ describe('SprintDetailService', () => {
   let service: SprintDetailService;
   let sprintRepo: jest.Mocked<Repository<JiraSprint>>;
   let issueRepo: jest.Mocked<Repository<JiraIssue>>;
+  let issueSprintRepo: jest.Mocked<Repository<JiraIssueSprint>>;
   let changelogRepo: jest.Mocked<Repository<JiraChangelog>>;
   let boardConfigRepo: jest.Mocked<Repository<BoardConfig>>;
   let jpdIdeaRepo: jest.Mocked<Repository<JpdIdea>>;
@@ -78,6 +80,7 @@ describe('SprintDetailService', () => {
   beforeEach(() => {
     sprintRepo = mockRepo<JiraSprint>();
     issueRepo = mockRepo<JiraIssue>();
+    issueSprintRepo = mockRepo<JiraIssueSprint>();
     changelogRepo = mockRepo<JiraChangelog>();
     boardConfigRepo = mockRepo<BoardConfig>();
     jpdIdeaRepo = mockRepo<JpdIdea>();
@@ -88,6 +91,7 @@ describe('SprintDetailService', () => {
     service = new SprintDetailService(
       sprintRepo,
       issueRepo,
+      issueSprintRepo,
       changelogRepo,
       boardConfigRepo,
       jpdIdeaRepo,
@@ -249,7 +253,7 @@ describe('SprintDetailService', () => {
       startDate: new Date('2025-12-01'),
       endDate: new Date('2026-01-05'),
       goal: '',
-    }] as JiraSprint[]);
+    }] as unknown as JiraSprint[]);
 
     issueRepo.find.mockResolvedValue([
       {
@@ -961,14 +965,16 @@ describe('SprintDetailService', () => {
         issueType: 'Story',
         summary: 'Created mid sprint',
         status: 'In Progress',
-        // sprintId matches sprint — direct assignment
-        sprintId: 'sprint-1',
         epicKey: null,
         labels: [],
         points: null,
         // Created after sprint start + grace period
         createdAt: new Date('2026-01-08T00:00:00Z'),
       } as unknown as JiraIssue,
+    ]);
+    // Issue has no sprint changelog — membership via JiraIssueSprint join table
+    issueSprintRepo.find.mockResolvedValue([
+      { issueKey: 'ACC-3', sprintId: 'sprint-1' } as JiraIssueSprint,
     ]);
     roadmapConfigRepo.find.mockResolvedValue([]);
 
@@ -1778,6 +1784,7 @@ describe('SprintDetailService', () => {
     service = new SprintDetailService(
       sprintRepo,
       issueRepo,
+      issueSprintRepo,
       changelogRepo,
       boardConfigRepo,
       jpdIdeaRepo,
@@ -2289,13 +2296,16 @@ describe('SprintDetailService', () => {
         epicKey: null,
         points: 3,
         fixVersion: null,
-        sprintId: 'sprint-1',
         labels: [],
         createdAt: new Date('2026-01-05T00:00:00Z'),
         updatedAt: new Date('2026-01-05T00:00:00Z'),
       } as unknown as JiraIssue;
 
       issueRepo.find.mockResolvedValue([issue]);
+      // No sprint changelog for this issue — membership via JiraIssueSprint join table
+      issueSprintRepo.find.mockResolvedValue([
+        { issueKey: 'ACC-99', sprintId: 'sprint-1' } as JiraIssueSprint,
+      ]);
 
       const boardConfig = {
         boardId: 'ACC',
@@ -2389,10 +2399,13 @@ describe('SprintDetailService', () => {
       const issue = {
         key: 'ACC-99', summary: 'Story', boardId: 'ACC',
         status: 'Done', issueType: 'Story', epicKey: 'ACC-EPIC-1',
-        points: 3, fixVersion: null, sprintId: 'sprint-1',
+        points: 3, fixVersion: null,
         labels: [], createdAt: new Date('2026-01-05T00:00:00Z'), updatedAt: new Date('2026-01-05T00:00:00Z'),
       } as unknown as JiraIssue;
       issueRepo.find.mockResolvedValue([issue]);
+      issueSprintRepo.find.mockResolvedValue([
+        { issueKey: 'ACC-99', sprintId: 'sprint-1' } as JiraIssueSprint,
+      ]);
 
       boardConfigRepo.findOne.mockResolvedValue({
         boardId: 'ACC', boardType: 'scrum',

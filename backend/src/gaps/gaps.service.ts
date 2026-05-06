@@ -1,9 +1,10 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import {
   JiraIssue,
+  JiraIssueSprint,
   JiraSprint,
   BoardConfig,
   JiraChangelog,
@@ -65,6 +66,8 @@ export class GapsService {
     private readonly configService: ConfigService,
     @InjectRepository(JiraIssue)
     private readonly issueRepo: Repository<JiraIssue>,
+    @InjectRepository(JiraIssueSprint)
+    private readonly issueSprintRepo: Repository<JiraIssueSprint>,
     @InjectRepository(JiraSprint)
     private readonly sprintRepo: Repository<JiraSprint>,
     @InjectRepository(BoardConfig)
@@ -95,6 +98,20 @@ export class GapsService {
     const activeSprintIds = new Set<string>(activeSprints.map((s) => s.id));
     const sprintNameMap = new Map<string, string>(activeSprints.map((s) => [s.id, s.name]));
 
+    // Step 2b: load JiraIssueSprint membership for active sprints so we can
+    // gate issues to those currently in an active sprint (replaces sprintId column).
+    const activeMemberRows = activeSprintIds.size > 0
+      ? await this.issueSprintRepo.find({ where: { sprintId: In([...activeSprintIds]) } })
+      : [];
+    // issueActiveSprintId: first active sprintId for each issue key (for display)
+    const issueActiveSprintId = new Map<string, string>();
+    for (const row of activeMemberRows) {
+      if (!issueActiveSprintId.has(row.issueKey)) {
+        issueActiveSprintId.set(row.issueKey, row.sprintId);
+      }
+    }
+    const issueInActiveSprint = new Set(issueActiveSprintId.keys());
+
     // Step 3: all work-item issues
     // Intentional: loads all issues across all boards for cross-board hygiene reporting.
     // Bounded dataset (single-user tool, ≤ ~5,000 rows). See proposal 0013 §Performance.
@@ -114,9 +131,10 @@ export class GapsService {
       const cancelled = cancelledByBoard.get(issue.boardId) ?? ['Cancelled'];
       if (done.includes(issue.status) || cancelled.includes(issue.status)) continue;
 
-      // Steps 4b–c: active sprint gate — exclude backlog issues (null sprintId)
-      // and issues assigned to closed or future sprints
-      if (issue.sprintId === null || !activeSprintIds.has(issue.sprintId)) continue;
+      // Steps 4b–c: active sprint gate — exclude backlog issues and
+      // issues not assigned to any active sprint
+      if (!issueInActiveSprint.has(issue.key)) continue;
+      const activeSprintId = issueActiveSprintId.get(issue.key)!;
 
       const gap: GapIssue = {
         key: issue.key,
@@ -124,8 +142,8 @@ export class GapsService {
         issueType: issue.issueType,
         status: issue.status,
         boardId: issue.boardId,
-        sprintId: issue.sprintId,
-        sprintName: sprintNameMap.get(issue.sprintId) ?? null,
+        sprintId: activeSprintId,
+        sprintName: sprintNameMap.get(activeSprintId) ?? null,
         points: issue.points,
         epicKey: issue.epicKey,
         jiraUrl: jiraBase ? `${jiraBase}/browse/${issue.key}` : '',
@@ -287,7 +305,9 @@ export class GapsService {
     }
 
     // Step 5 (Scrum only): Bulk-load Sprint-field changelogs
+    // Also load JiraIssueSprint membership for snapshot fallback.
     let sprintLogsByIssue = new Map<string, JiraChangelog[]>();
+    let issueHasAnySprintMembership = new Set<string>();
     if (!isKanban) {
       const sprintChangelogs = await this.changelogRepo
         .createQueryBuilder('cl')
@@ -301,6 +321,13 @@ export class GapsService {
         list.push(cl);
         sprintLogsByIssue.set(cl.issueKey, list);
       }
+
+      // Load sprint membership rows for snapshot fallback (ADR 0048)
+      const memberRows = await this.issueSprintRepo
+        .createQueryBuilder('isp')
+        .where('isp.issueKey IN (:...keys)', { keys: allKeys })
+        .getMany();
+      issueHasAnySprintMembership = new Set(memberRows.map((r) => r.issueKey));
     }
 
     // Step 5 (Kanban only): Compute boardEntryDate per issue.
@@ -392,8 +419,8 @@ export class GapsService {
 
         // Snapshot fallback: Jira doesn't record a Sprint changelog for issues
         // placed into a sprint at creation time. If there are no Sprint changelogs
-        // but the snapshot sprintId is non-null, the issue was in a sprint at creation.
-        if (sprintLogs.length === 0 && issue.sprintId !== null) {
+        // but the issue has a JiraIssueSprint row, it was in a sprint at creation.
+        if (sprintLogs.length === 0 && issueHasAnySprintMembership.has(issue.key)) {
           inSprint = true;
         }
 

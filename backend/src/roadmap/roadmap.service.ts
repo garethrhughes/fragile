@@ -14,6 +14,7 @@ import { In, Repository } from 'typeorm';
 import {
   JiraSprint,
   JiraIssue,
+  JiraIssueSprint,
   JiraChangelog,
   JpdIdea,
   JiraIssueLink,
@@ -62,6 +63,8 @@ export class RoadmapService {
     private readonly sprintRepo: Repository<JiraSprint>,
     @InjectRepository(JiraIssue)
     private readonly issueRepo: Repository<JiraIssue>,
+    @InjectRepository(JiraIssueSprint)
+    private readonly issueSprintRepo: Repository<JiraIssueSprint>,
     @InjectRepository(JiraChangelog)
     private readonly changelogRepo: Repository<JiraChangelog>,
     @InjectRepository(JpdIdea)
@@ -178,6 +181,18 @@ export class RoadmapService {
       issuesBySprint.set(s.id, new Set<string>());
     }
 
+    // Load JiraIssueSprint membership for target sprints — replaces the
+    // deprecated issue.sprintId column fallback (ADR 0048).
+    const memberRows = await this.issueSprintRepo.find({
+      where: { sprintId: In([...sprintSet]) },
+    });
+    const membersBySprintId = new Map<string, Set<string>>();
+    for (const row of memberRows) {
+      const set = membersBySprintId.get(row.sprintId) ?? new Set<string>();
+      set.add(row.issueKey);
+      membersBySprintId.set(row.sprintId, set);
+    }
+
     // Group changelogs by issue key for efficient per-issue replay
     const changelogsByIssue = new Map<string, typeof allSprintChangelogs>();
     for (const cl of allSprintChangelogs) {
@@ -194,16 +209,13 @@ export class RoadmapService {
       // via changelogs — also handle issues with no changelogs (assigned at creation)
       const sprintNamesToCheck = new Set<string>();
 
-      // Issues currently assigned to a target sprint but with no sprint changelog
-      // were created directly into that sprint
-      if (
-        issue.sprintId !== null &&
-        sprintSet.has(issue.sprintId) &&
-        logs.length === 0
-      ) {
-        const sprint = sprints.find((s) => s.id === issue.sprintId);
-        if (sprint) {
-          issuesBySprint.get(sprint.id)!.add(issue.key);
+      // Issues in a target sprint with no sprint changelog were created directly
+      // into that sprint. Use JiraIssueSprint join table instead of sprintId column.
+      if (logs.length === 0) {
+        for (const [sid, members] of membersBySprintId) {
+          if (members.has(issue.key)) {
+            issuesBySprint.get(sid)!.add(issue.key);
+          }
         }
         continue;
       }
@@ -220,17 +232,16 @@ export class RoadmapService {
         }
       }
 
-      // Fallback: if the issue's current sprintId points to a target sprint but
-      // no changelog mentions that sprint by name (e.g. Jira carried the issue
-      // forward when the sprint was started without emitting a Sprint-field
-      // changelog entry), include it directly.  This mirrors the pattern in
-      // sprint-detail.service.ts lines 294-298.
-      if (issue.sprintId !== null && sprintSet.has(issue.sprintId)) {
-        const targetSprint = sprints.find((s) => s.id === issue.sprintId);
-        if (targetSprint && !sprintNamesToCheck.has(targetSprint.name)) {
-          issuesBySprint.get(targetSprint.id)!.add(issue.key);
-          // Still replay changelogs for other target sprints this issue may
-          // have appeared in — do NOT continue; fall through.
+      // Fallback: issue has sprint membership in JiraIssueSprint for a target
+      // sprint, but no changelog entry mentions that sprint by name (e.g. Jira
+      // carried the issue forward without emitting a Sprint-field changelog).
+      for (const [sid, members] of membersBySprintId) {
+        if (members.has(issue.key)) {
+          const targetSprint = sprints.find((s) => s.id === sid);
+          if (targetSprint && !sprintNamesToCheck.has(targetSprint.name)) {
+            issuesBySprint.get(targetSprint.id)!.add(issue.key);
+            // Fall through — still replay changelogs for other target sprints
+          }
         }
       }
 

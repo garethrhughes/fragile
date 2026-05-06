@@ -11,6 +11,7 @@ import {
   BoardConfig,
   JiraChangelog,
   JiraIssue,
+  JiraIssueSprint,
   JiraIssueLink,
   JiraSprint,
   JpdIdea,
@@ -191,6 +192,8 @@ export class SprintDetailService {
     private readonly sprintRepo: Repository<JiraSprint>,
     @InjectRepository(JiraIssue)
     private readonly issueRepo: Repository<JiraIssue>,
+    @InjectRepository(JiraIssueSprint)
+    private readonly issueSprintRepo: Repository<JiraIssueSprint>,
     @InjectRepository(JiraChangelog)
     private readonly changelogRepo: Repository<JiraChangelog>,
     @InjectRepository(BoardConfig)
@@ -316,8 +319,13 @@ export class SprintDetailService {
 
     // Include issues currently assigned to this sprint with no changelog
     // (created directly into the sprint — PlanningService pattern §4b)
+    // Use JiraIssueSprint join table instead of the deprecated sprintId column.
+    const sprintMemberRows = await this.issueSprintRepo.find({
+      where: { sprintId: sprint.id },
+    });
+    const sprintMemberKeys = new Set(sprintMemberRows.map((r) => r.issueKey));
     for (const issue of boardIssues) {
-      if (issue.sprintId === sprint.id && !logsByIssue.has(issue.key)) {
+      if (sprintMemberKeys.has(issue.key) && !logsByIssue.has(issue.key)) {
         logsByIssue.set(issue.key, []);
       }
     }

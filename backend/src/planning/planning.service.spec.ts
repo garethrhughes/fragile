@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import {
   JiraSprint,
   JiraIssue,
+  JiraIssueSprint,
   JiraChangelog,
   BoardConfig,
 } from '../database/entities/index.js';
@@ -32,18 +33,21 @@ describe('PlanningService', () => {
   let service: PlanningService;
   let sprintRepo: jest.Mocked<Repository<JiraSprint>>;
   let issueRepo: jest.Mocked<Repository<JiraIssue>>;
+  let issueSprintRepo: jest.Mocked<Repository<JiraIssueSprint>>;
   let changelogRepo: jest.Mocked<Repository<JiraChangelog>>;
   let boardConfigRepo: jest.Mocked<Repository<BoardConfig>>;
 
   beforeEach(() => {
     sprintRepo = mockRepo<JiraSprint>();
     issueRepo = mockRepo<JiraIssue>();
+    issueSprintRepo = mockRepo<JiraIssueSprint>();
     changelogRepo = mockRepo<JiraChangelog>();
     boardConfigRepo = mockRepo<BoardConfig>();
 
     service = new PlanningService(
       sprintRepo,
       issueRepo,
+      issueSprintRepo,
       changelogRepo,
       boardConfigRepo,
       mockConfigService(),
@@ -270,14 +274,13 @@ describe('PlanningService', () => {
           startDate: new Date('2025-01-15'),
           endDate: new Date('2025-02-01T12:00:00Z'),
           goal: '',
-        }])
+        }] as unknown as JiraSprint[])
         .mockResolvedValueOnce([sprint]);    // active sprints
 
       issueRepo.find.mockResolvedValue([
         // Committed at sprint start
         {
           key: 'ACC-1',
-          sprintId: 'sprint-2',
           status: 'In Progress',
           boardId: 'ACC',
           issueType: 'Story',
@@ -287,7 +290,6 @@ describe('PlanningService', () => {
         // Carry-over: was in Sprint 1, moved at 3:00pm when Sprint 1 completed
         {
           key: 'ACC-2',
-          sprintId: 'sprint-2',
           status: 'To Do',
           boardId: 'ACC',
           issueType: 'Story',
@@ -297,7 +299,6 @@ describe('PlanningService', () => {
         // Genuine mid-sprint addition from backlog
         {
           key: 'ACC-3',
-          sprintId: 'sprint-2',
           status: 'To Do',
           boardId: 'ACC',
           issueType: 'Story',
@@ -358,6 +359,94 @@ describe('PlanningService', () => {
       expect(result[0].scopeChangePercent).toBe(50);
     });
 
+    it('should classify carry-over issues as committed when sprint was renamed (ID-based matching)', async () => {
+      // Regression guard for ACC/SPS staged carry-over pattern:
+      // Jira writes changelog toValue = "Ready to estimate 2" with toId = "sprint-2"
+      // before renaming the sprint to "Sprint 2". ID-based matching must correctly
+      // identify these as carry-overs committed to Sprint 2, not scope additions.
+      const sprint: JiraSprint = {
+        id: 'sprint-2',
+        name: 'Sprint 2',
+        boardId: 'ACC',
+        state: 'closed',
+        startDate: new Date('2025-02-01T12:00:00Z'),
+        endDate: new Date('2025-02-15T00:00:00Z'),
+      } as JiraSprint;
+
+      sprintRepo.find
+        .mockResolvedValueOnce([{
+          id: 'sprint-1',
+          name: 'Sprint 1',
+          state: 'closed',
+          boardId: 'ACC',
+          startDate: new Date('2025-01-15'),
+          endDate: new Date('2025-02-01T12:00:00Z'),
+        }])
+        .mockResolvedValueOnce([sprint]);
+
+      issueRepo.find.mockResolvedValue([
+        { key: 'ACC-1', sprintId: 'sprint-2', status: 'Done', boardId: 'ACC', issueType: 'Story', points: null, createdAt: new Date('2025-01-01') },
+        { key: 'ACC-2', sprintId: 'sprint-2', status: 'To Do', boardId: 'ACC', issueType: 'Story', points: null, createdAt: new Date('2025-01-01') },
+        { key: 'ACC-3', sprintId: 'sprint-2', status: 'To Do', boardId: 'ACC', issueType: 'Story', points: null, createdAt: new Date('2025-01-01') },
+      ] as unknown as JiraIssue[]);
+
+      let qbCallCount = 0;
+      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
+        qbCallCount++;
+        const qb = {
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          orderBy: jest.fn().mockReturnThis(),
+          getMany: jest.fn(),
+        };
+
+        if (qbCallCount === 1) {
+          qb.getMany.mockResolvedValue([
+            // ACC-1: committed before sprint start — toId matches sprint-2
+            {
+              issueKey: 'ACC-1',
+              field: 'Sprint',
+              toValue: 'Ready to estimate 2',   // display name before rename
+              fromValue: null,
+              toId: 'sprint-2',                 // ID is correct even though name is wrong
+              fromId: null,
+              changedAt: new Date('2025-01-30T10:00:00Z'),
+            },
+            // ACC-2: carry-over at sprint start — toId=sprint-2, fromId=sprint-1
+            {
+              issueKey: 'ACC-2',
+              field: 'Sprint',
+              toValue: 'Ready to estimate 2',
+              fromValue: 'Sprint 1',
+              toId: 'sprint-2',
+              fromId: 'sprint-1',
+              changedAt: new Date('2025-02-01T12:00:35Z'), // within grace period
+            },
+            // ACC-3: genuine mid-sprint addition — toId=sprint-2, fromId=null
+            {
+              issueKey: 'ACC-3',
+              field: 'Sprint',
+              toValue: 'Sprint 2',
+              fromValue: null,
+              toId: 'sprint-2',
+              fromId: null,
+              changedAt: new Date('2025-02-05T10:00:00Z'),
+            },
+          ]);
+        } else {
+          qb.getMany.mockResolvedValue([]);
+        }
+        return qb;
+      });
+
+      const result = await service.getAccuracy('ACC');
+
+      // ACC-1 committed (before start), ACC-2 carry-over (committed), ACC-3 added mid-sprint
+      expect(result[0].commitment).toBe(2);
+      expect(result[0].added).toBe(1);
+      expect(result[0].removed).toBe(0);
+    });
+
     it('should treat issues added within the 5-minute grace period as committed', async () => {
       // Regression guard: issues whose Sprint changelog falls within 5 minutes of
       // startDate should be classified as committed (original commitment), not added.
@@ -381,7 +470,6 @@ describe('PlanningService', () => {
         // Added 90 seconds after startDate — within 5-minute grace → committed
         {
           key: 'ACC-20',
-          sprintId: 'sprint-3',
           status: 'To Do',
           boardId: 'ACC',
           issueType: 'Story',
@@ -391,7 +479,6 @@ describe('PlanningService', () => {
         // Added 10 minutes after startDate — outside grace → added
         {
           key: 'ACC-21',
-          sprintId: 'sprint-3',
           status: 'To Do',
           boardId: 'ACC',
           issueType: 'Story',
@@ -464,13 +551,12 @@ describe('PlanningService', () => {
           startDate: new Date('2025-01-15'),
           endDate: new Date('2025-02-01T11:00:00Z'),
           goal: '',
-        }])                    // closed sprints (Sprint 1 only, not Sprint 3)
+        }] as unknown as JiraSprint[])                    // closed sprints (Sprint 1 only, not Sprint 3)
         .mockResolvedValueOnce([sprint]); // active sprints
 
       issueRepo.find.mockResolvedValue([
         {
           key: 'ACC-10',
-          sprintId: 'sprint-2',
           status: 'In Progress',
           boardId: 'ACC',
           issueType: 'Story',
@@ -480,7 +566,6 @@ describe('PlanningService', () => {
         // Moved from future Sprint 3 — should be classified as added, not committed
         {
           key: 'ACC-11',
-          sprintId: 'sprint-2',
           status: 'To Do',
           boardId: 'ACC',
           issueType: 'Story',
@@ -874,8 +959,7 @@ describe('PlanningService', () => {
       issueRepo.find.mockResolvedValue([
         {
           key: 'PLAT-1', boardId: 'PLAT', issueType: 'Story', summary: 'S',
-          status: 'Done', labels: [], epicKey: null, fixVersion: null,
-          sprintId: null, createdAt: new Date('2025-12-01T00:00:00Z'),
+          status: 'Done', labels: [], epicKey: null, fixVersion: null, createdAt: new Date('2025-12-01T00:00:00Z'),
           priority: null, points: null, statusId: null,
         } as unknown as JiraIssue,
       ]);
@@ -931,8 +1015,7 @@ describe('PlanningService', () => {
       issueRepo.find.mockResolvedValue([
         {
           key: 'PLAT-2', boardId: 'PLAT', issueType: 'Story', summary: 'T',
-          status: 'Done', labels: [], epicKey: null, fixVersion: null,
-          sprintId: null, createdAt: new Date('2025-11-01T00:00:00Z'),
+          status: 'Done', labels: [], epicKey: null, fixVersion: null, createdAt: new Date('2025-11-01T00:00:00Z'),
           priority: null, points: null, statusId: null,
         } as unknown as JiraIssue,
       ]);

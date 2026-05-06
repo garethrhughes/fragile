@@ -46,3 +46,6 @@
 | [0042](0042-kanban-week-view-consistency.md) | Kanban Week View Consistency with Sprint View | Accepted | 2026-05-05 |
 | [0043](0043-support-report.md) | Support Ticket Report | Accepted | 2026-05-06 |
 | [0044](0044-support-sprint-membership-scope.md) | Support Report: Sprint-Membership Issue Scope | Accepted | 2026-05-06 |
+| [0045](0045-support-detection-epic-matching.md) | Support Detection: Epic-Based Classification | Accepted | 2026-05-06 |
+| [0046](0046-jira-sprint-report-api-for-planning-accuracy.md) | Jira Sprint Report API as Authoritative Source for Planning Accuracy | Rejected | 2026-05-06 |
+| [0047](0047-sync-cancelled-issues-and-multi-sprint-membership.md) | Sync: Include Cancelled Issues and Persist Multi-Sprint Membership | Accepted | 2026-05-06 |

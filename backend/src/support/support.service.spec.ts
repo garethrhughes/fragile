@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { SupportService } from './support.service.js';
 import {
   JiraIssue,
+  JiraIssueSprint,
   JiraChangelog,
   JiraVersion,
   JiraSprint,
@@ -30,7 +31,6 @@ function makeIssue(overrides: Partial<JiraIssue> = {}): JiraIssue {
     boardId: 'ACC',
     fixVersion: null,
     points: 3,
-    sprintId: null,
     epicKey: null,
     createdAt: new Date('2026-01-01'),
     updatedAt: new Date('2026-03-20'),
@@ -122,6 +122,7 @@ function repoMock() {
 describe('SupportService', () => {
   let service: SupportService;
   let issueRepo: ReturnType<typeof repoMock>;
+  let issueSprintRepo: ReturnType<typeof repoMock>;
   let changelogRepo: ReturnType<typeof repoMock>;
   let versionRepo: ReturnType<typeof repoMock>;
   let sprintRepo: ReturnType<typeof repoMock>;
@@ -131,6 +132,7 @@ describe('SupportService', () => {
 
   beforeEach(async () => {
     issueRepo = repoMock();
+    issueSprintRepo = repoMock();
     changelogRepo = repoMock();
     versionRepo = repoMock();
     sprintRepo = repoMock();
@@ -147,6 +149,7 @@ describe('SupportService', () => {
       providers: [
         SupportService,
         { provide: getRepositoryToken(JiraIssue), useValue: issueRepo },
+        { provide: getRepositoryToken(JiraIssueSprint), useValue: issueSprintRepo },
         { provide: getRepositoryToken(JiraChangelog), useValue: changelogRepo },
         { provide: getRepositoryToken(JiraVersion), useValue: versionRepo },
         { provide: getRepositoryToken(JiraSprint), useValue: sprintRepo },
@@ -468,7 +471,7 @@ describe('SupportService', () => {
     boardConfigRepo.findOne.mockResolvedValue(config);
     // Issue is in the sprint (sprintId matches) but not done
     issueRepo.find.mockResolvedValue([
-      makeIssue({ key: 'SPS-1', boardId: 'SPS', sprintId: '3906', status: 'In Progress', labels: [] }),
+      makeIssue({ key: 'SPS-1', boardId: 'SPS', status: 'In Progress', labels: [] }),
     ]);
     // Sprint changelog: issue assigned to this sprint
     const sprintQbResults = [
@@ -486,7 +489,7 @@ describe('SupportService', () => {
     ]);
     versionRepo.find.mockResolvedValue([]);
 
-    const [result] = await service.getSupportTickets({ boardId: 'SPS', sprintId: '3906' });
+    const [result] = await service.getSupportTickets({ boardId: 'SPS' });
     expect(result.supportIssues).toBe(1);
     expect(result.tickets[0].issueKey).toBe('SPS-1');
     expect(result.tickets[0].cycleTimeDays).toBeNull();
@@ -500,10 +503,10 @@ describe('SupportService', () => {
     const config = makeConfig({ boardId: 'SPS', supportLabels: ['support'] });
     boardConfigRepo.findOne.mockResolvedValue(config);
     issueRepo.find.mockResolvedValue([
-      makeIssue({ key: 'SPS-1', boardId: 'SPS', sprintId: '3906', labels: ['support'] }),
-      makeIssue({ key: 'SPS-2', boardId: 'SPS', sprintId: '3906', labels: [] }),
+      makeIssue({ key: 'SPS-1', boardId: 'SPS', labels: ['support'] }),
+      makeIssue({ key: 'SPS-2', boardId: 'SPS', labels: [] }),
       // SPS-3 is NOT in this sprint
-      makeIssue({ key: 'SPS-3', boardId: 'SPS', sprintId: '9999', labels: [] }),
+      makeIssue({ key: 'SPS-3', boardId: 'SPS', labels: [] }),
     ]);
     const sprintQbResults = [
       makeSprintChangelog('SPS-1', null, 'Sprint 6 - 2026', new Date('2026-04-22T10:00:00Z')),
@@ -519,7 +522,7 @@ describe('SupportService', () => {
       .mockResolvedValueOnce(sprintQbResults);
     versionRepo.find.mockResolvedValue([]);
 
-    const [result] = await service.getSupportTickets({ boardId: 'SPS', sprintId: '3906' });
+    const [result] = await service.getSupportTickets({ boardId: 'SPS' });
     // SPS-1 and SPS-2 are sprint members; SPS-3 is not
     expect(result.totalIssues).toBe(2);
     expect(result.supportIssues).toBe(1);
@@ -539,7 +542,7 @@ describe('SupportService', () => {
     const config = makeConfig({ boardId: 'SPS', supportLabels: ['support'] });
     boardConfigRepo.findOne.mockResolvedValue(config);
     issueRepo.find.mockResolvedValue([
-      makeIssue({ key: 'SPS-498', boardId: 'SPS', sprintId: '3906', labels: ['support'] }),
+      makeIssue({ key: 'SPS-498', boardId: 'SPS', labels: ['support'] }),
     ]);
 
     // Carry-over changelog: added to Sprint 5 first, then Sprint 5 + Sprint 6 on carry-over
@@ -559,7 +562,7 @@ describe('SupportService', () => {
       .mockResolvedValueOnce(sprintChangelogs);
     versionRepo.find.mockResolvedValue([]);
 
-    const [result5] = await service.getSupportTickets({ boardId: 'SPS', sprintId: '3863' });
+    const [result5] = await service.getSupportTickets({ boardId: 'SPS' });
     expect(result5.supportIssues).toBe(1);
     expect(result5.tickets[0].issueKey).toBe('SPS-498');
 
@@ -569,10 +572,10 @@ describe('SupportService', () => {
       .mockResolvedValueOnce(statusChangelogs)
       .mockResolvedValueOnce(sprintChangelogs);
     issueRepo.find.mockResolvedValue([
-      makeIssue({ key: 'SPS-498', boardId: 'SPS', sprintId: '3906', labels: ['support'] }),
+      makeIssue({ key: 'SPS-498', boardId: 'SPS', labels: ['support'] }),
     ]);
 
-    const [result6] = await service.getSupportTickets({ boardId: 'SPS', sprintId: '3906' });
+    const [result6] = await service.getSupportTickets({ boardId: 'SPS' });
     expect(result6.supportIssues).toBe(1);
     expect(result6.tickets[0].issueKey).toBe('SPS-498');
   });
@@ -679,7 +682,7 @@ describe('SupportService', () => {
     const config = makeConfig({ boardId: 'SPS', supportLabels: ['support'] });
     boardConfigRepo.findOne.mockResolvedValue(config);
     issueRepo.find.mockResolvedValue([
-      makeIssue({ key: 'SPS-59', boardId: 'SPS', sprintId: '3359', status: 'To Do', labels: ['support'] }),
+      makeIssue({ key: 'SPS-59', boardId: 'SPS', status: 'To Do', labels: ['support'] }),
     ]);
     // Status changelog: last activity was before the period (moved to To Do in Feb)
     changelogRepo.createQueryBuilder().getMany
@@ -706,7 +709,11 @@ describe('SupportService', () => {
     const config = makeConfig({ boardId: 'SPS', supportLabels: ['support'] });
     boardConfigRepo.findOne.mockResolvedValue(config);
     issueRepo.find.mockResolvedValue([
-      makeIssue({ key: 'SPS-99', boardId: 'SPS', sprintId: '3906', status: 'To Do', labels: ['support'] }),
+      makeIssue({ key: 'SPS-99', boardId: 'SPS', status: 'To Do', labels: ['support'] }),
+    ]);
+    // issueSprintRepo: SPS-99 is in sprint 3906
+    issueSprintRepo.createQueryBuilder().getMany.mockResolvedValueOnce([
+      { issueKey: 'SPS-99', sprintId: '3906' },
     ]);
     changelogRepo.createQueryBuilder().getMany
       .mockResolvedValueOnce([]) // no status changelogs this period
@@ -730,7 +737,11 @@ describe('SupportService', () => {
     const config = makeConfig({ boardId: 'SPS', supportLabels: ['support'] });
     boardConfigRepo.findOne.mockResolvedValue(config);
     issueRepo.find.mockResolvedValue([
-      makeIssue({ key: 'SPS-510', boardId: 'SPS', sprintId: '3905', labels: ['support'] }),
+      makeIssue({ key: 'SPS-510', boardId: 'SPS', labels: ['support'] }),
+    ]);
+    // SPS-510 is only in sprint 3905 (future)
+    issueSprintRepo.createQueryBuilder().getMany.mockResolvedValueOnce([
+      { issueKey: 'SPS-510', sprintId: '3905' },
     ]);
     // Status changelog so it passes the Scrum boarded check; sprint changelog is empty
     changelogRepo.createQueryBuilder().getMany
@@ -751,7 +762,11 @@ describe('SupportService', () => {
     const config = makeConfig({ boardId: 'SPS', supportLabels: ['support'] });
     boardConfigRepo.findOne.mockResolvedValue(config);
     issueRepo.find.mockResolvedValue([
-      makeIssue({ key: 'SPS-499', boardId: 'SPS', sprintId: '3905', labels: ['support'] }),
+      makeIssue({ key: 'SPS-499', boardId: 'SPS', labels: ['support'] }),
+    ]);
+    // SPS-499 is only in sprint 3905 (future)
+    issueSprintRepo.createQueryBuilder().getMany.mockResolvedValueOnce([
+      { issueKey: 'SPS-499', sprintId: '3905' },
     ]);
     changelogRepo.createQueryBuilder().getMany
       .mockResolvedValueOnce([
