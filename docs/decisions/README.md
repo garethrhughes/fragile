@@ -63,3 +63,4 @@ a new ADR is created for the replacement decision.
 | [0049](0049-sprint-membership-service.md) | Single `SprintMembershipService` for sprint membership reconstruction | Accepted | 2026-05-06 |
 | [0050](0050-third-audit-bug-fix-batch.md) | Third-audit clear bug-fix batch (proposal 0055): consolidate ISO-week, default in-progress names, and Sprint-changelog scan | Accepted | 2026-05-07 |
 | [0051](0051-cfr-denominator-deployment-events.md) | CFR denominator: deployment events (Definition C) — DF and CFR share one unit via `deriveDeploymentEvents` | Accepted | 2026-05-07 |
+| [0052](0052-disjoint-removed-set-semantics.md) | Disjoint removed-set semantics in sprint membership: split `removedKeys` into `committedRemovedKeys` + `addedRemovedKeys` with `summariseMembership()` helper | Accepted | 2026-05-07 |

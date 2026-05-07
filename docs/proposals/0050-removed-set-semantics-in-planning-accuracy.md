@@ -1,7 +1,7 @@
 # 0050 — Removed-Set Semantics in Planning Accuracy
 
 **Date:** 2026-05-06
-**Status:** Accepted
+**Status:** Accepted — implemented per [ADR 0052](../decisions/0052-disjoint-removed-set-semantics.md)
 **Author:** Architect Agent
 **Related ADRs:** ADR 0049 (SprintMembershipService)
 **Related Proposals:** [0013](0013-planning-accuracy-and-gaps-report.md), [0038](0038-carry-over-sprint-issue-classification.md), [0048](0048-sprint-membership-service.md)
