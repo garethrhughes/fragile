@@ -567,6 +567,10 @@ export interface SprintDetailIssue {
   isFailure: boolean
   completedInSprint: boolean
   resolvedAt: string | null
+  /** Reopen-aware representative-cycle duration (proposal 0054). Null when no completed cycle. */
+  cycleTimeDays: number | null
+  /** True when the representative cycle is a reopen (proposal 0054). */
+  isReopen: boolean
   jiraUrl: string
 }
 

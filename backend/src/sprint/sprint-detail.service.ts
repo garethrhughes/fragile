@@ -24,6 +24,7 @@ import {
   summariseMembership,
 } from '../sprint-membership/sprint-membership.service.js';
 import { DEFAULT_IN_PROGRESS_NAMES } from '../metrics/status-defaults.js';
+import { extractCycles, resolveResetNames } from '../metrics/cycle.js';
 
 // ---------------------------------------------------------------------------
 // Response interfaces (exported for use by the controller and frontend types)
@@ -119,6 +120,21 @@ export interface SprintDetailIssue {
    * or null if no such transition is found.
    */
   resolvedAt: string | null;
+
+  /**
+   * Cycle time in days using reopen-aware semantics from proposal 0054.
+   * Equals the duration of the issue's representative (latest completed)
+   * cycle, computed via extractCycles. Working-days when excludeWeekends.
+   * Null when no completed cycle exists. Differs from leadTimeDays which
+   * uses createdAt OR first-IP → first-Done.
+   */
+  cycleTimeDays: number | null;
+
+  /**
+   * True when the representative cycle is a reopen (i.e. the issue had a
+   * prior completed cycle before re-entering In Progress). Per proposal 0054.
+   */
+  isReopen: boolean;
 
   /**
    * Deep link to the issue in Jira Cloud.
@@ -406,6 +422,14 @@ export class SprintDetailService {
     const wtEntity = await this.workingTimeService.getConfig();
     const wtConfig = this.workingTimeService.toConfig(wtEntity);
 
+    // Cycle helper inputs (proposal 0054). Case-sensitive to match
+    // sprint-detail's existing exact-match comparisons on status names.
+    const inProgressSet = new Set<string>(inProgressStatusNames);
+    const doneSet = new Set<string>(doneStatusNames);
+    const resetSet = new Set<string>(
+      resolveResetNames(boardConfig?.boardEntryStatuses ?? null),
+    );
+
     for (const issueKey of finalIssueKeys) {
       const issue = issueByKey.get(issueKey);
       if (!issue) continue;
@@ -530,6 +554,28 @@ export class SprintDetailService {
             : null;
       }
 
+      // cycleTimeDays + isReopen via reopen-aware extractCycles (proposal 0054).
+      // Representative cycle = latest completed cycle in the issue's history.
+      let cycleTimeDays: number | null = null;
+      let isReopen = false;
+      const statusLogs = issueLogs.filter(
+        (cl) => cl.field === 'status' && cl.toValue !== null,
+      );
+      const issueCycles = extractCycles(
+        statusLogs,
+        inProgressSet,
+        doneSet,
+        resetSet,
+      );
+      if (issueCycles && issueCycles.cycles.length > 0) {
+        const rep = issueCycles.cycles[issueCycles.cycles.length - 1];
+        const rawDays = wtEntity.excludeWeekends
+          ? this.workingTimeService.workingDaysBetween(rep.start, rep.end, wtConfig)
+          : (rep.end.getTime() - rep.start.getTime()) / 86_400_000;
+        cycleTimeDays = rawDays >= 0 ? Math.round(rawDays * 100) / 100 : null;
+        isReopen = rep.isReopen;
+      }
+
       // jiraUrl
       const jiraUrl = this.jiraBaseUrl
         ? `${this.jiraBaseUrl}/browse/${issue.key}`
@@ -549,6 +595,8 @@ export class SprintDetailService {
         completedInSprint,
         leadTimeDays,
         resolvedAt,
+        cycleTimeDays,
+        isReopen,
         jiraUrl,
       });
     }
