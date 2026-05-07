@@ -649,6 +649,76 @@ roadmaps:
       // Absent fields must NOT be present in the upsert payload at all
       expect('description' in firstCall[0]).toBe(false);
       expect('targetDateFieldId' in firstCall[0]).toBe(false);
+      // epicConflictResolution is always populated (default 'earliest' applied
+      // unconditionally on every upsert — proposal 0053).
+      expect(firstCall[0].epicConflictResolution).toBe('earliest');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // epicConflictResolution (proposal 0053)
+  // -------------------------------------------------------------------------
+
+  describe('roadmap YAML — epicConflictResolution', () => {
+    it('persists explicit value "latest" when set in YAML', async () => {
+      const service = buildService(
+        boardRepo,
+        roadmapRepo,
+        makeFileReader({
+          'roadmap.yaml': `
+roadmaps:
+  - jpdKey: DISC
+    epicConflictResolution: latest
+`,
+        }),
+      );
+
+      await service.onApplicationBootstrap();
+
+      const firstCall = (roadmapRepo.upsert as jest.Mock).mock.calls[0] as [
+        Partial<RoadmapConfig>,
+        unknown,
+      ];
+      expect(firstCall[0].epicConflictResolution).toBe('latest');
+    });
+
+    it('defaults to "earliest" when YAML key is absent', async () => {
+      const service = buildService(
+        boardRepo,
+        roadmapRepo,
+        makeFileReader({
+          'roadmap.yaml': `
+roadmaps:
+  - jpdKey: DISC
+`,
+        }),
+      );
+
+      await service.onApplicationBootstrap();
+
+      const firstCall = (roadmapRepo.upsert as jest.Mock).mock.calls[0] as [
+        Partial<RoadmapConfig>,
+        unknown,
+      ];
+      expect(firstCall[0].epicConflictResolution).toBe('earliest');
+    });
+
+    it('rejects invalid enum value with a clear error mentioning the field name', async () => {
+      const service = buildService(
+        boardRepo,
+        roadmapRepo,
+        makeFileReader({
+          'roadmap.yaml': `
+roadmaps:
+  - jpdKey: DISC
+    epicConflictResolution: middle
+`,
+        }),
+      );
+
+      await expect(service.onApplicationBootstrap()).rejects.toThrow(
+        /epicConflictResolution/,
+      );
     });
   });
 
