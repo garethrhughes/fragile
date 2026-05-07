@@ -405,6 +405,40 @@ describe('SupportService', () => {
     expect(ticket.band).not.toBeNull();
   });
 
+  it('surfaces isReopen=true when latest cycle follows a Done→In Progress reset (proposal 0054 AC4)', async () => {
+    const config = makeConfig({ supportLabels: ['support'] });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([makeIssue({ key: 'ACC-1', labels: ['support'] })]);
+    // First cycle completes, then ticket is reopened and completed again.
+    // Latest cycle (the one surfaced in the ticket payload) must be flagged as a reopen.
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', new Date('2026-03-10T09:00:00.000Z')),
+      makeChangelog('ACC-1', 'In Progress', 'Done', new Date('2026-03-12T17:00:00.000Z')),
+      makeChangelog('ACC-1', 'Done', 'In Progress', new Date('2026-03-15T09:00:00.000Z')),
+      makeChangelog('ACC-1', 'In Progress', 'Done', new Date('2026-03-17T17:00:00.000Z')),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
+    const ticket = result.tickets[0];
+    expect(ticket.isReopen).toBe(true);
+    expect(ticket.cycleTimeDays).not.toBeNull();
+  });
+
+  it('returns isReopen=false on the first (and only) cycle', async () => {
+    const config = makeConfig({ supportLabels: ['support'] });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([makeIssue({ key: 'ACC-1', labels: ['support'] })]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', STARTED_AT),
+      makeChangelog('ACC-1', 'In Progress', 'Done', DONE_AT),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
+    expect(result.tickets[0].isReopen).toBe(false);
+  });
+
   it('returns null cycle time when issue has no In Progress transition', async () => {
     const config = makeConfig({ supportLabels: ['support'] });
     boardConfigRepo.findOne.mockResolvedValue(config);

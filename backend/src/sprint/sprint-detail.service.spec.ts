@@ -483,6 +483,58 @@ describe('SprintDetailService', () => {
   });
 
   // -------------------------------------------------------------------------
+  // cycleTimeDays + isReopen (proposal 0054 AC4)
+  // -------------------------------------------------------------------------
+
+  it('surfaces isReopen=true when latest cycle follows a Done→In Progress reset', async () => {
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', status: 'Done' }),
+    ]);
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1']),
+    );
+    // First cycle completes, then reopened and completed again within sprint.
+    changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(
+      makeStatusQb([
+        { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: new Date('2026-01-06T09:00:00Z') },
+        { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: new Date('2026-01-08T17:00:00Z') },
+        { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: new Date('2026-01-13T09:00:00Z') },
+        { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: new Date('2026-01-15T17:00:00Z') },
+      ]),
+    );
+
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    expect(result.issues[0].isReopen).toBe(true);
+    expect(result.issues[0].cycleTimeDays).not.toBeNull();
+    expect(result.issues[0].cycleTimeDays!).toBeGreaterThan(0);
+  });
+
+  it('returns isReopen=false on a single non-reopened cycle', async () => {
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', status: 'Done' }),
+    ]);
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1']),
+    );
+    changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(
+      makeStatusQb([
+        { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: new Date('2026-01-06T09:00:00Z') },
+        { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: new Date('2026-01-08T17:00:00Z') },
+      ]),
+    );
+
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    expect(result.issues[0].isReopen).toBe(false);
+    expect(result.issues[0].cycleTimeDays).not.toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
   // Issue payload — priority, jiraUrl, sorting
   // -------------------------------------------------------------------------
 
