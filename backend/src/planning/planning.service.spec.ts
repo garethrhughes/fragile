@@ -346,6 +346,10 @@ describe('PlanningService', () => {
       // (5 added + 0 committed-removed) / 4 * 100 = 125
       // (NOT the buggy (5 + 5) / 4 * 100 = 250)
       expect(result[0].scopeChangePercent).toBe(125);
+      // completionRate divisor = currentMemberKeys.size (= 4), per ADR 0052.
+      // No Done changelog rows are mocked and all four current members are
+      // 'To Do', so completed = 0 → completionRate = 0 / 4 * 100 = 0.
+      expect(result[0].completionRate).toBe(0);
     });
 
     it('computes points-based planningAccuracy when issues have story points', async () => {

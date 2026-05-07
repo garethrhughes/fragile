@@ -783,6 +783,23 @@ describe('disjoint removed-set semantics (proposal 0050)', () => {
     expect(result.addedRemovedKeys.has('ACC-B')).toBe(true);
     expect(result.committedRemovedKeys.has('ACC-C')).toBe(false);
     expect(result.addedRemovedKeys.has('ACC-D')).toBe(false);
+
+    // Union completeness (proposal 0050 AC 6): every key that was in the
+    // sprint at some point but is not in the final membership must appear
+    // in exactly one of the two removed sets. Together with disjointness
+    // above this guarantees committed ∪ added partitions cleanly into
+    // current ∪ committedRemoved ∪ addedRemoved.
+    const everInSprint = new Set<string>([
+      ...result.committedKeys,
+      ...result.addedKeys,
+    ]);
+    for (const k of everInSprint) {
+      if (result.currentMemberKeys.has(k)) continue;
+      const inCommittedRemoved = result.committedRemovedKeys.has(k);
+      const inAddedRemoved = result.addedRemovedKeys.has(k);
+      // XOR: exactly one
+      expect(inCommittedRemoved !== inAddedRemoved).toBe(true);
+    }
   });
 });
 
