@@ -60,6 +60,34 @@ interface RoadmapItemWindow {
   targetDate: Date;
 }
 
+// ---------------------------------------------------------------------------
+// Per-epic detail (proposal 0053 — GET /api/roadmap/epics)
+// ---------------------------------------------------------------------------
+
+export interface EpicCoverageDetail {
+  epicKey: string;
+  epicSummary: string | null;
+  primaryIdea: {
+    ideaKey: string;
+    ideaSummary: string | null;
+    targetDate: string; // ISO
+    startDate: string | null;
+  } | null;
+  conflictingIdeas: Array<{
+    ideaKey: string;
+    ideaSummary: string | null;
+    targetDate: string; // ISO
+    daysFromPrimary: number;
+  }>;
+  resolvedSource: 'deliveryIssueKeys' | 'directLink' | 'none';
+  coverageState: 'green' | 'amber' | 'red' | 'unlinked';
+}
+
+export interface RoadmapEpicsResponse {
+  epics: EpicCoverageDetail[];
+  conflictCount: number;
+}
+
 @Injectable()
 export class RoadmapService {
   private readonly logger = new Logger(RoadmapService.name);
@@ -221,10 +249,249 @@ export class RoadmapService {
   }
 
   /**
-   * For Kanban boards: group issues by the quarter in which they were first
-   * moved off "To Do" (i.e. pulled onto the board). Falls back to createdAt
-   * for issues that have no such changelog entry.
+   * Per-epic detail for a roadmap window (proposal 0053).
+   *
+   * Computes the same idea↔epic mapping as `getAccuracy` but emits the
+   * per-epic shape rather than aggregate counts. Re-uses `resolveEpicIdeas`
+   * so the conflict resolution policy is identical to the accuracy view —
+   * AC6: identical inputs ⟹ identical primary idea selection.
+   *
+   * Initial scope: scrum boards with `sprintId` only. Quarter, week, and
+   * Kanban paths are accepted by the controller but currently throw
+   * BadRequestException — to be added in a follow-up.
    */
+  async getEpicCoverage(
+    boardId: string,
+    sprintId?: string,
+  ): Promise<RoadmapEpicsResponse> {
+    const boardConfig = await this.boardConfigRepo.findOne({ where: { boardId } });
+    const isKanban = boardConfig?.boardType === 'kanban';
+    if (isKanban) {
+      throw new BadRequestException(
+        'Per-epic coverage detail is not yet available for Kanban boards.',
+      );
+    }
+    if (!sprintId) {
+      throw new BadRequestException(
+        'sprintId is required for /api/roadmap/epics in this release.',
+      );
+    }
+
+    const sprint = await this.sprintRepo.findOne({ where: { id: sprintId, boardId } });
+    if (!sprint) {
+      this.logger.log(
+        `roadmap_coverage_computed boardId=${boardId} sprintId=${sprintId} epicCount=0 conflictCount=0 resolutionRule=earliest`,
+      );
+      return { epics: [], conflictCount: 0 };
+    }
+
+    const allBoardIssues = (
+      await this.issueRepo.find({ where: { boardId } })
+    ).filter((i) => isWorkItem(i.issueType));
+
+    // Reconstruct sprint membership (committed + added) — same semantics as
+    // getAccuracy.
+    const membershipBySprint = await this.sprintMembership.reconstructMany({
+      sprints: [sprint],
+      boardId,
+      boardIssues: allBoardIssues,
+    });
+    const m = membershipBySprint.get(sprint.id);
+    const issueByKey = new Map(allBoardIssues.map((i) => [i.key, i]));
+    const sprintIssueKeys = new Set<string>();
+    if (m) {
+      for (const k of m.committedKeys) sprintIssueKeys.add(k);
+      for (const k of m.addedKeys) sprintIssueKeys.add(k);
+    }
+    const sprintIssues = [...sprintIssueKeys]
+      .map((k) => issueByKey.get(k))
+      .filter((i): i is JiraIssue => i !== undefined);
+
+    const { ideas: allIdeas, ruleByJpdKey } = await this.loadAllIdeas();
+
+    const sprintStart = sprint.startDate ?? new Date();
+    const sprintEnd = sprint.endDate ?? new Date();
+
+    // In-window idea filter (same logic as filterIdeasForWindow but we keep
+    // the full conflict graph here).
+    const inWindow: ResolveIdeaInput[] = [];
+    for (const idea of allIdeas) {
+      if (idea.startDate === null || idea.targetDate === null) continue;
+      const ideaTargetEndOfDay = new Date(idea.targetDate.getTime());
+      ideaTargetEndOfDay.setUTCHours(23, 59, 59, 999);
+      if (ideaTargetEndOfDay < sprintStart || idea.startDate > sprintEnd) continue;
+      inWindow.push(idea);
+    }
+
+    const resolved = resolveEpicIdeas(
+      inWindow,
+      (idea) => ruleByJpdKey.get((idea as JpdIdea).jpdKey) ?? 'earliest',
+    );
+
+    // Direct-link map for issues without an epic-level idea (Condition C).
+    const roadmapLinkTypes = boardConfig?.roadmapLinkTypes ?? [];
+    const directLinkIdeaMap = await buildDirectLinkIdeaMap(
+      this.issueLinkRepo,
+      sprintIssues.map((i) => i.key),
+      allIdeas,
+      roadmapLinkTypes,
+      ruleByJpdKey,
+    );
+
+    // Pull all done-status changelogs once to derive coverageState.
+    const doneStatusNames: string[] =
+      boardConfig?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
+    const allKeys = sprintIssues.map((i) => i.key);
+    const completionDates = new Map<string, Date>();
+    if (allKeys.length > 0) {
+      const changelogs = await this.changelogRepo
+        .createQueryBuilder('cl')
+        .where('cl.issueKey IN (:...keys)', { keys: allKeys })
+        .andWhere('cl.field = :field', { field: 'status' })
+        .orderBy('cl.changedAt', 'ASC')
+        .getMany();
+      for (const cl of changelogs) {
+        if (cl.toValue !== null && doneStatusNames.includes(cl.toValue)) {
+          if (!completionDates.has(cl.issueKey)) {
+            completionDates.set(cl.issueKey, cl.changedAt);
+          }
+        }
+      }
+    }
+
+    // Group sprint issues by epicKey.
+    const issuesByEpic = new Map<string, JiraIssue[]>();
+    const unlinkedIssues: JiraIssue[] = [];
+    for (const issue of sprintIssues) {
+      if (!issue.epicKey) {
+        unlinkedIssues.push(issue);
+      } else {
+        const list = issuesByEpic.get(issue.epicKey);
+        if (list) list.push(issue);
+        else issuesByEpic.set(issue.epicKey, [issue]);
+      }
+    }
+
+    // Look up epic summaries in one query.
+    const epicSummaryByKey = new Map<string, string | null>();
+    const epicKeys = [...issuesByEpic.keys()];
+    if (epicKeys.length > 0) {
+      const epicRows = await this.issueRepo.find({
+        where: { key: In(epicKeys) },
+        select: ['key', 'summary'],
+      });
+      for (const r of epicRows) {
+        epicSummaryByKey.set(r.key, r.summary ?? null);
+      }
+    }
+
+    const now = new Date();
+    const epics: EpicCoverageDetail[] = [];
+    let conflictCount = 0;
+
+    for (const [epicKey, issues] of issuesByEpic) {
+      const resolvedEntry = resolved.get(epicKey);
+      let resolvedSource: EpicCoverageDetail['resolvedSource'] = 'none';
+      let primaryIdea: EpicCoverageDetail['primaryIdea'] = null;
+      let conflictingIdeas: EpicCoverageDetail['conflictingIdeas'] = [];
+      let coverageTargetDate: Date | null = null;
+
+      if (resolvedEntry) {
+        resolvedSource = 'deliveryIssueKeys';
+        coverageTargetDate = resolvedEntry.primaryIdea.targetDate;
+        primaryIdea = {
+          ideaKey: resolvedEntry.primaryIdea.ideaKey,
+          ideaSummary: resolvedEntry.primaryIdea.ideaSummary,
+          targetDate: resolvedEntry.primaryIdea.targetDate.toISOString(),
+          startDate:
+            resolvedEntry.primaryIdea.startDate?.toISOString() ?? null,
+        };
+        conflictingIdeas = resolvedEntry.conflictingIdeas.map((c) => ({
+          ideaKey: c.ideaKey,
+          ideaSummary: c.ideaSummary,
+          targetDate: c.targetDate.toISOString(),
+          daysFromPrimary: c.daysFromPrimary,
+        }));
+        conflictCount += resolvedEntry.conflictingIdeas.length;
+      } else {
+        // Fall back to direct-link path: if any issue under this epic has
+        // a direct-link target date, expose that as the coverage anchor.
+        // Choose the issue with the earliest direct-link targetDate to
+        // match the default 'earliest' policy.
+        let bestDirect: { issueKey: string; targetDate: Date } | null = null;
+        for (const issue of issues) {
+          const direct = directLinkIdeaMap.get(issue.key);
+          if (!direct) continue;
+          if (!bestDirect || direct.targetDate < bestDirect.targetDate) {
+            bestDirect = { issueKey: issue.key, targetDate: direct.targetDate };
+          }
+        }
+        if (bestDirect) {
+          resolvedSource = 'directLink';
+          coverageTargetDate = bestDirect.targetDate;
+        }
+      }
+
+      // Coverage state per epic:
+      //   unlinked — no idea linked at all
+      //   green    — at least one issue done on/before targetDate, OR all in-flight before targetDate
+      //   amber    — linked but past target with no completed issue on time
+      //   red      — should not occur for this code path (epics with issues but no link → unlinked)
+      let coverageState: EpicCoverageDetail['coverageState'];
+      if (resolvedSource === 'none') {
+        coverageState = 'unlinked';
+      } else if (coverageTargetDate === null) {
+        coverageState = 'unlinked';
+      } else {
+        const anyDoneOnTime = issues.some((i) => {
+          const done = completionDates.get(i.key);
+          return done !== undefined && done <= coverageTargetDate!;
+        });
+        const anyInFlight = issues.some((i) => !completionDates.has(i.key));
+        if (anyDoneOnTime) {
+          coverageState = 'green';
+        } else if (anyInFlight && now <= coverageTargetDate) {
+          coverageState = 'green';
+        } else {
+          coverageState = 'amber';
+        }
+      }
+
+      epics.push({
+        epicKey,
+        epicSummary: epicSummaryByKey.get(epicKey) ?? null,
+        primaryIdea,
+        conflictingIdeas,
+        resolvedSource,
+        coverageState,
+      });
+    }
+
+    // Surface unlinked-issue epics as a synthetic "no-epic" bucket only
+    // when there are issues without any epicKey. Skip if zero.
+    if (unlinkedIssues.length > 0) {
+      epics.push({
+        epicKey: '(no epic)',
+        epicSummary: null,
+        primaryIdea: null,
+        conflictingIdeas: [],
+        resolvedSource: 'none',
+        coverageState: 'red',
+      });
+    }
+
+    // Determine which rule was effectively used (most-common across configs).
+    const ruleSummary = ruleByJpdKey.size > 0
+      ? [...ruleByJpdKey.values()][0]
+      : 'earliest';
+
+    this.logger.log(
+      `roadmap_coverage_computed boardId=${boardId} sprintId=${sprintId} epicCount=${epics.length} conflictCount=${conflictCount} resolutionRule=${ruleSummary}`,
+    );
+
+    return { epics, conflictCount };
+  }
+
   private async getKanbanAccuracy(
     boardId: string,
     boardConfig: BoardConfig | null,

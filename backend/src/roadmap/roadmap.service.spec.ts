@@ -1692,4 +1692,330 @@ describe('RoadmapService', () => {
       expect(result[0].linkedCount).toBe(1);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // getEpicCoverage — per-epic detail (proposal 0053, AC1-11)
+  // -------------------------------------------------------------------------
+
+  describe('getEpicCoverage (scrum + sprintId)', () => {
+    const sprintWindow = {
+      startDate: new Date('2026-01-01T00:00:00Z'),
+      endDate: new Date('2026-01-14T23:59:59Z'),
+    };
+
+    function setupBoardScrum(): void {
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardId: 'ACC',
+        boardType: 'scrum',
+        doneStatusNames: ['Done'],
+        cancelledStatusNames: ['Cancelled'],
+        backlogStatusIds: [],
+        dataStartDate: null,
+        roadmapLinkTypes: ['relates to'],
+      } as unknown as BoardConfig);
+    }
+
+    function makeIdea(o: {
+      key: string;
+      summary?: string;
+      jpdKey?: string;
+      deliveryIssueKeys?: string[];
+      startDate?: Date | null;
+      targetDate?: Date | null;
+    }): import('../database/entities/index.js').JpdIdea {
+      return {
+        key: o.key,
+        summary: o.summary ?? `Idea ${o.key}`,
+        status: 'In Progress',
+        jpdKey: o.jpdKey ?? 'ROADMAP',
+        deliveryIssueKeys: o.deliveryIssueKeys ?? [],
+        startDate: o.startDate ?? new Date('2026-01-01T00:00:00Z'),
+        targetDate: o.targetDate ?? new Date('2026-01-14T00:00:00Z'),
+        syncedAt: new Date(),
+      } as unknown as import('../database/entities/index.js').JpdIdea;
+    }
+
+    function mockEmptyChangelogQb(): void {
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb([]));
+    }
+
+    function mockChangelogQb(rows: object[]): void {
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb(rows));
+    }
+
+    function mockEmptyIssueLinkQb(): void {
+      issueLinkRepo.createQueryBuilder = jest.fn().mockReturnValue(buildQb([]));
+    }
+
+    beforeEach(() => {
+      setupBoardScrum();
+      mockEmptyIssueLinkQb();
+      // Default: roadmap config with default 'earliest' rule.
+      roadmapConfigRepo.find.mockResolvedValue([
+        {
+          id: 1,
+          jpdKey: 'ROADMAP',
+          epicConflictResolution: 'earliest',
+        } as unknown as import('../database/entities/index.js').RoadmapConfig,
+      ]);
+      jpdIdeaRepo.find.mockResolvedValue([]);
+    });
+
+    it('throws BadRequestException when sprintId is omitted', async () => {
+      await expect(service.getEpicCoverage('ACC')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('throws BadRequestException for kanban boards', async () => {
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardId: 'PLAT',
+        boardType: 'kanban',
+      } as unknown as BoardConfig);
+      await expect(
+        service.getEpicCoverage('PLAT', 'sprint-1'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('returns empty epics array when sprint not found', async () => {
+      sprintRepo.findOne.mockResolvedValue(null);
+      const result = await service.getEpicCoverage('ACC', 'sprint-missing');
+      expect(result).toEqual({ epics: [], conflictCount: 0 });
+    });
+
+    it('returns single epic with primary idea, no conflicts (AC1)', async () => {
+      const sprint = makeSprint({ id: 'sprint-1', ...sprintWindow });
+      sprintRepo.findOne.mockResolvedValue(sprint);
+      const epic = makeIssue({ key: 'EPIC-1', issueType: 'Epic', summary: 'Epic One' });
+      const issue = makeIssue({ key: 'ACC-1', epicKey: 'EPIC-1', status: 'Done' });
+      issueRepo.find.mockResolvedValue([issue]);
+      // Epic summary lookup
+      issueRepo.find.mockResolvedValueOnce([issue]).mockResolvedValueOnce([epic]);
+      membership.seed('sprint-1', { committed: ['ACC-1'] });
+      jpdIdeaRepo.find.mockResolvedValue([
+        makeIdea({
+          key: 'JPD-1',
+          deliveryIssueKeys: ['EPIC-1'],
+          targetDate: new Date('2026-01-14T00:00:00Z'),
+        }),
+      ]);
+      // Issue completed before targetDate → green
+      mockChangelogQb([
+        {
+          issueKey: 'ACC-1',
+          field: 'status',
+          fromValue: 'In Progress',
+          toValue: 'Done',
+          changedAt: new Date('2026-01-10T12:00:00Z'),
+        },
+      ]);
+
+      const result = await service.getEpicCoverage('ACC', 'sprint-1');
+
+      expect(result.conflictCount).toBe(0);
+      expect(result.epics).toHaveLength(1);
+      expect(result.epics[0]).toMatchObject({
+        epicKey: 'EPIC-1',
+        primaryIdea: {
+          ideaKey: 'JPD-1',
+          targetDate: '2026-01-14T00:00:00.000Z',
+        },
+        conflictingIdeas: [],
+        resolvedSource: 'deliveryIssueKeys',
+        coverageState: 'green',
+      });
+    });
+
+    it('flags conflictingIdeas with signed daysFromPrimary under earliest rule (AC2, AC3)', async () => {
+      const sprint = makeSprint({ id: 'sprint-1', ...sprintWindow });
+      sprintRepo.findOne.mockResolvedValue(sprint);
+      const epic = makeIssue({ key: 'EPIC-1', issueType: 'Epic', summary: 'Epic One' });
+      const issue = makeIssue({ key: 'ACC-1', epicKey: 'EPIC-1', status: 'Done' });
+      issueRepo.find
+        .mockResolvedValueOnce([issue])
+        .mockResolvedValueOnce([epic]);
+      membership.seed('sprint-1', { committed: ['ACC-1'] });
+      jpdIdeaRepo.find.mockResolvedValue([
+        makeIdea({
+          key: 'JPD-EARLY',
+          deliveryIssueKeys: ['EPIC-1'],
+          targetDate: new Date('2026-01-05T00:00:00Z'),
+        }),
+        makeIdea({
+          key: 'JPD-LATE',
+          deliveryIssueKeys: ['EPIC-1'],
+          targetDate: new Date('2026-01-12T00:00:00Z'),
+        }),
+      ]);
+      mockChangelogQb([
+        {
+          issueKey: 'ACC-1',
+          field: 'status',
+          toValue: 'Done',
+          changedAt: new Date('2026-01-04T12:00:00Z'),
+        },
+      ]);
+
+      const result = await service.getEpicCoverage('ACC', 'sprint-1');
+
+      expect(result.conflictCount).toBe(1);
+      expect(result.epics).toHaveLength(1);
+      expect(result.epics[0].primaryIdea?.ideaKey).toBe('JPD-EARLY');
+      expect(result.epics[0].conflictingIdeas).toHaveLength(1);
+      expect(result.epics[0].conflictingIdeas[0]).toMatchObject({
+        ideaKey: 'JPD-LATE',
+        daysFromPrimary: 7,
+      });
+    });
+
+    it('respects per-config "latest" rule when selecting primary (AC4)', async () => {
+      roadmapConfigRepo.find.mockResolvedValue([
+        {
+          id: 1,
+          jpdKey: 'ROADMAP',
+          epicConflictResolution: 'latest',
+        } as unknown as import('../database/entities/index.js').RoadmapConfig,
+      ]);
+      const sprint = makeSprint({ id: 'sprint-1', ...sprintWindow });
+      sprintRepo.findOne.mockResolvedValue(sprint);
+      const epic = makeIssue({ key: 'EPIC-1', issueType: 'Epic', summary: 'Epic One' });
+      const issue = makeIssue({ key: 'ACC-1', epicKey: 'EPIC-1', status: 'Done' });
+      issueRepo.find
+        .mockResolvedValueOnce([issue])
+        .mockResolvedValueOnce([epic]);
+      membership.seed('sprint-1', { committed: ['ACC-1'] });
+      jpdIdeaRepo.find.mockResolvedValue([
+        makeIdea({
+          key: 'JPD-EARLY',
+          deliveryIssueKeys: ['EPIC-1'],
+          targetDate: new Date('2026-01-05T00:00:00Z'),
+        }),
+        makeIdea({
+          key: 'JPD-LATE',
+          deliveryIssueKeys: ['EPIC-1'],
+          targetDate: new Date('2026-01-12T00:00:00Z'),
+        }),
+      ]);
+      mockEmptyChangelogQb();
+
+      const result = await service.getEpicCoverage('ACC', 'sprint-1');
+
+      expect(result.epics[0].primaryIdea?.ideaKey).toBe('JPD-LATE');
+      expect(result.epics[0].conflictingIdeas[0].ideaKey).toBe('JPD-EARLY');
+      // JPD-EARLY is 7 days before JPD-LATE → daysFromPrimary = -7
+      expect(result.epics[0].conflictingIdeas[0].daysFromPrimary).toBe(-7);
+    });
+
+    it('marks unlinked epics with no idea as resolvedSource=none / state=unlinked (AC8)', async () => {
+      const sprint = makeSprint({ id: 'sprint-1', ...sprintWindow });
+      sprintRepo.findOne.mockResolvedValue(sprint);
+      const epic = makeIssue({ key: 'EPIC-X', issueType: 'Epic', summary: 'Lonely Epic' });
+      const issue = makeIssue({ key: 'ACC-9', epicKey: 'EPIC-X', status: 'In Progress' });
+      issueRepo.find
+        .mockResolvedValueOnce([issue])
+        .mockResolvedValueOnce([epic]);
+      membership.seed('sprint-1', { committed: ['ACC-9'] });
+      jpdIdeaRepo.find.mockResolvedValue([]); // no ideas
+      mockEmptyChangelogQb();
+
+      const result = await service.getEpicCoverage('ACC', 'sprint-1');
+
+      expect(result.epics).toHaveLength(1);
+      expect(result.epics[0].resolvedSource).toBe('none');
+      expect(result.epics[0].coverageState).toBe('unlinked');
+      expect(result.epics[0].primaryIdea).toBeNull();
+    });
+
+    it('emits a synthetic "(no epic)" red bucket for issues with no epicKey', async () => {
+      const sprint = makeSprint({ id: 'sprint-1', ...sprintWindow });
+      sprintRepo.findOne.mockResolvedValue(sprint);
+      const issue = makeIssue({ key: 'ACC-NOEPIC', epicKey: null });
+      issueRepo.find
+        .mockResolvedValueOnce([issue])
+        .mockResolvedValueOnce([]);
+      membership.seed('sprint-1', { committed: ['ACC-NOEPIC'] });
+      jpdIdeaRepo.find.mockResolvedValue([]);
+      mockEmptyChangelogQb();
+
+      const result = await service.getEpicCoverage('ACC', 'sprint-1');
+
+      expect(result.epics).toHaveLength(1);
+      expect(result.epics[0].epicKey).toBe('(no epic)');
+      expect(result.epics[0].coverageState).toBe('red');
+    });
+
+    it('coverageState=amber when linked epic past target with no on-time delivery', async () => {
+      const sprint = makeSprint({
+        id: 'sprint-1',
+        startDate: new Date('2025-01-01T00:00:00Z'),
+        endDate: new Date('2025-01-14T23:59:59Z'),
+      });
+      sprintRepo.findOne.mockResolvedValue(sprint);
+      const epic = makeIssue({ key: 'EPIC-1', issueType: 'Epic', summary: 'Epic One' });
+      const issue = makeIssue({ key: 'ACC-1', epicKey: 'EPIC-1', status: 'In Progress' });
+      issueRepo.find
+        .mockResolvedValueOnce([issue])
+        .mockResolvedValueOnce([epic]);
+      membership.seed('sprint-1', { committed: ['ACC-1'] });
+      jpdIdeaRepo.find.mockResolvedValue([
+        makeIdea({
+          key: 'JPD-1',
+          deliveryIssueKeys: ['EPIC-1'],
+          startDate: new Date('2025-01-01T00:00:00Z'),
+          targetDate: new Date('2025-01-10T00:00:00Z'),
+        }),
+      ]);
+      mockEmptyChangelogQb(); // never completed
+
+      const result = await service.getEpicCoverage('ACC', 'sprint-1');
+
+      expect(result.epics).toHaveLength(1);
+      expect(result.epics[0].resolvedSource).toBe('deliveryIssueKeys');
+      expect(result.epics[0].coverageState).toBe('amber');
+    });
+
+    it('uses directLink path when no epic-level idea but issue has direct link', async () => {
+      const sprint = makeSprint({ id: 'sprint-1', ...sprintWindow });
+      sprintRepo.findOne.mockResolvedValue(sprint);
+      const epic = makeIssue({ key: 'EPIC-1', issueType: 'Epic', summary: 'Epic One' });
+      const issue = makeIssue({ key: 'ACC-1', epicKey: 'EPIC-1', status: 'Done' });
+      issueRepo.find
+        .mockResolvedValueOnce([issue])
+        .mockResolvedValueOnce([epic]);
+      membership.seed('sprint-1', { committed: ['ACC-1'] });
+      // Idea links the issue directly, NOT the epic
+      jpdIdeaRepo.find.mockResolvedValue([
+        makeIdea({
+          key: 'JPD-DIRECT',
+          deliveryIssueKeys: [],
+          targetDate: new Date('2026-01-14T00:00:00Z'),
+        }),
+      ]);
+      // issueLinkRepo returns a direct link from ACC-1 → JPD-DIRECT
+      issueLinkRepo.createQueryBuilder = jest.fn().mockReturnValue(
+        buildQb([
+          {
+            sourceIssueKey: 'ACC-1',
+            targetIssueKey: 'JPD-DIRECT',
+            linkType: 'relates to',
+          },
+        ]),
+      );
+      mockChangelogQb([
+        {
+          issueKey: 'ACC-1',
+          field: 'status',
+          toValue: 'Done',
+          changedAt: new Date('2026-01-10T12:00:00Z'),
+        },
+      ]);
+
+      const result = await service.getEpicCoverage('ACC', 'sprint-1');
+
+      expect(result.epics).toHaveLength(1);
+      expect(result.epics[0].resolvedSource).toBe('directLink');
+      expect(result.epics[0].primaryIdea).toBeNull();
+      expect(result.epics[0].coverageState).toBe('green');
+    });
+  });
 });
