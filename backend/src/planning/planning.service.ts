@@ -14,6 +14,7 @@ import {
 } from '../database/entities/index.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { dateParts, midnightInTz } from '../metrics/tz-utils.js';
+import { dateToIsoWeekKey } from '../lib/iso-week.js';
 import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
 
 export interface SprintAccuracy {
@@ -781,34 +782,7 @@ export class PlanningService {
 
   private dateToWeekKey(date: Date): string {
     const tz = this.configService.get<string>('TIMEZONE', 'UTC');
-    const { year, month, day } = dateParts(date, tz);
-    // Build a UTC-based proxy for the local calendar date in `tz`
-    const localDate = new Date(Date.UTC(year, month, day));
-    // ISO 8601: find the Thursday of the same week to determine the ISO year.
-    // Jan 4 is always in ISO week 1 of its year.
-    const dow = localDate.getUTCDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-    const daysToThursday = dow === 0 ? 4 : 4 - dow;
-    const thursday = new Date(localDate);
-    thursday.setUTCDate(localDate.getUTCDate() + daysToThursday);
-
-    const isoYear = thursday.getUTCFullYear();
-
-    // Monday of ISO week 1: Jan 4 of isoYear minus (its weekday - 1)
-    const jan4 = new Date(Date.UTC(isoYear, 0, 4));
-    const jan4Day = jan4.getUTCDay();
-    const daysToMonday = jan4Day === 0 ? -6 : 1 - jan4Day;
-    const week1Monday = new Date(jan4);
-    week1Monday.setUTCDate(jan4.getUTCDate() + daysToMonday);
-
-    // Monday of this week (the week containing `date` in `tz`)
-    const thisMonday = new Date(localDate);
-    const daysToMon = dow === 0 ? -6 : 1 - dow;
-    thisMonday.setUTCDate(localDate.getUTCDate() + daysToMon);
-
-    const diffMs = thisMonday.getTime() - week1Monday.getTime();
-    const weekNumber = Math.round(diffMs / (7 * 24 * 60 * 60 * 1000)) + 1;
-
-    return `${isoYear}-W${String(weekNumber).padStart(2, '0')}`;
+    return dateToIsoWeekKey(date, tz);
   }
 
   private weekKeyToDates(week: string): { weekStart: Date; weekEnd: Date } {
