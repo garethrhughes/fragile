@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between } from 'typeorm';
+import { Repository, Between, In } from 'typeorm';
 import {
   JiraIssue,
   JiraChangelog,
@@ -11,9 +11,11 @@ import {
 import { classifyChangeFailureRate, type DoraBand } from './dora-bands.js';
 import { isWorkItem } from './issue-type-filters.js';
 import type { TrendDataSlice } from './trend-data-loader.service.js';
+import { deriveDeploymentEvents } from './deployment-events.js';
 
 export interface CfrResult {
   boardId: string;
+  /** ADR 0051: number of deployment events (matches DeploymentFrequencyResult.totalDeployments). */
   totalDeployments: number;
   failureCount: number;
   changeFailureRate: number;
@@ -62,28 +64,16 @@ export class CfrService {
     ];
     const failureLinkTypes = config?.failureLinkTypes ?? [];
 
-    // Count total deployments (issues that reached done in the period).
-    // select projection: omit heavy columns (summary, description) that are
-    // not needed for CFR classification — reduces per-row memory significantly.
-    const allIssues = (await this.issueRepo.find({
+    // Load board issues (work items only — ADR 0018 enforced inside deriveDeploymentEvents).
+    // select projection: omit heavy columns (summary, description) — not needed
+    // for CFR classification.
+    const allIssues = await this.issueRepo.find({
       where: { boardId },
       select: ['key', 'issueType', 'fixVersion', 'labels'],
-    })).filter((i) => isWorkItem(i.issueType));
+    });
 
-    if (allIssues.length === 0) {
-      return {
-        boardId,
-        totalDeployments: 0,
-        failureCount: 0,
-        changeFailureRate: 0,
-        band: classifyChangeFailureRate(0),
-        usingDefaultConfig,
-      };
-    }
-
-    // C-4: Primary path — count distinct release DAYS, consistent with
-    // DeploymentFrequencyService.  Multiple versions on the same day = 1 deployment.
-    const releasedVersions = await this.versionRepo.find({
+    // Released versions in period (primary signal — ADR 0001).
+    const versions = await this.versionRepo.find({
       where: {
         projectKey: boardId,
         released: true,
@@ -91,74 +81,37 @@ export class CfrService {
       },
     });
 
-    const releaseDays = new Set(
-      releasedVersions
-        .filter((v) => v.releaseDate != null)
-        .map((v) => v.releaseDate!.toISOString().split('T')[0]),
-    );
-    const versionDeployments = releaseDays.size;
-
-    // Collect all deployed issue keys (for the failure-classification step).
-    // We still need the issue keys to determine which issues were released;
-    // the deployment COUNT uses release days, but the failure classification
-    // must operate on the actual issues (type, labels, links).
-    // Derive from the already-loaded allIssues to avoid a redundant DB query.
-    const versionNames = new Set(releasedVersions.map((v) => v.name));
-    const versionIssueKeys =
-      versionNames.size > 0
-        ? new Set(
-            allIssues
-              .filter((i) => i.fixVersion != null && versionNames.has(i.fixVersion))
-              .map((i) => i.key),
-          )
-        : new Set<string>();
-
-    // C-4: Fallback path — count distinct transition DAYS for issues with no fixVersion.
+    // Status changelog entries for issues with no fixVersion in the period
+    // (fallback signal).  Pre-filter to keep the result set small.
     const noVersionKeys = allIssues
-      .filter((i) => !i.fixVersion && !versionIssueKeys.has(i.key))
+      .filter((i) => isWorkItem(i.issueType) && !i.fixVersion)
       .map((i) => i.key);
+    const changelogs =
+      noVersionKeys.length > 0
+        ? await this.changelogRepo.find({
+            where: {
+              issueKey: In(noVersionKeys),
+              field: 'status',
+              changedAt: Between(startDate, endDate),
+            },
+          })
+        : [];
 
-    let transitionIssueKeys = new Set<string>();
-    let fallbackDeployments = 0;
-    if (noVersionKeys.length > 0) {
-      const doneTransitions = await this.changelogRepo
-        .createQueryBuilder('cl')
-        .select('DISTINCT cl.issueKey', 'issueKey')
-        .where('cl.issueKey IN (:...keys)', { keys: noVersionKeys })
-        .andWhere('cl.field = :field', { field: 'status' })
-        .andWhere('cl.toValue IN (:...statuses)', { statuses: doneStatuses })
-        .andWhere('cl.changedAt BETWEEN :start AND :end', {
-          start: startDate,
-          end: endDate,
-        })
-        .getRawMany<{ issueKey: string }>();
-      transitionIssueKeys = new Set(doneTransitions.map((t) => t.issueKey));
+    // ADR 0051: derive event list once; CFR denominator is event count.
+    const { events, deployedIssueKeys } = deriveDeploymentEvents({
+      issues: allIssues,
+      versions,
+      changelogs,
+      doneStatuses,
+      startDate,
+      endDate,
+    });
+    const totalDeployments = events.length;
 
-      // Count distinct days for the fallback path
-      const fallbackDayRows = await this.changelogRepo
-        .createQueryBuilder('cl')
-        .select(`DATE(cl."changedAt") AS "transitionDay"`)
-        .where('cl.issueKey IN (:...keys)', { keys: noVersionKeys })
-        .andWhere('cl.field = :field', { field: 'status' })
-        .andWhere('cl.toValue IN (:...statuses)', { statuses: doneStatuses })
-        .andWhere('cl.changedAt BETWEEN :start AND :end', {
-          start: startDate,
-          end: endDate,
-        })
-        .groupBy('"transitionDay"')
-        .getRawMany<{ transitionDay: string }>();
-      fallbackDeployments = fallbackDayRows.length;
-    }
-
-    // Combine both paths
-    const deployedKeys = new Set([...versionIssueKeys, ...transitionIssueKeys]);
-    const totalDeployments = versionDeployments + fallbackDeployments;
-
-    // Count failure issues among deployed (type/label OR-gate)
+    // Classify failures among deployed issues (type/label OR-gate).
     const issueMap = new Map(allIssues.map((i) => [i.key, i]));
     const failureIssues: JiraIssue[] = [];
-
-    for (const key of deployedKeys) {
+    for (const key of deployedIssueKeys) {
       const issue = issueMap.get(key);
       if (!issue) continue;
 
@@ -172,7 +125,7 @@ export class CfrService {
       }
     }
 
-    // AND-gate: require a causal link if failureLinkTypes is non-empty
+    // AND-gate: require a causal link if failureLinkTypes is non-empty.
     let filteredFailures = failureIssues;
     if (failureLinkTypes.length > 0 && failureIssues.length > 0) {
       const failureKeys = failureIssues.map((i) => i.key);
@@ -190,7 +143,6 @@ export class CfrService {
     }
 
     const failureCount = filteredFailures.length;
-
     const changeFailureRate =
       totalDeployments > 0
         ? Math.round((failureCount / totalDeployments) * 10000) / 100
@@ -222,50 +174,21 @@ export class CfrService {
     const failureLabels = slice.boardConfig?.failureLabels ?? ['regression', 'incident', 'hotfix'];
     const failureLinkTypes = slice.boardConfig?.failureLinkTypes ?? [];
 
-    // Primary path: distinct release days in period
-    const periodVersions = slice.versions.filter(
-      (v) => v.releaseDate != null && v.releaseDate >= startDate && v.releaseDate <= endDate,
-    );
-    const releaseDays = new Set(
-      periodVersions.map((v) => v.releaseDate!.toISOString().split('T')[0]),
-    );
-    const versionDeployments = releaseDays.size;
+    // ADR 0051: derive event list once; CFR denominator is event count.
+    const { events, deployedIssueKeys } = deriveDeploymentEvents({
+      issues: slice.issues,
+      versions: slice.versions,
+      changelogs: slice.changelogs,
+      doneStatuses,
+      startDate,
+      endDate,
+    });
+    const totalDeployments = events.length;
 
-    const versionNames = new Set(periodVersions.map((v) => v.name));
-    const versionIssueKeys = new Set(
-      slice.issues
-        .filter((i) => i.fixVersion != null && versionNames.has(i.fixVersion))
-        .map((i) => i.key),
-    );
-
-    // Fallback path: issues without fixVersion, done transitions in period
-    const noVersionKeys = new Set(
-      slice.issues
-        .filter((i) => !i.fixVersion && !versionIssueKeys.has(i.key))
-        .map((i) => i.key),
-    );
-    const fallbackDays = new Set<string>();
-    const transitionIssueKeys = new Set<string>();
-    for (const cl of slice.changelogs) {
-      if (
-        noVersionKeys.has(cl.issueKey) &&
-        doneStatuses.includes(cl.toValue ?? '') &&
-        cl.changedAt >= startDate &&
-        cl.changedAt <= endDate
-      ) {
-        fallbackDays.add(cl.changedAt.toISOString().split('T')[0]);
-        transitionIssueKeys.add(cl.issueKey);
-      }
-    }
-    const fallbackDeployments = fallbackDays.size;
-
-    const deployedKeys = new Set([...versionIssueKeys, ...transitionIssueKeys]);
-    const totalDeployments = versionDeployments + fallbackDeployments;
-
-    // Failure classification (type/label OR-gate)
+    // Classify failures among deployed issues (type/label OR-gate).
     const issueMap = new Map(slice.issues.map((i) => [i.key, i]));
     const failureIssues: JiraIssue[] = [];
-    for (const key of deployedKeys) {
+    for (const key of deployedIssueKeys) {
       const issue = issueMap.get(key);
       if (!issue) continue;
       const isFailureType = failureIssueTypes.includes(issue.issueType);
@@ -273,7 +196,7 @@ export class CfrService {
       if (isFailureType || hasFailureLabel) failureIssues.push(issue);
     }
 
-    // AND-gate: require causal link if failureLinkTypes is non-empty
+    // AND-gate: require causal link if failureLinkTypes is non-empty.
     let filteredFailures = failureIssues;
     if (failureLinkTypes.length > 0 && failureIssues.length > 0) {
       const failureKeySet = new Set(failureIssues.map((i) => i.key));

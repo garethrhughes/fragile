@@ -56,3 +56,15 @@ a new ADR is created for the replacement decision.
 | [0042](0042-trend-display-snapshot-type-and-org-merge-strategy.md) | `trend-display` snapshot type, org-merge-from-per-board strategy, and trend array direction | Accepted | 2026-04-25 |
 | [0043](0043-ecs-fargate-replaces-app-runner.md) | ECS Fargate replaces App Runner as compute platform | Accepted | 2026-04-28 |
 | [0044](0044-roadmap-coverage-via-direct-issue-links.md) | Roadmap coverage via direct Jira issue links with per-board `roadmapLinkTypes` allowlist | Accepted | 2026-05-05 |
+| [0045](0045-support-ticket-report.md) | Support ticket report: per-board classification, cycle time, MCP tools | Accepted | 2026-05-06 |
+| [0046](0046-support-sprint-membership-population.md) | Support Report: sprint-membership-based issue population | Accepted | 2026-05-06 |
+| [0047](0047-support-detection-epic-based-classification.md) | Support Detection: epic-based classification with composite `matchReason` | Accepted | 2026-05-06 |
+| [0048](0048-sync-cancelled-issues-and-multi-sprint-membership.md) | Sync: include cancelled issues via JQL and persist multi-sprint membership | Accepted | 2026-05-06 |
+| [0049](0049-sprint-membership-service.md) | Single `SprintMembershipService` for sprint membership reconstruction | Accepted | 2026-05-06 |
+| [0050](0050-third-audit-bug-fix-batch.md) | Third-audit clear bug-fix batch (proposal 0055): consolidate ISO-week, default in-progress names, and Sprint-changelog scan | Accepted | 2026-05-07 |
+| [0051](0051-cfr-denominator-deployment-events.md) | CFR denominator: deployment events (Definition C) — DF and CFR share one unit via `deriveDeploymentEvents` | Accepted | 2026-05-07 |
+| [0052](0052-disjoint-removed-set-semantics.md) | Disjoint removed-set semantics in sprint membership: split `removedKeys` into `committedRemovedKeys` + `addedRemovedKeys` with `summariseMembership()` helper | Accepted | 2026-05-07 |
+| [0053](0053-sprint-report-na-propagation.md) | Sprint Report scoring: N/A propagation end-to-end with weight renormalisation; nullable `compositeScore`/`compositeBand` and new `contributingDimensions` / `excludedDimensions` / `totalWeightApplied` response fields | Accepted | 2026-05-07 |
+| [0054](0054-dora-band-boundary-canonicalisation.md) | DORA band boundaries: `<` strict less-than for upper-bound bands (LT, CFR, MTTR); `>=` retained for DF; cross-suite contract via `docs/dora-bands-fixture.json` | Accepted | 2026-05-07 |
+| [0055](0055-roadmap-idea-epic-conflict-resolution.md) | Roadmap idea↔epic conflict resolution: `'earliest'` target wins by default, configurable per board; shared `resolveEpicIdeas` helper across both code paths; new `GET /api/roadmap/epics` + `⚠ N conflicts` UI badge | Accepted | 2026-05-07 |
+| [0056](0056-cycle-time-reopen-handling.md) | Cycle time reopen handling: shared pure `extractCycles` helper across all 4 services; representative cycle = latest completed; `reopenedIssueCount` surfaced; empty windows return `null` band (not `'excellent'`) | Accepted | 2026-05-07 |

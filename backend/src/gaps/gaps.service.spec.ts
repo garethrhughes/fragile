@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import {
   JiraIssue,
+  JiraIssueSprint,
   JiraSprint,
   BoardConfig,
   JiraChangelog,
@@ -39,7 +40,6 @@ function makeIssue(overrides: Partial<JiraIssue>): JiraIssue {
     status: 'In Progress',
     statusId: null,
     boardId: 'ACC',
-    sprintId: null,
     epicKey: null,
     points: null,
     priority: null,
@@ -81,6 +81,7 @@ describe('GapsService', () => {
   let service: GapsService;
   let configService: jest.Mocked<ConfigService>;
   let issueRepo: jest.Mocked<Repository<JiraIssue>>;
+  let issueSprintRepo: jest.Mocked<Repository<JiraIssueSprint>>;
   let sprintRepo: jest.Mocked<Repository<JiraSprint>>;
   let boardConfigRepo: jest.Mocked<Repository<BoardConfig>>;
   let changelogRepo: jest.Mocked<Repository<JiraChangelog>>;
@@ -88,6 +89,7 @@ describe('GapsService', () => {
   beforeEach(() => {
     configService = mockConfigService();
     issueRepo = mockRepo<JiraIssue>();
+    issueSprintRepo = mockRepo<JiraIssueSprint>();
     sprintRepo = mockRepo<JiraSprint>();
     boardConfigRepo = mockRepo<BoardConfig>();
     changelogRepo = mockRepo<JiraChangelog>();
@@ -95,6 +97,7 @@ describe('GapsService', () => {
     service = new GapsService(
       configService,
       issueRepo,
+      issueSprintRepo,
       sprintRepo,
       boardConfigRepo,
       changelogRepo,
@@ -127,7 +130,6 @@ describe('GapsService', () => {
         boardId: 'ACC',
         issueType: 'Story',
         status: 'Done',
-        sprintId: 'sprint-1',
         epicKey: null,
         points: null,
         summary: 'Done issue',
@@ -153,7 +155,6 @@ describe('GapsService', () => {
         boardId: 'ACC',
         issueType: 'Story',
         status: 'Cancelled',
-        sprintId: 'sprint-1',
         epicKey: null,
         points: null,
         summary: 'Cancelled issue',
@@ -163,6 +164,35 @@ describe('GapsService', () => {
     const result = await service.getGaps();
 
     expect(result.noEpic).toHaveLength(0);
+  });
+
+  // ── D-3 regression (proposal 0055) ────────────────────────────────────────
+  // When an issue belongs to a board that has NO BoardConfig row at all,
+  // the per-issue cancelled-status fallback (gaps.service.ts line ~133)
+  // must default to ['Cancelled', "Won't Do"] — previously it defaulted to
+  // ['Cancelled'] only, leaving "Won't Do" issues incorrectly classified
+  // as gaps on un-configured boards.
+  it("excludes \"Won't Do\" issues even when their board has no BoardConfig (D-3 regression)", async () => {
+    boardConfigRepo.find.mockResolvedValue([]); // no config rows at all
+    sprintRepo.find.mockResolvedValue([
+      { id: 'sprint-1', boardId: 'XYZ', state: 'active', name: 'Sprint 1' } as JiraSprint,
+    ]);
+    issueRepo.find.mockResolvedValue([
+      {
+        key: 'XYZ-1',
+        boardId: 'XYZ',
+        issueType: 'Story',
+        status: "Won't Do",
+        epicKey: null,
+        points: null,
+        summary: "Won't Do issue on unconfigured board",
+      } as unknown as JiraIssue,
+    ]);
+
+    const result = await service.getGaps();
+
+    expect(result.noEpic).toHaveLength(0);
+    expect(result.noEstimate).toHaveLength(0);
   });
 
   it("excludes \"Won't Do\" issues from gaps (updated fallback)", async () => {
@@ -179,7 +209,6 @@ describe('GapsService', () => {
         boardId: 'ACC',
         issueType: 'Story',
         status: "Won't Do",
-        sprintId: 'sprint-1',
         epicKey: null,
         points: null,
         summary: "Won't do issue",
@@ -198,13 +227,15 @@ describe('GapsService', () => {
     sprintRepo.find.mockResolvedValue([
       { id: 'sprint-1', boardId: 'ACC', state: 'active', name: 'Sprint 1' } as JiraSprint,
     ]);
+    issueSprintRepo.find.mockResolvedValue([
+      { issueKey: 'ACC-1', sprintId: 'sprint-1' } as JiraIssueSprint,
+    ]);
     issueRepo.find.mockResolvedValue([
       {
         key: 'ACC-1',
         boardId: 'ACC',
         issueType: 'Story',
         status: 'In Progress',
-        sprintId: 'sprint-1',
         epicKey: null,
         points: 3,
         summary: 'No epic issue',
@@ -226,13 +257,15 @@ describe('GapsService', () => {
     sprintRepo.find.mockResolvedValue([
       { id: 'sprint-1', boardId: 'ACC', state: 'active', name: 'Sprint 1' } as JiraSprint,
     ]);
+    issueSprintRepo.find.mockResolvedValue([
+      { issueKey: 'ACC-1', sprintId: 'sprint-1' } as JiraIssueSprint,
+    ]);
     issueRepo.find.mockResolvedValue([
       {
         key: 'ACC-1',
         boardId: 'ACC',
         issueType: 'Story',
         status: 'In Progress',
-        sprintId: 'sprint-1',
         epicKey: 'ACC-0',
         points: null,
         summary: 'No estimate',
@@ -260,7 +293,6 @@ describe('GapsService', () => {
         boardId: 'PLAT',
         issueType: 'Story',
         status: 'In Progress',
-        sprintId: 'sprint-1',
         epicKey: 'PLAT-0',
         points: null,
         summary: 'Kanban issue',
@@ -284,8 +316,7 @@ describe('GapsService', () => {
         key: 'ACC-1',
         boardId: 'ACC',
         issueType: 'Story',
-        status: 'Backlog',
-        sprintId: null, // not in any sprint
+        status: 'Backlog', // not in any sprint
         epicKey: null,
         points: null,
         summary: 'Backlog issue',
@@ -311,7 +342,6 @@ describe('GapsService', () => {
         boardId: 'ACC',
         issueType: 'Epic',
         status: 'In Progress',
-        sprintId: 'sprint-1',
         epicKey: null,
         points: null,
         summary: 'Epic issue',
@@ -328,6 +358,7 @@ describe('GapsService', () => {
     service = new GapsService(
       mockConfigService('https://mycompany.atlassian.net'),
       issueRepo,
+      issueSprintRepo,
       sprintRepo,
       boardConfigRepo,
       changelogRepo,
@@ -339,13 +370,15 @@ describe('GapsService', () => {
     sprintRepo.find.mockResolvedValue([
       { id: 'sprint-1', boardId: 'ACC', state: 'active', name: 'Sprint 1' } as JiraSprint,
     ]);
+    issueSprintRepo.find.mockResolvedValue([
+      { issueKey: 'ACC-1', sprintId: 'sprint-1' } as JiraIssueSprint,
+    ]);
     issueRepo.find.mockResolvedValue([
       {
         key: 'ACC-1',
         boardId: 'ACC',
         issueType: 'Story',
         status: 'In Progress',
-        sprintId: 'sprint-1',
         epicKey: null,
         points: 3,
         summary: 'Issue',
@@ -364,13 +397,16 @@ describe('GapsService', () => {
     sprintRepo.find.mockResolvedValue([
       { id: 'sprint-1', boardId: 'ACC', state: 'active', name: 'Sprint 1' } as JiraSprint,
     ]);
+    issueSprintRepo.find.mockResolvedValue([
+      { issueKey: 'ACC-3', sprintId: 'sprint-1' } as JiraIssueSprint,
+      { issueKey: 'ACC-1', sprintId: 'sprint-1' } as JiraIssueSprint,
+    ]);
     issueRepo.find.mockResolvedValue([
       {
         key: 'ACC-3',
         boardId: 'ACC',
         issueType: 'Story',
         status: 'In Progress',
-        sprintId: 'sprint-1',
         epicKey: null,
         points: 3,
         summary: 'C',
@@ -380,7 +416,6 @@ describe('GapsService', () => {
         boardId: 'ACC',
         issueType: 'Story',
         status: 'In Progress',
-        sprintId: 'sprint-1',
         epicKey: null,
         points: 3,
         summary: 'A',
@@ -400,13 +435,15 @@ describe('GapsService', () => {
     sprintRepo.find.mockResolvedValue([
       { id: 'sprint-1', boardId: 'ACC', state: 'active', name: 'Sprint Alpha' } as JiraSprint,
     ]);
+    issueSprintRepo.find.mockResolvedValue([
+      { issueKey: 'ACC-1', sprintId: 'sprint-1' } as JiraIssueSprint,
+    ]);
     issueRepo.find.mockResolvedValue([
       {
         key: 'ACC-1',
         boardId: 'ACC',
         issueType: 'Story',
         status: 'In Progress',
-        sprintId: 'sprint-1',
         epicKey: null,
         points: 3,
         summary: 'Test',
@@ -500,8 +537,7 @@ describe('GapsService', () => {
       boardConfigRepo.findOne.mockResolvedValue(scrumConfig);
       const issue = makeIssue({
         key: 'ACC-10',
-        status: 'In Progress',
-        sprintId: 'sprint-1', // created directly in sprint — no Sprint changelog
+        status: 'In Progress', // created directly in sprint — no Sprint changelog
       });
       issueRepo.find.mockResolvedValue([issue]);
 
@@ -625,7 +661,6 @@ describe('GapsService', () => {
         key: 'SPS-454',
         status: 'Done',
         createdAt: new Date('2026-03-31T23:32:00Z'), // inside Q1 window
-        sprintId: 'sprint-q2',
       });
       issueRepo.find.mockResolvedValue([issue]);
 

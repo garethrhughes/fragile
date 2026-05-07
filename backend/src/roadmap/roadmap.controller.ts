@@ -29,6 +29,15 @@ export class RoadmapController {
     return this.roadmapService.getAccuracy(query.boardId, query.sprintId, query.quarter, query.week, query.weekMode);
   }
 
+  @ApiOperation({
+    summary:
+      'Per-epic roadmap coverage detail: primary idea, conflicting ideas with signed daysFromPrimary, resolvedSource, and coverageState. Mirrors /accuracy query params; currently scrum + sprintId only.',
+  })
+  @Get('epics')
+  async getEpicCoverage(@Query() query: RoadmapAccuracyQueryDto) {
+    return this.roadmapService.getEpicCoverage(query.boardId, query.sprintId);
+  }
+
   @ApiOperation({ summary: 'List all JPD roadmap config entries' })
   @Get('configs')
   async getConfigs() {

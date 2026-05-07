@@ -97,4 +97,38 @@ export class BoardConfig {
    */
   @Column({ type: 'simple-json', default: '[]' })
   roadmapLinkTypes!: string[];
+
+  /**
+   * Labels that identify a support ticket for this board
+   * (e.g. ["support", "triage"]).  An empty array disables label-based
+   * classification.  Used by the Support Ticket Report (ADR 0045).
+   */
+  @Column({ type: 'simple-json', default: '[]' })
+  supportLabels!: string[];
+
+  /**
+   * Jira issue link type name whose target points to the triage board
+   * (e.g. "clones").  Null disables link-based classification.
+   * Used together with `triageBoardKey` (ADR 0045).
+   */
+  @Column({ type: 'varchar', nullable: true, default: null })
+  supportLinkType!: string | null;
+
+  /**
+   * Project key prefix for the triage board (e.g. "TTB").  An issue is
+   * classified as support when a JiraIssueLink exists with
+   * `linkTypeName === supportLinkType` and
+   * `targetIssueKey.startsWith(triageBoardKey + '-')`.
+   * Null disables link-based classification.  (ADR 0045)
+   */
+  @Column({ type: 'varchar', nullable: true, default: null })
+  triageBoardKey!: string | null;
+
+  /**
+   * Epic keys whose child tickets count as support work
+   * (e.g. ["PROJ-1", "PROJ-2"]).  Comparison is case-insensitive.
+   * An empty array disables epic-based classification.  (ADR 0047)
+   */
+  @Column({ type: 'simple-json', default: '[]' })
+  supportEpics!: string[];
 }

@@ -44,6 +44,9 @@ export function CycleTimeTrendChart({ data }: CycleTimeTrendChartProps) {
 
   const chartData = data.map((p) => ({
     label: abbreviatePeriod(p.label),
+    // Pass null straight through — Recharts skips null points when
+    // connectNulls={false}, rendering empty periods as gaps rather than zero
+    // (proposal 0054 AC5; mirrors sprint-report fix per ADR 0053).
     median: p.medianCycleTimeDays,
     p85: p.p85CycleTimeDays,
   }))
@@ -96,6 +99,7 @@ export function CycleTimeTrendChart({ data }: CycleTimeTrendChartProps) {
             strokeWidth={2}
             dot={{ r: 3, fill: '#3b82f6' }}
             activeDot={{ r: 5 }}
+            connectNulls={false}
           />
           <Line
             type="monotone"
@@ -106,6 +110,7 @@ export function CycleTimeTrendChart({ data }: CycleTimeTrendChartProps) {
             strokeDasharray="5 3"
             dot={{ r: 3, fill: '#8b5cf6' }}
             activeDot={{ r: 5 }}
+            connectNulls={false}
           />
         </LineChart>
       </ResponsiveContainer>

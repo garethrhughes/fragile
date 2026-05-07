@@ -23,7 +23,7 @@ import { JiraSprint } from './jira-sprint.entity.js';
 
 /** Returns all index entries registered for a given entity class. */
 function indexEntriesFor(
-  entityClass: Function,
+  entityClass: new (...args: unknown[]) => unknown,
 ): Array<{ columns: string[] }> {
   return getMetadataArgsStorage()
     .indices.filter((idx) => idx.target === entityClass)

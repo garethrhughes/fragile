@@ -304,6 +304,10 @@ export class YamlConfigService implements OnApplicationBootstrap {
       if (roadmap.targetDateFieldId !== undefined) {
         payload.targetDateFieldId = roadmap.targetDateFieldId ?? null;
       }
+      // Default to 'earliest' when absent (proposal 0053). Setting the
+      // field explicitly on every upsert ensures rows seeded before the
+      // YAML key existed pick up the new default on next bootstrap.
+      payload.epicConflictResolution = roadmap.epicConflictResolution ?? 'earliest';
 
       // RoadmapConfig uses an auto-generated numeric PK (id).
       // The jpdKey column has a UNIQUE constraint, making it the conflict target.

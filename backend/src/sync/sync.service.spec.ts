@@ -4,6 +4,7 @@ import { DataSource, QueryRunner, Repository } from 'typeorm';
 import {
   JiraSprint,
   JiraIssue,
+  JiraIssueSprint,
   JiraChangelog,
   JiraVersion,
   SyncLog,
@@ -36,9 +37,9 @@ function mockJiraClient(): jest.Mocked<JiraClientService> {
     getBoardsForProject: jest.fn(),
     getSprints: jest.fn(),
     getSprintIssues: jest.fn(),
-    searchIssues: jest.fn(),
+    searchIssues: jest.fn().mockResolvedValue({ issues: [], nextPageToken: undefined }),
     getIssueChangelog: jest.fn(),
-    getProjectVersions: jest.fn(),
+    getProjectVersions: jest.fn().mockResolvedValue([]),
     getJpdIdeas: jest.fn(),
   } as unknown as jest.Mocked<JiraClientService>;
 }
@@ -94,6 +95,7 @@ describe('SyncService', () => {
   let jiraClient: jest.Mocked<JiraClientService>;
   let sprintRepo: jest.Mocked<Repository<JiraSprint>>;
   let issueRepo: jest.Mocked<Repository<JiraIssue>>;
+  let issueSprintRepo: jest.Mocked<Repository<JiraIssueSprint>>;
   let changelogRepo: jest.Mocked<Repository<JiraChangelog>>;
   let versionRepo: jest.Mocked<Repository<JiraVersion>>;
   let syncLogRepo: jest.Mocked<Repository<SyncLog>>;
@@ -110,6 +112,7 @@ describe('SyncService', () => {
     jiraClient = mockJiraClient();
     sprintRepo = mockRepo<JiraSprint>();
     issueRepo = mockRepo<JiraIssue>();
+    issueSprintRepo = mockRepo<JiraIssueSprint>();
     changelogRepo = mockRepo<JiraChangelog>();
     versionRepo = mockRepo<JiraVersion>();
     syncLogRepo = mockRepo<SyncLog>();
@@ -133,6 +136,7 @@ describe('SyncService', () => {
       jiraClient,
       sprintRepo,
       issueRepo,
+      issueSprintRepo,
       changelogRepo,
       versionRepo,
       syncLogRepo,
@@ -275,10 +279,9 @@ describe('SyncService', () => {
         ],
       } as never);
 
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 1,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1')],
+        nextPageToken: undefined,
       } as never);
 
       jiraClient.getIssueChangelog.mockResolvedValue({
@@ -316,7 +319,7 @@ describe('SyncService', () => {
       expect(jiraClient.getSprints).toHaveBeenCalledWith('99');
     });
 
-    it('passes configured extra fields to getSprintIssues', async () => {
+    it('passes configured extra fields to searchIssues (scrum JQL path)', async () => {
       const customFieldConfig: JiraFieldConfig = {
         ...defaultFieldConfig,
         storyPointsFieldIds: ['customfield_10106'],
@@ -327,20 +330,20 @@ describe('SyncService', () => {
       jiraClient.getSprints.mockResolvedValue({
         values: [{ id: 1, name: 'Sprint 1', state: 'active' }],
       } as never);
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 0,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [],
+        nextPageToken: undefined,
       } as never);
       jiraClient.getIssueChangelog.mockResolvedValue({ total: 0, maxResults: 100, values: [] } as never);
 
       await service.syncBoard('PROJ');
 
-      expect(jiraClient.getSprintIssues).toHaveBeenCalledWith(
-        '42',
-        '1',
+      expect(jiraClient.searchIssues).toHaveBeenCalledWith(
+        expect.stringContaining('PROJ'),
         0,
-        ['customfield_10106'],   // epicLinkFieldId null → not added
+        100,
+        undefined,
+        expect.arrayContaining(['customfield_10106']),
       );
     });
 
@@ -560,10 +563,9 @@ describe('SyncService', () => {
     });
 
     it('extracts story points from customfield_10016', async () => {
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 1,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1', { customfield_10016: 5 })],
+        nextPageToken: undefined,
       } as never);
 
       await service.syncBoard('PROJ');
@@ -573,10 +575,9 @@ describe('SyncService', () => {
     });
 
     it('extracts story points from customfield_10028 when 10016 absent', async () => {
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 1,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1', { customfield_10028: 8 })],
+        nextPageToken: undefined,
       } as never);
 
       await service.syncBoard('PROJ');
@@ -586,10 +587,9 @@ describe('SyncService', () => {
     });
 
     it('sets points to null when no story point field present', async () => {
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 1,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1')],
+        nextPageToken: undefined,
       } as never);
 
       await service.syncBoard('PROJ');
@@ -599,12 +599,11 @@ describe('SyncService', () => {
     });
 
     it('extracts epicKey from parent field when parent is an Epic', async () => {
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 1,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1', {
           parent: { key: 'PROJ-EPIC-1', fields: { issuetype: { name: 'Epic' } } },
         })],
+        nextPageToken: undefined,
       } as never);
 
       await service.syncBoard('PROJ');
@@ -614,13 +613,12 @@ describe('SyncService', () => {
     });
 
     it('falls back to customfield_10014 for epicKey when parent is not Epic', async () => {
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 1,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1', {
           parent: { key: 'PROJ-2', fields: { issuetype: { name: 'Story' } } },
           customfield_10014: 'PROJ-EPIC-2',
         })],
+        nextPageToken: undefined,
       } as never);
 
       await service.syncBoard('PROJ');
@@ -630,10 +628,9 @@ describe('SyncService', () => {
     });
 
     it('sets epicKey to null when no parent or customfield_10014', async () => {
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 1,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1')],
+        nextPageToken: undefined,
       } as never);
 
       await service.syncBoard('PROJ');
@@ -643,12 +640,11 @@ describe('SyncService', () => {
     });
 
     it('maps fixVersion from first fixVersions entry', async () => {
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 1,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1', {
           fixVersions: [{ id: '1', name: 'v1.0' }],
         })],
+        nextPageToken: undefined,
       } as never);
 
       await service.syncBoard('PROJ');
@@ -668,10 +664,9 @@ describe('SyncService', () => {
       };
       jiraFieldConfigRepo.findOne.mockResolvedValue(customFieldConfig);
 
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 1,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1', { customfield_10106: 13 })],
+        nextPageToken: undefined,
       } as never);
 
       await service.syncBoard('PROJ');
@@ -687,13 +682,12 @@ describe('SyncService', () => {
       };
       jiraFieldConfigRepo.findOne.mockResolvedValue(customFieldConfig);
 
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 1,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1', {
           // customfield_10014 is present but should be ignored
           customfield_10014: 'PROJ-EPIC-99',
         })],
+        nextPageToken: undefined,
       } as never);
 
       await service.syncBoard('PROJ');
@@ -709,12 +703,11 @@ describe('SyncService', () => {
       };
       jiraFieldConfigRepo.findOne.mockResolvedValue(customFieldConfig);
 
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 1,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1', {
           customfield_20001: 'PROJ-EPIC-77',
         })],
+        nextPageToken: undefined,
       } as never);
 
       await service.syncBoard('PROJ');
@@ -745,9 +738,7 @@ describe('SyncService', () => {
     });
 
     it('saves inward issue links', async () => {
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 1,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1', {
           issuelinks: [
             {
@@ -756,6 +747,7 @@ describe('SyncService', () => {
             },
           ],
         })],
+        nextPageToken: undefined,
       } as never);
 
       await service.syncBoard('PROJ');
@@ -768,9 +760,7 @@ describe('SyncService', () => {
     });
 
     it('saves outward issue links', async () => {
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 1,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1', {
           issuelinks: [
             {
@@ -779,6 +769,7 @@ describe('SyncService', () => {
             },
           ],
         })],
+        nextPageToken: undefined,
       } as never);
 
       await service.syncBoard('PROJ');
@@ -790,10 +781,9 @@ describe('SyncService', () => {
     });
 
     it('skips issues with no links', async () => {
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 1,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1', { issuelinks: [] })],
+        nextPageToken: undefined,
       } as never);
 
       await service.syncBoard('PROJ');
@@ -823,10 +813,9 @@ describe('SyncService', () => {
     });
 
     it('saves changelog entries when values returned', async () => {
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 1,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1')],
+        nextPageToken: undefined,
       } as never);
 
       jiraClient.getIssueChangelog.mockResolvedValue({
@@ -850,10 +839,9 @@ describe('SyncService', () => {
     });
 
     it('paginates changelog when total > maxResults', async () => {
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 1,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1')],
+        nextPageToken: undefined,
       } as never);
 
       let changelogCallCount = 0;
@@ -891,10 +879,9 @@ describe('SyncService', () => {
     });
 
     it('does not delete changelogs on pages after the first', async () => {
-      jiraClient.getSprintIssues.mockResolvedValue({
-        total: 1,
-        maxResults: 50,
+      jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1')],
+        nextPageToken: undefined,
       } as never);
 
       let changelogCallCount = 0;
@@ -1008,11 +995,11 @@ describe('SyncService', () => {
   });
 
   // -------------------------------------------------------------------------
-  // syncSprintIssues — pagination
+  // syncScrumIssuesByJql — pagination via nextPageToken
   // -------------------------------------------------------------------------
 
   describe('syncSprintIssues pagination', () => {
-    it('paginates until startAt >= total', async () => {
+    it('paginates until no nextPageToken', async () => {
       boardConfigRepo.findOne.mockResolvedValue({ boardId: 'PROJ', boardType: 'scrum' } as BoardConfig);
       jiraClient.getBoardsForProject.mockResolvedValue({ values: [{ id: 42, name: 'PROJ board', type: 'scrum' }] } as never);
       jiraClient.getSprints.mockResolvedValue({
@@ -1024,27 +1011,185 @@ describe('SyncService', () => {
       jiraClient.getIssueChangelog.mockResolvedValue({ total: 0, maxResults: 100, values: [] } as never);
       syncLogRepo.save.mockImplementation((log) => Promise.resolve(log as SyncLog));
 
-      let sprintIssueCallCount = 0;
-      jiraClient.getSprintIssues.mockImplementation(() => {
-        sprintIssueCallCount++;
-        if (sprintIssueCallCount === 1) {
+      let searchCallCount = 0;
+      jiraClient.searchIssues.mockImplementation(() => {
+        searchCallCount++;
+        if (searchCallCount === 1) {
           return Promise.resolve({
-            total: 2,
-            maxResults: 1,
             issues: [makeRawIssue('PROJ-1')],
+            nextPageToken: 'token-2',
           } as never);
         }
         return Promise.resolve({
-          total: 2,
-          maxResults: 1,
           issues: [makeRawIssue('PROJ-2')],
+          nextPageToken: undefined,
         } as never);
       });
 
       const log = await service.syncBoard('PROJ');
 
       expect(log.issueCount).toBe(2);
-      expect(jiraClient.getSprintIssues).toHaveBeenCalledTimes(2);
+      expect(jiraClient.searchIssues).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // syncScrumIssuesByJql — new JQL-based scrum issue sync (ADR 0048)
+  // -------------------------------------------------------------------------
+
+  describe('syncBoard (scrum — JQL path)', () => {
+    let issueSprint: jest.Mocked<Repository<JiraIssueSprint>>;
+
+    beforeEach(() => {
+      issueSprint = mockRepo<JiraIssueSprint>();
+      // Re-create service with the new issueSprint repo injected
+      service = new SyncService(
+        jiraClient,
+        sprintRepo,
+        issueRepo,
+        issueSprint,
+        changelogRepo,
+        versionRepo,
+        syncLogRepo,
+        boardConfigRepo,
+        roadmapConfigRepo,
+        jpdIdeaRepo,
+        issueLinkRepo,
+        sprintReportService,
+        jiraFieldConfigRepo,
+        lambdaInvoker,
+        dataSource,
+      );
+
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardId: 'PROJ',
+        boardType: 'scrum',
+      } as BoardConfig);
+      jiraClient.getBoardsForProject.mockResolvedValue({
+        values: [{ id: 42, name: 'PROJ board', type: 'scrum' }],
+      } as never);
+      jiraClient.getSprints.mockResolvedValue({
+        values: [
+          { id: 1, name: 'Sprint 1', state: 'closed', startDate: '2026-01-05T00:00:00Z', endDate: '2026-01-19T00:00:00Z' },
+        ],
+      } as never);
+      sprintRepo.upsert.mockResolvedValue(undefined as never);
+      issueRepo.upsert.mockResolvedValue(undefined as never);
+      issueSprint.delete.mockResolvedValue(undefined as never);
+      issueSprint.upsert.mockResolvedValue(undefined as never);
+      jiraClient.getIssueChangelog.mockResolvedValue({ total: 0, maxResults: 100, values: [] } as never);
+      jiraClient.getProjectVersions.mockResolvedValue([]);
+      syncLogRepo.save.mockImplementation((log) => Promise.resolve(log as SyncLog));
+    });
+
+    it('uses searchIssues (JQL) instead of getSprintIssues for scrum boards', async () => {
+      jiraClient.searchIssues.mockResolvedValue({
+        issues: [makeRawIssue('PROJ-1'), makeRawIssue('PROJ-2')],
+        nextPageToken: undefined,
+      } as never);
+
+      const log = await service.syncBoard('PROJ');
+
+      expect(log.status).toBe('success');
+      expect(log.issueCount).toBe(2);
+      expect(jiraClient.searchIssues).toHaveBeenCalled();
+      expect(jiraClient.getSprintIssues).not.toHaveBeenCalled();
+    });
+
+    it('includes cancelled / resolved issues that the agile endpoint would exclude', async () => {
+      jiraClient.searchIssues.mockResolvedValue({
+        issues: [
+          makeRawIssue('PROJ-1', { status: { id: '6', name: 'Cancelled' } }),
+          makeRawIssue('PROJ-2', { status: { id: '10002', name: 'Done' } }),
+          makeRawIssue('PROJ-3'),
+        ],
+        nextPageToken: undefined,
+      } as never);
+
+      const log = await service.syncBoard('PROJ');
+
+      expect(log.issueCount).toBe(3);
+      // All 3 keys passed to changelog sync
+      expect(jiraClient.getIssueChangelog).toHaveBeenCalledWith('PROJ-1', 0);
+      expect(jiraClient.getIssueChangelog).toHaveBeenCalledWith('PROJ-2', 0);
+      expect(jiraClient.getIssueChangelog).toHaveBeenCalledWith('PROJ-3', 0);
+    });
+
+    it('paginates JQL search until nextPageToken is exhausted', async () => {
+      let calls = 0;
+      jiraClient.searchIssues.mockImplementation(() => {
+        calls++;
+        if (calls === 1) {
+          return Promise.resolve({ issues: [makeRawIssue('PROJ-1')], nextPageToken: 'tok2' } as never);
+        }
+        return Promise.resolve({ issues: [makeRawIssue('PROJ-2')], nextPageToken: undefined } as never);
+      });
+
+      const log = await service.syncBoard('PROJ');
+
+      expect(log.issueCount).toBe(2);
+      expect(jiraClient.searchIssues).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not accumulate issues across pages — upserts per page', async () => {
+      let calls = 0;
+      jiraClient.searchIssues.mockImplementation(() => {
+        calls++;
+        if (calls === 1) {
+          return Promise.resolve({ issues: [makeRawIssue('PROJ-1')], nextPageToken: 'tok2' } as never);
+        }
+        return Promise.resolve({ issues: [makeRawIssue('PROJ-2')], nextPageToken: undefined } as never);
+      });
+
+      await service.syncBoard('PROJ');
+
+      // issueRepo.upsert must be called once per page (twice total), not once for all issues
+      expect(issueRepo.upsert).toHaveBeenCalledTimes(2);
+    });
+
+    it('upserts JiraIssueSprint rows for each issue from customfield_10020', async () => {
+      const issueWithSprints = makeRawIssue('PROJ-1', {
+        customfield_10020: [{ id: 1 }, { id: 2 }],
+      });
+      jiraClient.searchIssues.mockResolvedValue({
+        issues: [issueWithSprints],
+        nextPageToken: undefined,
+      } as never);
+
+      await service.syncBoard('PROJ');
+
+      // Existing sprint rows for PROJ-1 must be deleted then new ones inserted
+      expect(issueSprint.delete).toHaveBeenCalledWith({ issueKey: 'PROJ-1' });
+      expect(issueSprint.upsert).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ issueKey: 'PROJ-1', sprintId: '1' }),
+          expect.objectContaining({ issueKey: 'PROJ-1', sprintId: '2' }),
+        ]),
+        expect.anything(),
+      );
+    });
+
+    it('deletes JiraIssueSprint rows even when issue has no sprints (zero-membership cleanup)', async () => {
+      const issueNoSprints = makeRawIssue('PROJ-99', { customfield_10020: null });
+      jiraClient.searchIssues.mockResolvedValue({
+        issues: [issueNoSprints],
+        nextPageToken: undefined,
+      } as never);
+
+      await service.syncBoard('PROJ');
+
+      // Delete must run but upsert should not be called with sprint rows for this issue
+      expect(issueSprint.delete).toHaveBeenCalledWith({ issueKey: 'PROJ-99' });
+    });
+
+    it('marks sync as failed when JQL search throws — no fallback to agile endpoint', async () => {
+      jiraClient.searchIssues.mockRejectedValue(new Error('403 Forbidden'));
+
+      const log = await service.syncBoard('PROJ');
+
+      expect(log.status).toBe('failed');
+      expect(log.errorMessage).toBe('403 Forbidden');
+      expect(jiraClient.getSprintIssues).not.toHaveBeenCalled();
     });
   });
 

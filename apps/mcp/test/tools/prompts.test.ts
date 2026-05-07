@@ -10,6 +10,7 @@ import {
   buildSprintRetrospective,
   buildReleaseReadiness,
   buildQuarterlyPlanningReview,
+  buildSupportHealthReport,
 } from '../../src/prompts/index.js';
 
 const BOARDS = [
@@ -176,5 +177,50 @@ describe('Prompt templates', () => {
       expect(report).toContain('Roadmap Coverage');
       expect(report).toContain('Unplanned Work');
     });
+  });
+});
+
+describe('buildSupportHealthReport', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('renders section headings, support %, p50, p95, and per-board breakdown', async () => {
+    const summary = {
+      totalIssues: 100,
+      supportIssues: 15,
+      supportPercentage: 15,
+      p50Days: 3.5,
+      p95Days: 12,
+      byBoard: [
+        { boardId: 'ACC', supportIssues: 10, totalIssues: 60, percentage: 16.7 },
+        { boardId: 'BPT', supportIssues: 5, totalIssues: 40, percentage: 12.5 },
+      ],
+    };
+    mockApiGet
+      .mockResolvedValueOnce(mockSuccess(summary))       // summary
+      .mockResolvedValueOnce(mockSuccess(SYNC_STATUS));  // sync status
+
+    const report = await buildSupportHealthReport('2026-Q1');
+
+    expect(report).toContain('2026-Q1');
+    expect(report).toContain('15.0%');
+    expect(report).toContain('3.5');
+    expect(report).toContain('12.0');
+    expect(report).toContain('ACC');
+    expect(report).toContain('BPT');
+    expect(report).toContain('Data Freshness');
+    expect(report).toContain('Guidance');
+  });
+
+  it('handles unavailable summary gracefully', async () => {
+    mockApiGet
+      .mockRejectedValueOnce(new Error('Not found'))
+      .mockResolvedValueOnce(mockSuccess(SYNC_STATUS));
+
+    const report = await buildSupportHealthReport();
+
+    expect(report).toContain('unavailable');
+    expect(report).toContain('Guidance');
   });
 });

@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { QuarterDetailService } from './quarter-detail.service.js';
+import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
 import {
   JiraIssue,
   JiraChangelog,
@@ -93,6 +94,14 @@ describe('QuarterDetailService', () => {
       jpdIdeaRepo,
       issueLinkRepo,
       mockConfigService(),
+      // proposal 0055 C-2: SprintMembershipService now drives the Sprint
+      // changelog scan for board-entry dates. Real instance with stub repos
+      // — only firstSprintEntryDates() is exercised here.
+      new SprintMembershipService(
+        {} as never,
+        {} as never,
+        {} as never,
+      ),
     );
   });
 
@@ -375,6 +384,11 @@ describe('QuarterDetailService', () => {
         jpdIdeaRepo,
         issueLinkRepo,
         mockConfigService('https://myorg.atlassian.net'),
+        new SprintMembershipService(
+          {} as never,
+          {} as never,
+          {} as never,
+        ),
       );
 
       const sprintChangelog = makeChangelog({

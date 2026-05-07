@@ -6,6 +6,7 @@ import { JiraModule } from '../jira/jira.module.js';
 import {
   JiraSprint,
   JiraIssue,
+  JiraIssueSprint,
   JiraChangelog,
   JiraVersion,
   SyncLog,
@@ -26,6 +27,7 @@ import { MetricsModule } from '../metrics/metrics.module.js';
     TypeOrmModule.forFeature([
       JiraSprint,
       JiraIssue,
+      JiraIssueSprint,
       JiraChangelog,
       JiraVersion,
       SyncLog,

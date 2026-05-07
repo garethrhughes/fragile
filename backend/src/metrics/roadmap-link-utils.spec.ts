@@ -1,6 +1,7 @@
 import { Repository } from 'typeorm';
 import { JiraIssueLink, JpdIdea } from '../database/entities/index.js';
 import { buildDirectLinkIdeaMap } from './roadmap-link-utils.js';
+import { resolveEpicIdeas } from '../roadmap/resolve-epic-ideas.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -164,7 +165,7 @@ describe('buildDirectLinkIdeaMap', () => {
     expect(result.has('ACC-10')).toBe(false);
   });
 
-  it('uses the latest targetDate when issue is linked to multiple roadmap ideas', async () => {
+  it('uses the earliest targetDate when issue is linked to multiple roadmap ideas (default rule, proposal 0053)', async () => {
     const earlier = new Date('2026-03-31T00:00:00.000Z');
     const later = new Date('2026-09-30T00:00:00.000Z');
     const ideas = [makeIdea('PT-1', earlier), makeIdea('PT-2', later)];
@@ -180,6 +181,70 @@ describe('buildDirectLinkIdeaMap', () => {
       ['is connected to'],
     );
 
+    // Default behaviour after proposal 0053: strictest committed
+    // targetDate wins. Equivalent to passing an empty ruleByJpdKey.
+    expect(result.get('ACC-10')).toEqual({ targetDate: earlier });
+  });
+
+  it('honours epicConflictResolution="latest" override per jpdKey (proposal 0053)', async () => {
+    const earlier = new Date('2026-03-31T00:00:00.000Z');
+    const later = new Date('2026-09-30T00:00:00.000Z');
+    // Both ideas belong to the same JPD project (jpdKey 'PT', see makeIdea).
+    const ideas = [makeIdea('PT-1', earlier), makeIdea('PT-2', later)];
+    const links = [
+      makeLink('ACC-10', 'PT-1', 'is connected to'),
+      makeLink('ACC-10', 'PT-2', 'is connected to'),
+    ];
+    const ruleByJpdKey = new Map<'earliest' | 'latest', 'earliest' | 'latest'>() as unknown as Map<
+      string,
+      'earliest' | 'latest'
+    >;
+    ruleByJpdKey.set('PT', 'latest');
+
+    const result = await buildDirectLinkIdeaMap(
+      makeRepo(links),
+      ['ACC-10'],
+      ideas,
+      ['is connected to'],
+      ruleByJpdKey,
+    );
+
     expect(result.get('ACC-10')).toEqual({ targetDate: later });
+  });
+
+  it('AC6 parity — direct-link path picks the same primary as the epic-link path under the default rule', async () => {
+    // The epic-link path's primary picker is exercised by importing the
+    // shared helper directly. Both paths must route through it and so must
+    // agree on the primary idea given identical inputs.
+    const earlier = new Date('2026-03-31T00:00:00.000Z');
+    const later = new Date('2026-09-30T00:00:00.000Z');
+    const ideas = [makeIdea('PT-1', earlier), makeIdea('PT-2', later)];
+    // Give the ideas a startDate so resolveEpicIdeas accepts them too.
+    ideas[0].startDate = new Date('2026-01-01T00:00:00.000Z');
+    ideas[1].startDate = new Date('2026-01-01T00:00:00.000Z');
+    // Epic-path semantics: deliveryIssueKeys link the ideas to an "epic"
+    // (here we re-use ACC-10 as the linked key for parity).
+    ideas[0].deliveryIssueKeys = ['ACC-10'];
+    ideas[1].deliveryIssueKeys = ['ACC-10'];
+    const links = [
+      makeLink('ACC-10', 'PT-1', 'is connected to'),
+      makeLink('ACC-10', 'PT-2', 'is connected to'),
+    ];
+
+    // Direct-link path:
+    const directResult = await buildDirectLinkIdeaMap(
+      makeRepo(links),
+      ['ACC-10'],
+      ideas,
+      ['is connected to'],
+    );
+
+    // Epic-link path (in-memory):
+    const epicResult = resolveEpicIdeas(ideas, 'earliest');
+
+    expect(directResult.get('ACC-10')?.targetDate).toEqual(
+      epicResult.get('ACC-10')?.primaryIdea.targetDate,
+    );
+    expect(directResult.get('ACC-10')?.targetDate).toEqual(earlier);
   });
 });

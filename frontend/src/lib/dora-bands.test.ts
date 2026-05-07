@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import {
   classifyDeploymentFrequency,
   classifyLeadTime,
@@ -8,85 +10,91 @@ import {
   type DoraBand,
 } from './dora-bands';
 
-describe('classifyDeploymentFrequency', () => {
-  it('returns elite for >= 1 deploy/day', () => {
-    expect(classifyDeploymentFrequency(1)).toBe('elite');
+// Cross-suite boundary fixture (proposal 0052) — same JSON consumed by the
+// backend Jest spec at backend/src/metrics/dora-bands.spec.ts. Loaded via
+// fs so the two suites cannot drift through diverging tsconfig settings.
+interface FixtureCase {
+  value: number;
+  expected: DoraBand;
+  note: string;
+}
+
+interface Fixture {
+  deploymentFrequency: FixtureCase[];
+  leadTime: FixtureCase[];
+  changeFailureRate: FixtureCase[];
+  mttr: FixtureCase[];
+}
+
+// __dirname is frontend/src/lib at runtime; fixture is at <repo>/docs/dora-bands-fixture.json.
+const fixturePath = path.join(__dirname, '..', '..', '..', 'docs', 'dora-bands-fixture.json');
+const fixture = JSON.parse(readFileSync(fixturePath, 'utf8')) as Fixture;
+
+describe('DORA band classifiers — boundary fixture (proposal 0052)', () => {
+  describe('classifyDeploymentFrequency', () => {
+    it.each(fixture.deploymentFrequency)(
+      'value=$value -> $expected ($note)',
+      ({ value, expected }) => {
+        expect(classifyDeploymentFrequency(value)).toBe(expected);
+      },
+    );
+  });
+
+  describe('classifyLeadTime', () => {
+    it.each(fixture.leadTime)('value=$value -> $expected ($note)', ({ value, expected }) => {
+      expect(classifyLeadTime(value)).toBe(expected);
+    });
+  });
+
+  describe('classifyChangeFailureRate', () => {
+    it.each(fixture.changeFailureRate)(
+      'value=$value -> $expected ($note)',
+      ({ value, expected }) => {
+        expect(classifyChangeFailureRate(value)).toBe(expected);
+      },
+    );
+  });
+
+  describe('classifyMTTR', () => {
+    it.each(fixture.mttr)('value=$value -> $expected ($note)', ({ value, expected }) => {
+      expect(classifyMTTR(value)).toBe(expected);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mid-band sanity tests (no boundary values) and bandColor coverage —
+// retained from the original spec.
+// ---------------------------------------------------------------------------
+
+describe('classifyDeploymentFrequency — mid-band sanity', () => {
+  it('returns elite for clearly daily+', () => {
     expect(classifyDeploymentFrequency(5)).toBe('elite');
   });
 
-  it('returns high for >= 1/7 deploy/day', () => {
-    expect(classifyDeploymentFrequency(1 / 7)).toBe('high');
-    expect(classifyDeploymentFrequency(0.5)).toBe('high');
-  });
-
-  it('returns medium for >= 1/30 deploy/day', () => {
-    expect(classifyDeploymentFrequency(1 / 30)).toBe('medium');
-    expect(classifyDeploymentFrequency(0.1)).toBe('medium');
-  });
-
-  it('returns low for < 1/30 deploy/day', () => {
-    expect(classifyDeploymentFrequency(0.01)).toBe('low');
+  it('returns low for zero', () => {
     expect(classifyDeploymentFrequency(0)).toBe('low');
   });
 });
 
-describe('classifyLeadTime', () => {
-  it('returns elite for < 1 day', () => {
+describe('classifyLeadTime — mid-band sanity', () => {
+  it('returns elite for sub-day', () => {
     expect(classifyLeadTime(0.5)).toBe('elite');
-    expect(classifyLeadTime(0)).toBe('elite');
   });
 
-  it('returns high at exactly 1 day (boundary — not elite)', () => {
-    expect(classifyLeadTime(1)).toBe('high');
-  });
-
-  it('returns high for < 7 days', () => {
-    expect(classifyLeadTime(3)).toBe('high');
-  });
-
-  it('returns medium for <= 30 days', () => {
-    expect(classifyLeadTime(15)).toBe('medium');
-    expect(classifyLeadTime(30)).toBe('medium');
-  });
-
-  it('returns low for > 30 days', () => {
-    expect(classifyLeadTime(31)).toBe('low');
+  it('returns low for multi-month', () => {
     expect(classifyLeadTime(90)).toBe('low');
   });
 });
 
-describe('classifyChangeFailureRate', () => {
-  it('returns elite for < 5%', () => {
-    expect(classifyChangeFailureRate(2)).toBe('elite');
-  });
-
-  it('returns high for < 10%', () => {
-    expect(classifyChangeFailureRate(7)).toBe('high');
-  });
-
-  it('returns medium for < 15%', () => {
-    expect(classifyChangeFailureRate(12)).toBe('medium');
-  });
-
-  it('returns low for >= 15%', () => {
+describe('classifyChangeFailureRate — mid-band sanity', () => {
+  it('returns low for very high failure rates', () => {
     expect(classifyChangeFailureRate(20)).toBe('low');
   });
 });
 
-describe('classifyMTTR', () => {
-  it('returns elite for < 1 hour', () => {
-    expect(classifyMTTR(0.5)).toBe('elite');
-  });
-
-  it('returns high for < 24 hours', () => {
-    expect(classifyMTTR(12)).toBe('high');
-  });
-
-  it('returns medium for < 168 hours', () => {
-    expect(classifyMTTR(72)).toBe('medium');
-  });
-
-  it('returns low for >= 168 hours', () => {
+describe('classifyMTTR — mid-band sanity', () => {
+  it('returns low for week-long recovery', () => {
     expect(classifyMTTR(200)).toBe('low');
   });
 });

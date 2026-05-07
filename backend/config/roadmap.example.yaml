@@ -30,6 +30,16 @@
 #     Null means the target date is not mapped; ideas without a target date are
 #     excluded from roadmap coverage calculations.
 #     Default: null
+#
+#   epicConflictResolution (optional) — proposal 0053
+#     How to pick the primary idea when a single epic is linked to multiple
+#     JPD ideas with different targetDates.
+#       'earliest' — the strictest committed targetDate wins (default).
+#       'latest'   — the loosest committed targetDate wins (legacy pre-0053).
+#     The non-primary ideas are surfaced as `conflictingIdeas` on the
+#     per-epic detail endpoint (GET /api/roadmap/epics) with a ⚠ badge in
+#     the UI.
+#     Default: 'earliest'
 
 roadmaps:
   # --- Example: Discovery roadmap with date fields configured ---
@@ -37,9 +47,12 @@ roadmaps:
     description: "Discovery roadmap"
     startDateFieldId: "customfield_10015"
     targetDateFieldId: "customfield_10021"
+    # epicConflictResolution: earliest   # uncomment to override; default shown
 
   # --- Example: Strategic initiatives without date fields (dates managed in UI) ---
   - jpdKey: STRAT
     description: "Strategic initiatives"
     startDateFieldId: null
     targetDateFieldId: null
+    # epicConflictResolution: latest     # opt back into legacy behaviour
+

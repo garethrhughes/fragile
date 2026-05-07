@@ -14,6 +14,9 @@ export function classifyDeploymentFrequency(
  * DORA Lead Time for Changes band thresholds from the 2023 State of DevOps
  * report.
  *
+ * Boundaries are strict-less-than per proposal 0052 (e.g. 7.0 days is
+ * `medium`, not `high`). Mirrors `frontend/src/lib/dora-bands.ts`.
+ *
  * NOTE: This application measures cycle time, not the full DORA lead time
  * (commit → deploy).  The thresholds are re-applied to the cycle-time proxy
  * because it is the closest available signal without commit-level integration.
@@ -22,15 +25,19 @@ export function classifyDeploymentFrequency(
  */
 export function classifyLeadTime(medianDays: number): DoraBand {
   if (medianDays < 1) return 'elite';
-  if (medianDays <= 7) return 'high';
-  if (medianDays <= 30) return 'medium';
+  if (medianDays < 7) return 'high'; // proposal 0052: was `<= 7`
+  if (medianDays < 30) return 'medium'; // proposal 0052: was `<= 30`
   return 'low';
 }
 
+/**
+ * Boundaries are strict-less-than per proposal 0052 (e.g. 5% is `high`,
+ * not `elite`). Mirrors `frontend/src/lib/dora-bands.ts`.
+ */
 export function classifyChangeFailureRate(percentage: number): DoraBand {
-  if (percentage <= 5) return 'elite';
-  if (percentage <= 10) return 'high';
-  if (percentage <= 15) return 'medium';
+  if (percentage < 5) return 'elite'; // proposal 0052: was `<= 5`
+  if (percentage < 10) return 'high'; // proposal 0052: was `<= 10`
+  if (percentage < 15) return 'medium'; // proposal 0052: was `<= 15`
   return 'low';
 }
 

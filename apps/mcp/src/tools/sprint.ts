@@ -27,7 +27,7 @@ export function registerSprintTools(server: McpServer): void {
 
   server.tool(
     'get_sprint_report',
-    'Get the composite sprint report with scoring and recommendations for a sprint.',
+    'Get the composite sprint report with scoring and recommendations for a sprint. `compositeScore` and `compositeBand` may be `null` when no dimension produced a usable score; `excludedDimensions` lists dimensions reported as N/A and `totalWeightApplied` (0–1) reflects the renormalised weight basis used for the composite.',
     {
       boardId: z.string().describe('Board identifier'),
       sprintId: z.string().describe('Sprint ID'),
