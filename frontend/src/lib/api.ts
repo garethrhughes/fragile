@@ -457,6 +457,56 @@ export function getRoadmapAccuracy(params: {
   )
 }
 
+// Per-epic coverage detail — proposal 0053.
+
+export interface EpicCoveragePrimaryIdea {
+  ideaKey: string
+  ideaSummary: string | null
+  targetDate: string
+  startDate: string | null
+}
+
+export interface EpicCoverageConflictingIdea {
+  ideaKey: string
+  ideaSummary: string | null
+  targetDate: string
+  daysFromPrimary: number
+}
+
+export type EpicCoverageResolvedSource = 'deliveryIssueKeys' | 'directLink' | 'none'
+
+export type EpicCoverageState = 'green' | 'amber' | 'red' | 'unlinked'
+
+export interface EpicCoverageDetail {
+  epicKey: string
+  epicSummary: string | null
+  primaryIdea: EpicCoveragePrimaryIdea | null
+  conflictingIdeas: EpicCoverageConflictingIdea[]
+  resolvedSource: EpicCoverageResolvedSource
+  coverageState: EpicCoverageState
+}
+
+export interface RoadmapEpicsResponse {
+  epics: EpicCoverageDetail[]
+  conflictCount: number
+}
+
+export function getRoadmapEpics(params: {
+  boardId: string
+  sprintId?: string
+  quarter?: string
+  week?: string
+}): Promise<RoadmapEpicsResponse> {
+  return apiFetch(
+    `/api/roadmap/epics${toQueryString({
+      boardId: params.boardId,
+      sprintId: params.sprintId,
+      quarter: params.quarter,
+      week: params.week,
+    })}`,
+  )
+}
+
 export function getRoadmapConfigs(): Promise<RoadmapConfig[]> {
   return apiFetch('/api/roadmap/configs');
 }
