@@ -305,6 +305,43 @@ describe('PlanningService', () => {
       expect(result[0].scopeChangePercent).toBe(50);
     });
 
+    // ── Proposal 0050 regression ──────────────────────────────────────────
+    // Five issues are added mid-sprint then removed before sprint end. Under
+    // the old single-`removedKeys` shape these issues appeared in BOTH
+    // `addedKeys` and `removedKeys`, double-counting them in
+    // `scopeChange% = (added + removed) / commitment * 100`.
+    //
+    // After the split, `removed` is committed-removed only — so
+    // add-then-remove churn contributes via `added` exactly once.
+    it('does not double-count add-then-remove churn in scopeChangePercent (proposal 0050)', async () => {
+      setBoardSprints([sprint]);
+
+      issueRepo.find.mockResolvedValue([
+        { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', status: 'To Do', points: null, createdAt: new Date('2024-12-01') },
+        { key: 'ACC-2', boardId: 'ACC', issueType: 'Story', status: 'To Do', points: null, createdAt: new Date('2024-12-01') },
+        { key: 'ACC-3', boardId: 'ACC', issueType: 'Story', status: 'To Do', points: null, createdAt: new Date('2024-12-01') },
+        { key: 'ACC-4', boardId: 'ACC', issueType: 'Story', status: 'To Do', points: null, createdAt: new Date('2024-12-01') },
+      ] as unknown as JiraIssue[]);
+
+      membershipReconstruct.mockResolvedValue({
+        committedKeys: new Set(['ACC-1', 'ACC-2', 'ACC-3', 'ACC-4']),
+        addedKeys: new Set(['ACC-5', 'ACC-6', 'ACC-7', 'ACC-8', 'ACC-9']),
+        addedRemovedKeys: new Set(['ACC-5', 'ACC-6', 'ACC-7', 'ACC-8', 'ACC-9']),
+        committedRemovedKeys: new Set<string>(),
+        currentMemberKeys: new Set(['ACC-1', 'ACC-2', 'ACC-3', 'ACC-4']),
+        logsByIssue: new Map(),
+      });
+
+      const result = await service.getAccuracy('ACC');
+
+      expect(result[0].commitment).toBe(4);
+      expect(result[0].added).toBe(5);    // gross
+      expect(result[0].removed).toBe(0);  // no committed-removed
+      // (5 added + 0 committed-removed) / 4 * 100 = 125
+      // (NOT the buggy (5 + 5) / 4 * 100 = 250)
+      expect(result[0].scopeChangePercent).toBe(125);
+    });
+
     it('computes points-based planningAccuracy when issues have story points', async () => {
       setBoardSprints([sprint]);
 

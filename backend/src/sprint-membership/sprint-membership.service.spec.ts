@@ -1,10 +1,12 @@
 import { Repository } from 'typeorm';
 import {
   SprintMembershipService,
+  SprintMembership,
   sprintIdContains,
   sprintValueContains,
   wasInSprintAtDate,
   isCarryOverFromSprint,
+  summariseMembership,
 } from './sprint-membership.service.js';
 import {
   JiraSprint,
@@ -642,5 +644,211 @@ describe('SprintMembershipService.firstSprintEntryDates', () => {
       changelogsByIssue: new Map(),
     });
     expect(result.size).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Proposal 0050: removed-set semantics
+// ---------------------------------------------------------------------------
+
+describe('disjoint removed-set semantics (proposal 0050)', () => {
+  let service: SprintMembershipService;
+  let sprintRepo: jest.Mocked<Repository<JiraSprint>>;
+  let issueSprintRepo: jest.Mocked<Repository<JiraIssueSprint>>;
+  let changelogRepo: jest.Mocked<Repository<JiraChangelog>>;
+
+  beforeEach(() => {
+    sprintRepo = mockRepo<JiraSprint>();
+    issueSprintRepo = mockRepo<JiraIssueSprint>();
+    changelogRepo = mockRepo<JiraChangelog>();
+    service = new SprintMembershipService(
+      sprintRepo,
+      issueSprintRepo,
+      changelogRepo,
+    );
+  });
+
+  function setChangelogs(rows: JiraChangelog[]): void {
+    changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue(rows),
+    });
+  }
+
+  function setCurrentMembers(rows: { issueKey: string }[]): void {
+    issueSprintRepo.find.mockResolvedValue(
+      rows.map((r) => ({ ...r, sprintId: sprint.id })) as JiraIssueSprint[],
+    );
+  }
+
+  it('committed-then-removed appears only in committedRemovedKeys', async () => {
+    setChangelogs([
+      makeChangelog({
+        issueKey: 'ACC-71',
+        toId: '3941',
+        changedAt: new Date('2025-01-31T23:55:00Z'), // committed at start
+      }),
+      makeChangelog({
+        issueKey: 'ACC-71',
+        fromId: '3941',
+        toId: null,
+        changedAt: new Date('2025-02-10T10:00:00Z'), // removed mid-sprint
+      }),
+    ]);
+    sprintRepo.find.mockResolvedValue([]);
+    setCurrentMembers([]);
+
+    const result = await service.reconstruct({
+      sprint,
+      boardId: 'ACC',
+      boardIssues: [makeIssue({ key: 'ACC-71', createdAt: new Date('2025-01-10') })],
+    });
+
+    expect(result.committedKeys.has('ACC-71')).toBe(true);
+    expect(result.committedRemovedKeys.has('ACC-71')).toBe(true);
+    expect(result.addedRemovedKeys.has('ACC-71')).toBe(false);
+  });
+
+  it('added-then-removed appears only in addedRemovedKeys', async () => {
+    setChangelogs([
+      makeChangelog({
+        issueKey: 'ACC-72',
+        fromId: null,
+        toId: '3941',
+        changedAt: new Date('2025-02-05T10:00:00Z'), // added mid-sprint
+      }),
+      makeChangelog({
+        issueKey: 'ACC-72',
+        fromId: '3941',
+        toId: null,
+        changedAt: new Date('2025-02-10T10:00:00Z'), // removed before end
+      }),
+    ]);
+    sprintRepo.find.mockResolvedValue([]);
+    setCurrentMembers([]);
+
+    const result = await service.reconstruct({
+      sprint,
+      boardId: 'ACC',
+      boardIssues: [makeIssue({ key: 'ACC-72', createdAt: new Date('2025-01-10') })],
+    });
+
+    expect(result.addedKeys.has('ACC-72')).toBe(true);
+    expect(result.addedRemovedKeys.has('ACC-72')).toBe(true);
+    expect(result.committedRemovedKeys.has('ACC-72')).toBe(false);
+  });
+
+  it('property: committedRemovedKeys ⊆ committedKeys, addedRemovedKeys ⊆ addedKeys, and the two are disjoint', async () => {
+    setChangelogs([
+      // ACC-A: committed-then-removed
+      makeChangelog({ issueKey: 'ACC-A', toId: '3941', changedAt: new Date('2025-01-31T23:55:00Z') }),
+      makeChangelog({ issueKey: 'ACC-A', fromId: '3941', toId: null, changedAt: new Date('2025-02-08T10:00:00Z') }),
+      // ACC-B: added-then-removed
+      makeChangelog({ issueKey: 'ACC-B', toId: '3941', changedAt: new Date('2025-02-04T10:00:00Z') }),
+      makeChangelog({ issueKey: 'ACC-B', fromId: '3941', toId: null, changedAt: new Date('2025-02-09T10:00:00Z') }),
+      // ACC-C: committed and stayed
+      makeChangelog({ issueKey: 'ACC-C', toId: '3941', changedAt: new Date('2025-01-31T23:55:00Z') }),
+      // ACC-D: added and stayed
+      makeChangelog({ issueKey: 'ACC-D', toId: '3941', changedAt: new Date('2025-02-05T10:00:00Z') }),
+    ]);
+    sprintRepo.find.mockResolvedValue([]);
+    setCurrentMembers([{ issueKey: 'ACC-C' }, { issueKey: 'ACC-D' }]);
+
+    const result = await service.reconstruct({
+      sprint,
+      boardId: 'ACC',
+      boardIssues: [
+        makeIssue({ key: 'ACC-A', createdAt: new Date('2025-01-10') }),
+        makeIssue({ key: 'ACC-B', createdAt: new Date('2025-01-10') }),
+        makeIssue({ key: 'ACC-C', createdAt: new Date('2025-01-10') }),
+        makeIssue({ key: 'ACC-D', createdAt: new Date('2025-01-10') }),
+      ],
+    });
+
+    // Disjointness
+    for (const k of result.committedRemovedKeys) {
+      expect(result.addedRemovedKeys.has(k)).toBe(false);
+    }
+    // Subset relations
+    for (const k of result.committedRemovedKeys) {
+      expect(result.committedKeys.has(k)).toBe(true);
+    }
+    for (const k of result.addedRemovedKeys) {
+      expect(result.addedKeys.has(k)).toBe(true);
+    }
+    // Concrete expectations
+    expect(result.committedRemovedKeys.has('ACC-A')).toBe(true);
+    expect(result.addedRemovedKeys.has('ACC-B')).toBe(true);
+    expect(result.committedRemovedKeys.has('ACC-C')).toBe(false);
+    expect(result.addedRemovedKeys.has('ACC-D')).toBe(false);
+  });
+});
+
+describe('summariseMembership', () => {
+  function membership(parts: Partial<SprintMembership>): SprintMembership {
+    return {
+      committedKeys: new Set<string>(),
+      addedKeys: new Set<string>(),
+      committedRemovedKeys: new Set<string>(),
+      addedRemovedKeys: new Set<string>(),
+      currentMemberKeys: new Set<string>(),
+      logsByIssue: new Map<string, JiraChangelog[]>(),
+      ...parts,
+    };
+  }
+
+  it('reports gross addedCount and netAddedCount separately', () => {
+    const s = summariseMembership(
+      membership({
+        committedKeys: new Set(['A', 'B']),
+        addedKeys: new Set(['C', 'D', 'E']),
+        addedRemovedKeys: new Set(['E']),
+        currentMemberKeys: new Set(['A', 'B', 'C', 'D']),
+      }),
+    );
+    expect(s.commitmentCount).toBe(2);
+    expect(s.addedCount).toBe(3);       // gross
+    expect(s.netAddedCount).toBe(2);    // 3 added − 1 removed
+    expect(s.removedCount).toBe(0);     // no committed-removed
+    expect(s.finalSetSize).toBe(4);
+  });
+
+  it('counts only committedRemoved in removedCount', () => {
+    const s = summariseMembership(
+      membership({
+        committedKeys: new Set(['A', 'B', 'C']),
+        committedRemovedKeys: new Set(['C']),
+        addedKeys: new Set(['D', 'E']),
+        addedRemovedKeys: new Set(['E']),
+        currentMemberKeys: new Set(['A', 'B', 'D']),
+      }),
+    );
+    expect(s.removedCount).toBe(1);
+  });
+
+  it('scopeChangePercent uses gross addedKeys + committedRemovedKeys / commitment', () => {
+    const s = summariseMembership(
+      membership({
+        committedKeys: new Set(['A', 'B', 'C', 'D']),
+        addedKeys: new Set(['E', 'F', 'G', 'H', 'I']),
+        addedRemovedKeys: new Set(['E', 'F', 'G', 'H', 'I']),
+        committedRemovedKeys: new Set<string>(),
+        currentMemberKeys: new Set(['A', 'B', 'C', 'D']),
+      }),
+    );
+    // (5 added + 0 committed-removed) / 4 * 100 = 125
+    expect(s.scopeChangePercent).toBe(125);
+  });
+
+  it('returns 0 scopeChangePercent when commitment is 0', () => {
+    const s = summariseMembership(
+      membership({
+        addedKeys: new Set(['A']),
+        currentMemberKeys: new Set(['A']),
+      }),
+    );
+    expect(s.scopeChangePercent).toBe(0);
   });
 });
