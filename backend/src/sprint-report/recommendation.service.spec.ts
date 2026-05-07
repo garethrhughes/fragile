@@ -472,4 +472,90 @@ describe('RecommendationService', () => {
       }
     });
   });
+
+  // -------------------------------------------------------------------------
+  // N/A propagation (proposal 0051 / ADR 0053)
+  //
+  // When a DORA-derived input is null, the corresponding rules MUST be skipped
+  // — we never coerce a missing value into a synthesised recommendation. Lead
+  // time has its own dedicated null-signal rule (LT-005); the other three
+  // dimensions silently emit no recommendation when their input is null.
+  // -------------------------------------------------------------------------
+
+  describe('N/A propagation for DORA inputs', () => {
+    it('skips all DF rules when deploymentsPerDay is null', () => {
+      const recs = service.recommend(baseCtx({ deploymentsPerDay: null }));
+      const dfRecs = recs.filter((r) => r.id.startsWith('DF-'));
+      expect(dfRecs).toHaveLength(0);
+    });
+
+    it('skips all CFR rules when changeFailureRate is null', () => {
+      const recs = service.recommend(baseCtx({ changeFailureRate: null }));
+      const cfrRecs = recs.filter((r) => r.id.startsWith('CFR-'));
+      expect(cfrRecs).toHaveLength(0);
+    });
+
+    it('skips MT-001..MT-004 when medianMttrHours is null (MT-005 still fires when no incidents)', () => {
+      const recs = service.recommend(
+        baseCtx({ medianMttrHours: null, incidentCount: 0 }),
+      );
+      const mtRecs = recs.filter((r) => r.id.startsWith('MT-'));
+      // MT-005 fires on incidentCount===0 and does not depend on MTTR
+      expect(mtRecs.map((r) => r.id)).toEqual(['MT-005']);
+    });
+
+    it('skips ALL MT rules when medianMttrHours is null AND incidents > 0', () => {
+      const recs = service.recommend(
+        baseCtx({ medianMttrHours: null, incidentCount: 3 }),
+      );
+      const mtRecs = recs.filter((r) => r.id.startsWith('MT-'));
+      expect(mtRecs).toHaveLength(0);
+    });
+
+    it('still fires LT-005 when medianLeadTimeDays is null (existing behaviour)', () => {
+      const recs = service.recommend(baseCtx({ medianLeadTimeDays: null }));
+      expect(ids(recs)).toContain('LT-005');
+    });
+
+    // Composite assertion: a sprint with all-null DORA inputs produces zero
+    // DORA-derived recommendations (DF/CFR/MT) but still emits the non-DORA
+    // rules — delivery rate, scope stability, roadmap coverage — and the
+    // dedicated null-signal rules LT-005 (lead time absent) and MT-005 (no
+    // incidents).
+    it('all-null DORA inputs produce no DORA-derived recommendations (DF/CFR/MT-001..004), but non-DORA recommendations still fire', () => {
+      const recs = service.recommend(
+        baseCtx({
+          // All DORA inputs absent
+          medianLeadTimeDays: null,
+          deploymentsPerDay: null,
+          changeFailureRate: null,
+          medianMttrHours: null,
+          incidentCount: 0,
+          // Healthy non-DORA inputs
+          deliveryRate: 1.0,
+          inScopeCount: 10,
+          committedCount: 10,
+          addedMidSprintCount: 0,
+          removedCount: 0,
+          roadmapCoverage: 90,
+        }),
+      );
+
+      // No DF rule fires
+      expect(recs.filter((r) => r.id.startsWith('DF-'))).toHaveLength(0);
+      // No CFR rule fires
+      expect(recs.filter((r) => r.id.startsWith('CFR-'))).toHaveLength(0);
+      // No MT-001..004 rules fire (only the no-incidents MT-005 may)
+      expect(
+        recs.filter((r) => r.id.startsWith('MT-') && r.id !== 'MT-005'),
+      ).toHaveLength(0);
+
+      // Non-DORA recommendations still emitted
+      expect(ids(recs)).toContain('DR-004'); // delivery rate >= 1.0
+      expect(ids(recs)).toContain('SS-004'); // excellent scope stability
+      expect(ids(recs)).toContain('RC-004'); // strong roadmap alignment
+      // Lead time has its own dedicated null-signal rule
+      expect(ids(recs)).toContain('LT-005');
+    });
+  });
 });

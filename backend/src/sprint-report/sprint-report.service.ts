@@ -246,10 +246,13 @@ export class SprintReportService {
       addedMidSprintCount,
       removedCount,
       roadmapCoverage,
+      // Pass DORA values through as-is; null means "no signal". Rules consuming
+      // these fields are responsible for skipping when null
+      // (proposal 0051 / ADR 0053).
       medianLeadTimeDays,
-      deploymentsPerDay: deploymentsPerDay ?? 0,
-      changeFailureRate: changeFailureRate ?? 0,
-      medianMttrHours: medianMttrHours ?? 0,
+      deploymentsPerDay,
+      changeFailureRate,
+      medianMttrHours,
       incidentCount: summary.incidentCount,
       scores,
     };

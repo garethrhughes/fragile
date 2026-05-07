@@ -8,10 +8,13 @@ export interface RecommendationContext {
   addedMidSprintCount: number;
   removedCount: number;
   roadmapCoverage: number;
+  // DORA inputs are nullable: null means "no signal" (proposal 0051 / ADR 0053).
+  // Rules that depend on a null field are skipped — we never coerce a missing
+  // value to 0 or 9999, because that would synthesise a false recommendation.
   medianLeadTimeDays: number | null;
-  deploymentsPerDay: number;
-  changeFailureRate: number;
-  medianMttrHours: number;
+  deploymentsPerDay: number | null;
+  changeFailureRate: number | null;
+  medianMttrHours: number | null;
   incidentCount: number;
   scores: SprintDimensionScores;
 }
@@ -210,76 +213,95 @@ export class RecommendationService {
 
     // -------------------------------------------------------------------------
     // Deployment Frequency (DF-001 … DF-004)
+    // Skipped entirely when deploymentsPerDay is null (proposal 0051 / ADR 0053).
     // -------------------------------------------------------------------------
     {
       id: 'DF-001',
       dimension: 'deploymentFrequency',
       severity: 'critical',
-      condition: (ctx) => ctx.deploymentsPerDay < 1 / 30,
+      condition: (ctx) => ctx.deploymentsPerDay !== null && ctx.deploymentsPerDay < 1 / 30,
       messageTemplate: 'Deployment frequency is below monthly. Invest in CI/CD automation and reduce batch sizes.',
     },
     {
       id: 'DF-002',
       dimension: 'deploymentFrequency',
       severity: 'warning',
-      condition: (ctx) => ctx.deploymentsPerDay >= 1 / 30 && ctx.deploymentsPerDay < 1 / 7,
+      condition: (ctx) =>
+        ctx.deploymentsPerDay !== null &&
+        ctx.deploymentsPerDay >= 1 / 30 &&
+        ctx.deploymentsPerDay < 1 / 7,
       messageTemplate: 'Deploying less than weekly. Break down changes into smaller releasable increments.',
     },
     {
       id: 'DF-003',
       dimension: 'deploymentFrequency',
       severity: 'info',
-      condition: (ctx) => ctx.deploymentsPerDay >= 1 / 7 && ctx.deploymentsPerDay < 1,
+      condition: (ctx) =>
+        ctx.deploymentsPerDay !== null &&
+        ctx.deploymentsPerDay >= 1 / 7 &&
+        ctx.deploymentsPerDay < 1,
       messageTemplate: 'Deploying at least weekly — high band. Work toward daily deployment cadence.',
     },
     {
       id: 'DF-004',
       dimension: 'deploymentFrequency',
       severity: 'info',
-      condition: (ctx) => ctx.deploymentsPerDay >= 1,
+      condition: (ctx) => ctx.deploymentsPerDay !== null && ctx.deploymentsPerDay >= 1,
       messageTemplate: 'Elite deployment frequency (daily or better). Maintain with robust automated testing.',
     },
 
     // -------------------------------------------------------------------------
     // Change Failure Rate (CFR-001 … CFR-004)
+    // Skipped entirely when changeFailureRate is null (proposal 0051 / ADR 0053).
     // -------------------------------------------------------------------------
     {
       id: 'CFR-001',
       dimension: 'changeFailureRate',
       severity: 'critical',
-      condition: (ctx) => ctx.changeFailureRate > 15,
+      condition: (ctx) => ctx.changeFailureRate !== null && ctx.changeFailureRate > 15,
       messageTemplate: 'Change failure rate of {pct}% is critical. Strengthen pre-deployment testing and rollback procedures.',
     },
     {
       id: 'CFR-002',
       dimension: 'changeFailureRate',
       severity: 'warning',
-      condition: (ctx) => ctx.changeFailureRate > 10 && ctx.changeFailureRate <= 15,
+      condition: (ctx) =>
+        ctx.changeFailureRate !== null &&
+        ctx.changeFailureRate > 10 &&
+        ctx.changeFailureRate <= 15,
       messageTemplate: 'Change failure rate of {pct}% exceeds the 10% threshold. Review test coverage and deployment quality gates.',
     },
     {
       id: 'CFR-003',
       dimension: 'changeFailureRate',
       severity: 'info',
-      condition: (ctx) => ctx.changeFailureRate > 5 && ctx.changeFailureRate <= 10,
+      condition: (ctx) =>
+        ctx.changeFailureRate !== null &&
+        ctx.changeFailureRate > 5 &&
+        ctx.changeFailureRate <= 10,
       messageTemplate: 'Change failure rate of {pct}% is in the high band. Consider additional integration or smoke tests.',
     },
     {
       id: 'CFR-004',
       dimension: 'changeFailureRate',
       severity: 'info',
-      condition: (ctx) => ctx.changeFailureRate <= 5,
+      condition: (ctx) => ctx.changeFailureRate !== null && ctx.changeFailureRate <= 5,
       messageTemplate: 'Elite change failure rate of {pct}%. Continue current quality practices.',
     },
 
     // -------------------------------------------------------------------------
     // MTTR (MT-001 … MT-005)
+    // MT-001..004 skipped when medianMttrHours is null (proposal 0051 / ADR 0053).
+    // MT-005 still fires when incidentCount === 0 — it does not depend on MTTR.
     // -------------------------------------------------------------------------
     {
       id: 'MT-001',
       dimension: 'mttr',
       severity: 'critical',
-      condition: (ctx) => ctx.incidentCount > 0 && ctx.medianMttrHours >= 168,
+      condition: (ctx) =>
+        ctx.incidentCount > 0 &&
+        ctx.medianMttrHours !== null &&
+        ctx.medianMttrHours >= 168,
       messageTemplate: 'Median MTTR of {n} hours exceeds 7 days. Establish an on-call rotation and incident runbooks immediately.',
     },
     {
@@ -288,6 +310,7 @@ export class RecommendationService {
       severity: 'warning',
       condition: (ctx) =>
         ctx.incidentCount > 0 &&
+        ctx.medianMttrHours !== null &&
         ctx.medianMttrHours >= 24 &&
         ctx.medianMttrHours < 168,
       messageTemplate: 'Median MTTR of {n} hours is in the medium band. Define SLOs and automate alerting to reduce recovery time.',
@@ -298,6 +321,7 @@ export class RecommendationService {
       severity: 'info',
       condition: (ctx) =>
         ctx.incidentCount > 0 &&
+        ctx.medianMttrHours !== null &&
         ctx.medianMttrHours >= 1 &&
         ctx.medianMttrHours < 24,
       messageTemplate: 'Median MTTR of {n} hours is good. Invest in observability to achieve sub-hour recovery.',
@@ -306,7 +330,10 @@ export class RecommendationService {
       id: 'MT-004',
       dimension: 'mttr',
       severity: 'info',
-      condition: (ctx) => ctx.incidentCount > 0 && ctx.medianMttrHours < 1,
+      condition: (ctx) =>
+        ctx.incidentCount > 0 &&
+        ctx.medianMttrHours !== null &&
+        ctx.medianMttrHours < 1,
       messageTemplate: 'Elite MTTR of {n} hours. Ensure incident post-mortems are conducted to sustain this performance.',
     },
     {
@@ -360,7 +387,9 @@ export class RecommendationService {
           return String(Math.round(ctx.roadmapCoverage * 10) / 10);
         }
         if (template.includes('failure rate') || template.includes('CFR') || template.includes('Change failure')) {
-          return String(Math.round(ctx.changeFailureRate * 10) / 10);
+          // Rules that include this template are guarded by a non-null check;
+          // fall back to '0' if somehow invoked with null (defensive).
+          return String(Math.round((ctx.changeFailureRate ?? 0) * 10) / 10);
         }
         return '0';
       })
@@ -369,7 +398,8 @@ export class RecommendationService {
           return String(Math.round((ctx.medianLeadTimeDays ?? 0) * 10) / 10);
         }
         if (template.includes('MTTR') || template.includes('Median MTTR')) {
-          return String(Math.round(ctx.medianMttrHours * 10) / 10);
+          // MTTR rules are guarded by `medianMttrHours !== null`.
+          return String(Math.round((ctx.medianMttrHours ?? 0) * 10) / 10);
         }
         if (template.includes('Scope changed') || template.includes('scope changed')) {
           const n = ctx.committedCount > 0
