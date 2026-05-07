@@ -70,7 +70,7 @@ function emptyMembership(): SprintMembership {
     committedKeys: new Set<string>(),
     addedKeys: new Set<string>(),
     committedRemovedKeys: new Set<string>(),
-        addedRemovedKeys: new Set<string>(),
+    addedRemovedKeys: new Set<string>(),
     currentMemberKeys: new Set<string>(),
     logsByIssue: new Map<string, JiraChangelog[]>(),
   };
@@ -85,7 +85,7 @@ function committedMembership(keys: string[]): SprintMembership {
     committedKeys: new Set(keys),
     addedKeys: new Set<string>(),
     committedRemovedKeys: new Set<string>(),
-        addedRemovedKeys: new Set<string>(),
+    addedRemovedKeys: new Set<string>(),
     currentMemberKeys: new Set(keys),
     logsByIssue: new Map(keys.map((k) => [k, [] as JiraChangelog[]])),
   };

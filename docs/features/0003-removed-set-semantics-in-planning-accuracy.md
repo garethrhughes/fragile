@@ -1,9 +1,10 @@
 # 0003 — Removed-Set Semantics in Planning Accuracy
 
 **Date:** 2026-05-07
-**Status:** Draft
+**Status:** Implemented
 **Source:** Manual (driven by proposal 0050)
 **Related proposal:** docs/proposals/0050-removed-set-semantics-in-planning-accuracy.md
+**Related decision:** docs/decisions/0052-disjoint-removed-set-semantics.md
 
 ## Summary
 
@@ -91,3 +92,18 @@ sprint.
 - No schema changes, no migration, no infra changes, no API surface change beyond
   corrected numeric values for existing fields.
 - No new dependencies.
+
+## Implementation
+
+- `dc9823f` — Split `SprintMembership.removedKeys` into `committedRemovedKeys` /
+  `addedRemovedKeys` and migrate `PlanningService` to consume `summariseMembership`.
+- `4a847e4` — Migrate `SprintDetailService.removedCount` and `SupportService` to the
+  new helper.
+- `259ad00` — ADR 0052 documenting the canonical formulas and clean-break migration.
+- `3ca4310` — Route `committedCount` and `addedMidSprintCount` on the sprint detail
+  page through `summariseMembership` (closes the AC 7 consistency gap that survived
+  the earlier commits — see ADR 0052).
+- `f8d29ff` — Cross-page integration test pinning planning ↔ sprint-detail agreement
+  (AC 7).
+- `55bc528` — `completionRate` divisor assertion (AC 6) and union-completeness
+  property assertion on the disjoint removed sets.
