@@ -173,34 +173,38 @@ export class RecommendationService {
       id: 'LT-001',
       dimension: 'leadTime',
       severity: 'critical',
-      condition: (ctx) => ctx.medianLeadTimeDays !== null && ctx.medianLeadTimeDays > 30,
+      // proposal 0052: align with classifier (low band = `>= 30`)
+      condition: (ctx) => ctx.medianLeadTimeDays !== null && ctx.medianLeadTimeDays >= 30,
       messageTemplate: 'Median lead time of {n} days exceeds 30 days. Identify and remove bottlenecks in the delivery pipeline.',
     },
     {
       id: 'LT-002',
       dimension: 'leadTime',
       severity: 'warning',
+      // proposal 0052: align with classifier (medium band = `>= 7 && < 30`)
       condition: (ctx) =>
         ctx.medianLeadTimeDays !== null &&
-        ctx.medianLeadTimeDays > 7 &&
-        ctx.medianLeadTimeDays <= 30,
+        ctx.medianLeadTimeDays >= 7 &&
+        ctx.medianLeadTimeDays < 30,
       messageTemplate: 'Median lead time of {n} days is in the medium band. Target less than 7 days.',
     },
     {
       id: 'LT-003',
       dimension: 'leadTime',
       severity: 'info',
+      // proposal 0052: align with classifier (high band = `>= 1 && < 7`)
       condition: (ctx) =>
         ctx.medianLeadTimeDays !== null &&
-        ctx.medianLeadTimeDays > 1 &&
-        ctx.medianLeadTimeDays <= 7,
+        ctx.medianLeadTimeDays >= 1 &&
+        ctx.medianLeadTimeDays < 7,
       messageTemplate: 'Median lead time of {n} days is good. Focus on reducing handoff delays to reach sub-day delivery.',
     },
     {
       id: 'LT-004',
       dimension: 'leadTime',
       severity: 'info',
-      condition: (ctx) => ctx.medianLeadTimeDays !== null && ctx.medianLeadTimeDays <= 1,
+      // proposal 0052: align with classifier (elite band = `< 1`)
+      condition: (ctx) => ctx.medianLeadTimeDays !== null && ctx.medianLeadTimeDays < 1,
       messageTemplate: 'Elite lead time of {n} days. Maintain this through continued CI/CD investment.',
     },
     {
@@ -258,34 +262,38 @@ export class RecommendationService {
       id: 'CFR-001',
       dimension: 'changeFailureRate',
       severity: 'critical',
-      condition: (ctx) => ctx.changeFailureRate !== null && ctx.changeFailureRate > 15,
+      // proposal 0052: align with classifier (low band = `>= 15`)
+      condition: (ctx) => ctx.changeFailureRate !== null && ctx.changeFailureRate >= 15,
       messageTemplate: 'Change failure rate of {pct}% is critical. Strengthen pre-deployment testing and rollback procedures.',
     },
     {
       id: 'CFR-002',
       dimension: 'changeFailureRate',
       severity: 'warning',
+      // proposal 0052: align with classifier (medium band = `>= 10 && < 15`)
       condition: (ctx) =>
         ctx.changeFailureRate !== null &&
-        ctx.changeFailureRate > 10 &&
-        ctx.changeFailureRate <= 15,
+        ctx.changeFailureRate >= 10 &&
+        ctx.changeFailureRate < 15,
       messageTemplate: 'Change failure rate of {pct}% exceeds the 10% threshold. Review test coverage and deployment quality gates.',
     },
     {
       id: 'CFR-003',
       dimension: 'changeFailureRate',
       severity: 'info',
+      // proposal 0052: align with classifier (high band = `>= 5 && < 10`)
       condition: (ctx) =>
         ctx.changeFailureRate !== null &&
-        ctx.changeFailureRate > 5 &&
-        ctx.changeFailureRate <= 10,
+        ctx.changeFailureRate >= 5 &&
+        ctx.changeFailureRate < 10,
       messageTemplate: 'Change failure rate of {pct}% is in the high band. Consider additional integration or smoke tests.',
     },
     {
       id: 'CFR-004',
       dimension: 'changeFailureRate',
       severity: 'info',
-      condition: (ctx) => ctx.changeFailureRate !== null && ctx.changeFailureRate <= 5,
+      // proposal 0052: align with classifier (elite band = `< 5`)
+      condition: (ctx) => ctx.changeFailureRate !== null && ctx.changeFailureRate < 5,
       messageTemplate: 'Elite change failure rate of {pct}%. Continue current quality practices.',
     },
 
