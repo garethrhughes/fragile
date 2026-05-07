@@ -56,4 +56,4 @@
 | [0052](0052-dora-band-boundary-canonicalisation.md) | DORA Band Boundary Canonicalisation: `<` vs `<=` | Draft | 2026-05-06 |
 | [0053](0053-roadmap-idea-epic-conflict-resolution.md) | Roadmap Idea ↔ Epic Conflict Resolution | Draft | 2026-05-06 |
 | [0054](0054-cycle-time-reopen-handling.md) | Cycle Time Reopen Handling: Pairing First-InProgress with Last-Done | Draft | 2026-05-06 |
-| [0055](0055-third-audit-clear-bug-fix-batch.md) | Third Audit: Clear Bug Fix Batch | Draft | 2026-05-06 |
+| [0055](0055-third-audit-clear-bug-fix-batch.md) | Third Audit: Clear Bug Fix Batch | Accepted | 2026-05-06 |

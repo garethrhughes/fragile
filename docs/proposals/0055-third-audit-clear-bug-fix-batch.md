@@ -1,9 +1,9 @@
 # 0055 — Third Audit: Clear Bug Fix Batch
 
 **Date:** 2026-05-06
-**Status:** Draft
+**Status:** Accepted
 **Author:** Architect Agent
-**Related ADRs:** ADR 0006, ADR 0049
+**Related ADRs:** ADR 0006, ADR 0049, ADR 0050
 **Related Proposals:** [0017](0017-metric-calculation-audit.md),
 [0018](0018-metric-calculation-fixes.md),
 [0030](0030-metrics-correctness-second-audit-fixes.md),
