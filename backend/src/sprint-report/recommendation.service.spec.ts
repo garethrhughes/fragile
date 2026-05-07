@@ -212,6 +212,29 @@ describe('RecommendationService', () => {
       expect(recs.find((r) => r.id === 'RC-002')!.severity).toBe('warning');
     });
 
+    // -----------------------------------------------------------------------
+    // D-1 regression (proposal 0055): && / || precedence in interpolate()
+    //
+    // Before the fix, `A || B || C && D` evaluated as `A || B || (C && D)`,
+    // so the {pct} branch for delivery-rate templates was selected for
+    // any template containing 'delivered only' OR 'Delivery rate'
+    // regardless of '%'. After the fix the predicate is
+    // `(A || B || C) && %`, so a roadmap template like
+    // '{pct}% roadmap coverage' falls through to the roadmap branch.
+    //
+    // Behavioural assertion: an RC-002 message at 35% coverage and 30%
+    // delivery rate must format the roadmap value (35), NOT the delivery
+    // rate value (30).
+    // -----------------------------------------------------------------------
+    it('RC-002 message interpolates roadmap coverage, not delivery rate (D-1 regression)', () => {
+      const recs = service.recommend(
+        baseCtx({ roadmapCoverage: 35, inScopeCount: 5, deliveryRate: 0.3 }),
+      );
+      const msg = recs.find((r) => r.id === 'RC-002')!.message;
+      expect(msg).toContain('35');
+      expect(msg).not.toContain('30%');
+    });
+
     it('RC-003: fires when 50 <= roadmapCoverage < 80', () => {
       const recs = service.recommend(baseCtx({ roadmapCoverage: 65, inScopeCount: 5 }));
       expect(ids(recs)).toContain('RC-003');

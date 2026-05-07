@@ -342,8 +342,18 @@ export class RecommendationService {
   private interpolate(template: string, ctx: RecommendationContext): string {
     return template
       .replace('{pct}', () => {
-        // For delivery rate rules, pct = deliveryRate * 100; for others determined by template context
-        if (template.includes('delivered only') || template.includes('Delivery rate') || template.includes('delivery rate') && template.includes('%')) {
+        // For delivery rate rules, pct = deliveryRate * 100; for others determined by template context.
+        // D-1 (proposal 0055): without explicit parens, JS `&&` binds tighter
+        // than `||`, so the original expression `A || B || C && D` evaluated as
+        // `A || B || (C && D)` — meaning the `%` check only applied to the
+        // lowercase `delivery rate` variant. Acceptance: matches
+        // 'delivery rate 80%' (true), does not match 'roadmap coverage 80%' (false).
+        if (
+          (template.includes('delivered only') ||
+            template.includes('Delivery rate') ||
+            template.includes('delivery rate')) &&
+          template.includes('%')
+        ) {
           return String(Math.round(ctx.deliveryRate * 1000) / 10);
         }
         if (template.includes('roadmap') || template.includes('roadmap coverage') || template.includes('Roadmap') || template.includes('coverage')) {
