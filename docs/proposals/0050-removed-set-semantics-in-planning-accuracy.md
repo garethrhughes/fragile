@@ -1,7 +1,7 @@
 # 0050 — Removed-Set Semantics in Planning Accuracy
 
 **Date:** 2026-05-06
-**Status:** Draft
+**Status:** Accepted
 **Author:** Architect Agent
 **Related ADRs:** ADR 0049 (SprintMembershipService)
 **Related Proposals:** [0013](0013-planning-accuracy-and-gaps-report.md), [0038](0038-carry-over-sprint-issue-classification.md), [0048](0048-sprint-membership-service.md)
@@ -45,10 +45,10 @@ two different "committed" numbers for the same sprint.
 Split `removedKeys` into two disjoint sets in `SprintMembershipService` and
 make every consumer pick the semantic that matches its formula.
 
-### New `MembershipResult` shape
+### New `SprintMembership` shape
 
 ```typescript
-interface MembershipResult {
+interface SprintMembership {
   committedKeys: Set<string>;       // present at sprint start (unchanged)
   addedKeys: Set<string>;           // joined after sprint start (unchanged)
   currentMemberKeys: Set<string>;   // in sprint at sprint end (unchanged)
@@ -56,15 +56,12 @@ interface MembershipResult {
   // NEW — replaces removedKeys
   committedRemovedKeys: Set<string>;  // committedKeys ∖ currentMemberKeys
   addedRemovedKeys: Set<string>;      // addedKeys ∖ currentMemberKeys
-
-  // BACKWARD-COMPAT (deprecated, computed) — equals union of the two above
-  /** @deprecated use committedRemovedKeys + addedRemovedKeys explicitly */
-  removedKeys: Set<string>;
 }
 ```
 
-`removedKeys` is retained as a deprecated computed getter for one release
-cycle so callers can be migrated incrementally.
+`removedKeys` is removed in the same commit (clean break). Internal-only
+type; all callsites — `PlanningService`, `SprintDetailService`,
+`SupportService`, and spec mocks — are migrated together.
 
 ### Canonical formulas (post-fix)
 
@@ -173,13 +170,15 @@ See Proposed Solution.
 
 ## Open Questions
 
-- **Backward-compat window length:** how long to keep the deprecated
-  `removedKeys` getter? Recommend one full sync cycle plus one release
-  (≈2 weeks) — long enough that any external MCP consumer that hits
-  membership endpoints can migrate.
-- **Should the API expose all five sets or only summary counts?** Detail
-  views currently render lists of issue keys per category; the answer is
-  "both" — sets for detail rendering, summary counts for headline numbers.
+- ~~**Backward-compat window length:**~~ **Resolved 2026-05-07:** clean
+  break — `removedKeys` is removed in the same commit. Internal-only type;
+  no external consumers exist.
+- **Should the API expose all five sets or only summary counts?**
+  **Resolved 2026-05-07:** API surface unchanged. Existing
+  `commitment`/`added`/`removed` fields keep their names but the `removed`
+  field now means "committed-then-removed" (the corrected, non-double-counted
+  value). No new API fields. Detail views that need the disjoint key sets
+  can call `sprint-detail` for the full membership object.
 
 ## Acceptance Criteria
 
