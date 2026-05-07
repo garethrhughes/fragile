@@ -54,10 +54,29 @@ export interface ResolvedEpicIdea {
 
 const MS_PER_DAY = 86_400_000;
 
+/**
+ * `rule` may be either a single resolution rule (applied to every group)
+ * or a function that resolves the rule per primary candidate. The
+ * per-candidate form is used by callers that load ideas across multiple
+ * `RoadmapConfig`s with potentially different `epicConflictResolution`
+ * settings — the rule is evaluated against the *primary* idea so the
+ * resolution scope follows the roadmap that "owns" the chosen idea.
+ */
+export type ResolutionRuleResolver =
+  | EpicConflictResolution
+  | ((idea: ResolveIdeaInput) => EpicConflictResolution);
+
 export function resolveEpicIdeas(
   ideas: ReadonlyArray<ResolveIdeaInput>,
-  rule: EpicConflictResolution,
+  rule: ResolutionRuleResolver,
 ): Map<string, ResolvedEpicIdea> {
+  // Resolve a per-candidate rule. For sorting we need ONE rule per group,
+  // so we use the rule of the first candidate as a stable proxy — when all
+  // ideas in a group share a jpdKey (the common case), this is exact;
+  // when they differ, it consistently picks the rule of whichever idea
+  // appears first in input order.
+  const resolveRule: (idea: ResolveIdeaInput) => EpicConflictResolution =
+    typeof rule === 'function' ? rule : () => rule;
   // Group eligible ideas by the epic key they link to. An idea is eligible
   // iff it has both startDate and targetDate (matches existing
   // filterIdeasForWindow behaviour, decision 2) and a non-null
@@ -80,11 +99,14 @@ export function resolveEpicIdeas(
 
   for (const [epicKey, candidates] of grouped) {
     // Sort copy so we can safely mutate. Stable enough for a small N.
+    // Use the first candidate's rule as the group rule (see comment on
+    // ResolutionRuleResolver).
+    const groupRule = resolveRule(candidates[0]);
     const sorted = [...candidates].sort((a, b) => {
       const at = a.targetDate!.getTime();
       const bt = b.targetDate!.getTime();
       // 'earliest' → ascending; 'latest' → descending.
-      return rule === 'earliest' ? at - bt : bt - at;
+      return groupRule === 'earliest' ? at - bt : bt - at;
     });
 
     const primary = sorted[0];

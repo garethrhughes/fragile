@@ -1,5 +1,10 @@
 import { Repository } from 'typeorm';
 import { JiraIssueLink, JpdIdea } from '../database/entities/index.js';
+import {
+  resolveEpicIdeas,
+  type EpicConflictResolution,
+  type ResolveIdeaInput,
+} from '../roadmap/resolve-epic-ideas.js';
 
 /**
  * Builds a map from sprint issue key → { targetDate } for issues that are
@@ -13,16 +18,21 @@ import { JiraIssueLink, JpdIdea } from '../database/entities/index.js';
  *   - Empty `roadmapLinkTypes` ⟹ feature disabled; no DB query is issued.
  *   - Empty `issueKeys`       ⟹ no DB query is issued.
  *   - Link type matching is case-insensitive (LOWER() in SQL + toLowerCase() in-memory).
- *   - Conflict resolution when one issue is linked to multiple ideas: keep the latest
- *     targetDate — consistent with the existing epicIdeaMap conflict resolution.
  *   - Ideas with null targetDate are ignored.
  *   - A single bulk query is issued regardless of the number of issue keys (no N+1).
+ *
+ * Conflict resolution (proposal 0053): when a single sprint issue is linked
+ * to multiple ideas, the choice is delegated to the shared
+ * `resolveEpicIdeas` helper, which honours each roadmap's
+ * `epicConflictResolution` policy ('earliest' default, 'latest' legacy
+ * override). This guarantees parity with the epic→idea path (AC6).
  */
 export async function buildDirectLinkIdeaMap(
   issueLinkRepo: Repository<JiraIssueLink>,
   issueKeys: string[],
   allIdeas: JpdIdea[],
   roadmapLinkTypes: string[],
+  ruleByJpdKey: Map<string, EpicConflictResolution> = new Map(),
 ): Promise<Map<string, { targetDate: Date }>> {
   const result = new Map<string, { targetDate: Date }>();
 
@@ -52,16 +62,37 @@ export async function buildDirectLinkIdeaMap(
     })
     .getMany();
 
+  // Manufacture synthetic ResolveIdeaInput rows where deliveryIssueKeys is
+  // [sourceIssueKey] — this lets us reuse the shared helper unchanged.
+  // The "epic key" returned by the helper is therefore the source issue key,
+  // matching the original buildDirectLinkIdeaMap contract.
+  const synthetic: (ResolveIdeaInput & { jpdKey: string })[] = [];
   for (const row of linkRows) {
     const idea = jpdIdeaByKey.get(row.targetIssueKey);
     if (!idea || idea.targetDate === null) continue;
+    synthetic.push({
+      key: idea.key,
+      summary: idea.summary,
+      // Synthesise a non-null startDate when the idea lacks one — the direct
+      // link path historically did not gate on startDate. We use targetDate
+      // itself so the helper's null-date filter is satisfied without
+      // affecting downstream eligibility (the caller only reads targetDate).
+      startDate: idea.startDate ?? idea.targetDate,
+      targetDate: idea.targetDate,
+      deliveryIssueKeys: [row.sourceIssueKey],
+      jpdKey: idea.jpdKey,
+    });
+  }
 
-    const existing = result.get(row.sourceIssueKey);
-    // Conflict resolution: keep the latest targetDate (optimistic — consistent
-    // with existing epicIdeaMap behaviour in roadmap.service.ts)
-    if (!existing || idea.targetDate > existing.targetDate) {
-      result.set(row.sourceIssueKey, { targetDate: idea.targetDate });
-    }
+  const resolved = resolveEpicIdeas(
+    synthetic,
+    (idea) =>
+      ruleByJpdKey.get((idea as ResolveIdeaInput & { jpdKey: string }).jpdKey) ??
+      'earliest',
+  );
+
+  for (const [sourceIssueKey, entry] of resolved) {
+    result.set(sourceIssueKey, { targetDate: entry.primaryIdea.targetDate });
   }
 
   return result;

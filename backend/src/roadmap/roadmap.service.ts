@@ -26,6 +26,11 @@ import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { dateParts, midnightInTz } from '../metrics/tz-utils.js';
 import { dateToIsoWeekKey } from '../lib/iso-week.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
+import {
+  resolveEpicIdeas,
+  type EpicConflictResolution,
+  type ResolveIdeaInput,
+} from './resolve-epic-ideas.js';
 
 export interface RoadmapSprintAccuracy {
   sprintId: string;
@@ -191,7 +196,7 @@ export class RoadmapService {
     }
 
     // Load all roadmap ideas once — filter per-sprint in memory
-    const allIdeasForSprints = await this.loadAllIdeas();
+    const { ideas: allIdeasForSprints, ruleByJpdKey } = await this.loadAllIdeas();
 
     const results: RoadmapSprintAccuracy[] = [];
     for (const sprint of sprints) {
@@ -207,6 +212,7 @@ export class RoadmapService {
         allIdeasForSprints,
         inProgressStatusNames,
         roadmapLinkTypes,
+        ruleByJpdKey,
       );
       results.push(accuracy);
     }
@@ -350,7 +356,7 @@ export class RoadmapService {
     const currentQuarterKey = this.issueToQuarterKey(now);
 
     // Load all ideas once — filter per-quarter in memory (avoids N×2 DB queries)
-    const allIdeas = await this.loadAllIdeas();
+    const { ideas: allIdeas, ruleByJpdKey } = await this.loadAllIdeas();
 
     const results: RoadmapSprintAccuracy[] = [];
     for (const qKey of filteredKeys) {
@@ -358,7 +364,7 @@ export class RoadmapService {
       const { startDate, endDate } = this.quarterToDates(qKey);
       const state = qKey === currentQuarterKey ? 'active' : 'closed';
 
-      const activeIdeas = this.filterIdeasForWindow(allIdeas, startDate, endDate);
+      const activeIdeas = this.filterIdeasForWindow(allIdeas, startDate, endDate, ruleByJpdKey);
 
       const eligibleCoveredIssues = issues.filter((i) => {
         if (i.epicKey === null || !activeIdeas.has(i.epicKey)) return false;
@@ -406,20 +412,37 @@ export class RoadmapService {
    * Load all JPD ideas from configured projects in a single pair of DB
    * queries. Returned ideas retain their raw date fields; use
    * filterIdeasForWindow() to apply a date-window filter in memory.
+   *
+   * Also returns `ruleByJpdKey` — the per-roadmap conflict resolution
+   * policy (proposal 0053). Default 'earliest' is applied when a config
+   * row predates the column or has it set to NULL via a hand-edit.
    */
-  private async loadAllIdeas(): Promise<JpdIdea[]> {
+  private async loadAllIdeas(): Promise<{
+    ideas: JpdIdea[];
+    ruleByJpdKey: Map<string, EpicConflictResolution>;
+  }> {
     const configs = await this.roadmapConfigRepo.find();
-    if (configs.length === 0) return [];
+    if (configs.length === 0) {
+      return { ideas: [], ruleByJpdKey: new Map() };
+    }
     const jpdKeys = configs.map((c) => c.jpdKey);
-    return this.jpdIdeaRepo.find({ where: { jpdKey: In(jpdKeys) } });
+    const ruleByJpdKey = new Map<string, EpicConflictResolution>();
+    for (const c of configs) {
+      ruleByJpdKey.set(c.jpdKey, c.epicConflictResolution ?? 'earliest');
+    }
+    const ideas = await this.jpdIdeaRepo.find({ where: { jpdKey: In(jpdKeys) } });
+    return { ideas, ruleByJpdKey };
   }
 
   /**
    * Filter a pre-loaded idea list to those whose delivery window overlaps
    * [windowStart, windowEnd], returning a Map keyed by epic key.
    * Ideas without both startDate and targetDate are excluded (decision 2).
-   * Conflict resolution: if multiple ideas link the same epic key, keep
-   * the one with the later targetDate.
+   *
+   * Conflict resolution (proposal 0053): when multiple ideas link the same
+   * epic key, defer to the shared `resolveEpicIdeas` helper which honours
+   * each roadmap's `epicConflictResolution` policy ('earliest' default,
+   * 'latest' legacy override).
    *
    * This is pure in-memory arithmetic — no DB access.
    */
@@ -427,18 +450,13 @@ export class RoadmapService {
     ideas: JpdIdea[],
     windowStart: Date,
     windowEnd: Date,
+    ruleByJpdKey: Map<string, EpicConflictResolution>,
   ): Map<string, RoadmapItemWindow> {
-    const result = new Map<string, RoadmapItemWindow>();
-
+    // First, apply the date-window overlap filter in-memory. The helper
+    // handles null start/target exclusion and conflict resolution.
+    const inWindow: ResolveIdeaInput[] = [];
     for (const idea of ideas) {
-      if (!idea.deliveryIssueKeys) continue;
-
-      // Decision 2: ideas without BOTH dates are excluded entirely.
       if (idea.startDate === null || idea.targetDate === null) continue;
-
-      // Date-window overlap filter:
-      //   idea.targetDate >= windowStart  AND  idea.startDate <= windowEnd
-      //
       // Polaris interval fields store dates as date-only values (midnight UTC).
       // A sprint starting at e.g. 03:30 UTC on the same calendar day as an idea's
       // targetDate would incorrectly miss the overlap check because midnight < 03:30.
@@ -447,28 +465,22 @@ export class RoadmapService {
       const ideaTargetEndOfDay = new Date(idea.targetDate.getTime());
       ideaTargetEndOfDay.setUTCHours(23, 59, 59, 999);
       if (ideaTargetEndOfDay < windowStart || idea.startDate > windowEnd) continue;
-
-      for (const epicKey of idea.deliveryIssueKeys.filter(Boolean)) {
-        const existing = result.get(epicKey);
-        if (!existing) {
-          result.set(epicKey, {
-            ideaKey: idea.key,
-            startDate: idea.startDate,
-            targetDate: idea.targetDate,
-          });
-        } else {
-          // Prefer the window with the later targetDate (most recent delivery commitment)
-          if (idea.targetDate.getTime() > existing.targetDate.getTime()) {
-            result.set(epicKey, {
-              ideaKey: idea.key,
-              startDate: idea.startDate,
-              targetDate: idea.targetDate,
-            });
-          }
-        }
-      }
+      inWindow.push(idea);
     }
 
+    const resolved = resolveEpicIdeas(
+      inWindow,
+      (idea) => ruleByJpdKey.get((idea as JpdIdea).jpdKey) ?? 'earliest',
+    );
+
+    const result = new Map<string, RoadmapItemWindow>();
+    for (const [epicKey, entry] of resolved) {
+      result.set(epicKey, {
+        ideaKey: entry.primaryIdea.ideaKey,
+        startDate: entry.primaryIdea.startDate!,
+        targetDate: entry.primaryIdea.targetDate,
+      });
+    }
     return result;
   }
 
@@ -678,7 +690,7 @@ export class RoadmapService {
     const currentWeekKey = this.dateToWeekKey(now);
 
     // Load all ideas once — filter per-week in memory (avoids N×2 DB queries)
-    const allIdeasWeekly = await this.loadAllIdeas();
+    const { ideas: allIdeasWeekly, ruleByJpdKey: ruleByJpdKeyWeekly } = await this.loadAllIdeas();
 
     const results: RoadmapSprintAccuracy[] = [];
     for (const wKey of filteredKeys) {
@@ -686,7 +698,7 @@ export class RoadmapService {
       const { weekStart, weekEnd } = this.weekKeyToDates(wKey);
       const state = wKey === currentWeekKey ? 'active' : 'closed';
 
-      const activeIdeas = this.filterIdeasForWindow(allIdeasWeekly, weekStart, weekEnd);
+      const activeIdeas = this.filterIdeasForWindow(allIdeasWeekly, weekStart, weekEnd, ruleByJpdKeyWeekly);
 
       const eligibleCoveredIssues = issues.filter((i) => {
         if (i.epicKey === null || !activeIdeas.has(i.epicKey)) return false;
@@ -738,6 +750,7 @@ export class RoadmapService {
     allIdeas: JpdIdea[],
     _inProgressStatusNames: string[], // accepted for API clarity; not used in core predicate
     roadmapLinkTypes: string[] = [],
+    ruleByJpdKey: Map<string, EpicConflictResolution> = new Map(),
   ): Promise<RoadmapSprintAccuracy> {
     // Exclude Epics and Sub-tasks (per ADR 0018). Cancelled issues remain in
     // the total so the overview matches the sprint-detail issue count — users
@@ -753,11 +766,11 @@ export class RoadmapService {
 
     // Build epicKey → targetDate map scoped to the sprint window.
     // filterIdeasForWindow excludes ideas without both dates (decision 2)
-    // and applies the date-window overlap filter. Conflict resolution: keep
-    // the idea with the later targetDate.
+    // and applies the date-window overlap filter. Conflict resolution
+    // follows each roadmap's epicConflictResolution policy (proposal 0053).
     const sprintStart = sprint.startDate ?? new Date();
     const sprintEnd = sprint.endDate ?? new Date();
-    const epicIdeaMap = this.filterIdeasForWindow(allIdeas, sprintStart, sprintEnd);
+    const epicIdeaMap = this.filterIdeasForWindow(allIdeas, sprintStart, sprintEnd, ruleByJpdKey);
 
     // Query ALL done-status transitions for sprint issues — no date restriction
     // and no needsChangelogCheck split.  This ensures issues that were already
@@ -788,6 +801,7 @@ export class RoadmapService {
       allFilteredKeys,
       allIdeas,
       roadmapLinkTypes,
+      ruleByJpdKey,
     );
 
     // Per-issue delivery classification:

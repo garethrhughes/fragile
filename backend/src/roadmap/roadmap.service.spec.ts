@@ -461,8 +461,8 @@ describe('RoadmapService', () => {
   describe('getConfigs', () => {
     it('returns all roadmap configs ordered by createdAt', async () => {
       const configs: RoadmapConfig[] = [
-        { id: 1, jpdKey: 'JPD-1', description: null, startDateFieldId: null, targetDateFieldId: null, createdAt: new Date() },
-        { id: 2, jpdKey: 'JPD-2', description: 'Desc', startDateFieldId: null, targetDateFieldId: null, createdAt: new Date() },
+        { id: 1, jpdKey: 'JPD-1', description: null, startDateFieldId: null, targetDateFieldId: null, epicConflictResolution: 'earliest', createdAt: new Date() },
+        { id: 2, jpdKey: 'JPD-2', description: 'Desc', startDateFieldId: null, targetDateFieldId: null, epicConflictResolution: 'earliest', createdAt: new Date() },
       ];
       roadmapConfigRepo.find.mockResolvedValue(configs);
 
@@ -485,7 +485,7 @@ describe('RoadmapService', () => {
   describe('createConfig', () => {
     it('creates a new roadmap config', async () => {
       roadmapConfigRepo.findOne.mockResolvedValue(null);
-      const saved = { id: 1, jpdKey: 'JPD-NEW', description: 'Test', startDateFieldId: null, targetDateFieldId: null, createdAt: new Date() };
+      const saved = { id: 1, jpdKey: 'JPD-NEW', description: 'Test', startDateFieldId: null, targetDateFieldId: null, epicConflictResolution: 'earliest', createdAt: new Date() };
       roadmapConfigRepo.save.mockResolvedValue(saved as RoadmapConfig);
 
       const result = await service.createConfig('JPD-NEW', 'Test');
@@ -522,6 +522,7 @@ describe('RoadmapService', () => {
         description: null,
         startDateFieldId: null,
         targetDateFieldId: null,
+        epicConflictResolution: 'earliest',
         createdAt: new Date(),
       };
       roadmapConfigRepo.findOne.mockResolvedValue(existing);
@@ -539,6 +540,7 @@ describe('RoadmapService', () => {
         description: null,
         startDateFieldId: 'cf_start',
         targetDateFieldId: 'cf_target',
+        epicConflictResolution: 'earliest',
         createdAt: new Date(),
       };
       roadmapConfigRepo.findOne.mockResolvedValue(existing);
@@ -557,6 +559,7 @@ describe('RoadmapService', () => {
         description: null,
         startDateFieldId: 'cf_start',
         targetDateFieldId: 'cf_target',
+        epicConflictResolution: 'earliest',
         createdAt: new Date(),
       };
       roadmapConfigRepo.findOne.mockResolvedValue(existing);
