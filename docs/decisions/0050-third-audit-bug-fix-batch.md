@@ -98,6 +98,17 @@ of the same principle.
     boundary timestamp), so the shared constant is appropriate, but a future
     requirement to tune one and not the other would force a split.
 
+## Deviations from Proposal
+
+- **D-4 (gaps half) not applied.** Proposal 0055 stated that
+  `gaps.service.ts:10` imports `JiraChangelog` and constructor-injects
+  `changelogRepo` "but neither is used". This was a misdiagnosis —
+  `changelogRepo` is actively used at `gaps.service.ts:294` and
+  `gaps.service.ts:314` for the Sprint-field changelog scan in the Scrum
+  branch of `getGaps()`. The import and injection were therefore retained.
+  The other half of D-4 (stale `// eslint-disable-next-line no-console`
+  in `support.service.ts:482`) was removed as planned.
+
 ## Related Decisions
 
 - [ADR 0049](0049-sprint-membership-service.md) — established

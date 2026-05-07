@@ -83,7 +83,7 @@ jest.mock('../metrics/period-utils.js', () => ({
 
 // Capture the real implementation once; used as the default in beforeEach so
 // existing tests that don't override the mock still get a valid quarter list.
- 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { listRecentQuarters: realListRecentQuarters } = jest.requireActual('../metrics/period-utils.js') as {
   listRecentQuarters: (n: number, tz?: string) => Array<{ label: string; startDate: Date; endDate: Date }>;
 };

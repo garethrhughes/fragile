@@ -15,8 +15,10 @@ import {
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { dateParts, midnightInTz } from '../metrics/tz-utils.js';
 import { dateToIsoWeekKey } from '../lib/iso-week.js';
-import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
-import { SPRINT_GRACE_PERIOD_MS } from '../sprint-membership/sprint-membership.service.js';
+import {
+  SprintMembershipService,
+  SPRINT_GRACE_PERIOD_MS,
+} from '../sprint-membership/sprint-membership.service.js';
 
 export interface SprintAccuracy {
   sprintId: string;
