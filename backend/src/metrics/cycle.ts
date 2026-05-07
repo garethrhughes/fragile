@@ -23,7 +23,7 @@ export interface IssueCycles {
   issueKey: string;
   /** All completed cycles for the issue, oldest → newest. */
   cycles: CycleObservation[];
-  /** Last completed cycle — used for aggregation (proposal 0054). */
+  /** Last completed cycle — used for aggregation. */
   representative: CycleObservation;
   /**
    * Per-issue anomaly count.  Currently counts unmatched in-progress
@@ -40,13 +40,15 @@ export interface IssueCycles {
 /**
  * Parse an issue's status changelog into a sequence of completed cycles.
  *
- * A cycle is `In Progress → Done` with no intervening reset (transition
- * back into a `resetNames` status). When the issue is reopened (transition
- * out of Done back into a reset status, then back into In Progress and
- * Done again), each round-trip becomes a separate cycle.
+ * A cycle spans from the first entry into any in-progress status until the
+ * final transition into a done status, treating intermediate IP sub-statuses
+ * (In Review, QA, etc.) as pass-throughs that do not reset the clock.
  *
- * The representative cycle for aggregation is the last completed cycle,
- * matching how users describe the issue's actual delivery time after rework.
+ * A genuine reopen requires the issue to pass through a reset status (To Do,
+ * Backlog, etc.) between Done and the next In Progress. A direct Done → In
+ * Progress hop without an intervening reset is treated as a continuation of
+ * the same work item — Done was premature — and the clock keeps running from
+ * the original start.
  *
  * Pure function — no DB access, no side effects, no clock.
  */
@@ -75,16 +77,28 @@ export function extractCycles(
   const cycles: CycleObservation[] = [];
   let openStart: Date | null = null;
   let anomalyCount = 0;
+  // Tracks whether a genuine reset status was seen since the last Done.
+  // Required to distinguish Done→Reset→IP (real reopen) from Done→IP
+  // (premature close — the work continued without going back to the backlog).
+  let hadResetSinceDone = true;
 
   for (const log of statusLogs) {
     const to = (log.toValue ?? '').toLowerCase();
     if (to === '') continue;
 
     if (ipLower.has(to)) {
-      // New IP transition. If we already had an open cycle, the prior IP is
-      // superseded silently (consecutive IP→IP without intervening Done is
-      // not an anomaly per the canonical definition — just take the latest).
-      openStart = log.changedAt;
+      if (openStart === null) {
+        if (cycles.length > 0 && !hadResetSinceDone) {
+          // Done→IP with no intervening reset: the prior "Done" was premature.
+          // Re-open the previous cycle's start so the clock continues from the
+          // original in-progress entry rather than starting fresh.
+          openStart = cycles.pop()!.start;
+        } else {
+          openStart = log.changedAt;
+        }
+      }
+      // Consecutive IP→IP (e.g. In Progress → In Review → QA): leave
+      // openStart unchanged — the clock started at the first IP entry.
     } else if (doneLower.has(to)) {
       if (openStart !== null) {
         cycles.push({
@@ -94,15 +108,16 @@ export function extractCycles(
           isReopen: cycles.length > 0,
         });
         openStart = null;
+        hadResetSinceDone = false;
       }
-      // Leading Done before any IP is ignored (per AC §4 of proposal 0054).
+      // Leading Done before any IP is ignored.
     } else if (resetLower.has(to)) {
       // Reset clears any open cycle (issue went back to backlog without
-      // completing). Not an anomaly — it just means no cycle was completed.
+      // completing) and marks that a genuine reset has occurred.
       openStart = null;
+      hadResetSinceDone = true;
     }
-    // Other statuses (e.g. transient intermediate states) leave state
-    // unchanged: an open cycle stays open, a closed state stays closed.
+    // Other statuses leave state unchanged.
   }
 
   // Open IP at the end of the changelog with no terminal Done — anomaly.

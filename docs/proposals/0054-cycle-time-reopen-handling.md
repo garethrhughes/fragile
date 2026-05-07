@@ -1,4 +1,4 @@
-# 0054 — Cycle Time Reopen Handling: Pairing First-InProgress with Last-Done
+# 0054 — Cycle Time Reopen Handling: Canonical Cycle State Machine
 
 **Date:** 2026-05-06
 **Status:** Accepted
@@ -40,6 +40,22 @@ but a single reopen can shift a board's median cycle time by 2–10×.
 There are no calculation reopen tests in any of the three service
 specs, so the behaviour was never validated.
 
+Two additional defects discovered during implementation:
+
+1. **Consecutive IP sub-status hops reset the clock.** Because
+   `inProgressNames` includes sub-statuses such as `In Review`, `QA`,
+   `IN TEST`, `Blocked`, and `PEER REVIEW`, a transition between them
+   (e.g. `In Progress → In Review`) was resetting `openStart` to the
+   latest transition timestamp. For ACC-1 this produced a reported cycle
+   time of 0.2 days instead of the correct ~49 days.
+
+2. **`Done → IP` without an intervening reset opens a spurious new
+   cycle.** When an issue transitions directly from `Done` back to
+   `In Progress` (no backlog/reset step), the prior `Done` was premature
+   — the work continued. The original implementation treated this as a
+   clean new cycle start, producing a 0.2-day "cycle" that became the
+   representative and masked the real delivery time.
+
 ---
 
 ## Proposed Solution
@@ -50,21 +66,43 @@ Adopt a single canonical cycle definition and apply it everywhere.
 
 A **cycle** is the interval from a transition **into an in-progress
 status** to the **next** subsequent transition **into a done status**,
-where there is no intervening transition back into a not-started
-status (e.g. To Do, Backlog).
+subject to the following state machine rules:
 
-For an issue with history `IP₁ → Done₁ → Reopen → IP₂ → Done₂`:
+1. **IP sub-status hops do not reset the clock.** Transitions between
+   statuses all within `inProgressNames` (e.g. `In Progress → In Review
+   → QA → IN TEST`) leave `openStart` unchanged. The clock started at
+   the first entry into any IP status and runs until Done.
 
-- Cycle 1 = `IP₁ → Done₁`
-- Cycle 2 = `IP₂ → Done₂`
+2. **`Done → IP` without an intervening reset = premature close.** If
+   the issue transitions directly from Done back into an IP status
+   (skipping any reset/backlog status), the prior Done is treated as
+   temporary. The original `openStart` is restored and the cycle
+   continues to the next Done. This is tracked via a `hadResetSinceDone`
+   flag in the state machine.
+
+3. **A genuine reopen requires passing through a reset status.** Only
+   when the issue transitions through a `resetNames` status (e.g.
+   `To Do`, `Backlog`) between Done and the next IP does a new
+   independent cycle begin, with `isReopen: true`.
+
+For an issue with history `IP₁ → Done₁ → Backlog → IP₂ → Done₂`:
+
+- Cycle 1 = `IP₁ → Done₁` (`isReopen: false`)
+- Cycle 2 = `IP₂ → Done₂` (`isReopen: true`)
+- Representative = Cycle 2 (last completed cycle)
+
+For an issue with history `IP₁ → Done₁ → IP₂ → Done₂` (no reset):
+
+- The intermediate Done₁ is absorbed. One cycle: `IP₁ → Done₂`
+- Representative = that single cycle (`isReopen: false`)
 
 The issue's **representative cycle** for aggregation is the **last
-completed cycle** (Cycle 2) — this matches how the issue is currently
-characterised by users ("how long did it take this time?").
+completed cycle** — this matches how the issue is characterised by users
+("how long did it take, counting any rework?").
 
 For aggregation across many issues, use the representative cycle.
 Surface a separate `reopenedIssueCount` so users can see when the
-median is "after rework".
+median reflects rework.
 
 ### New utility
 
@@ -73,26 +111,27 @@ Add `backend/src/metrics/cycle.ts`:
 ```typescript
 export interface CycleObservation {
   issueKey: string;
-  start: Date;     // transition into in-progress
-  end: Date;       // matching transition into done
-  isReopen: boolean;  // true if not the first cycle for this issue
+  start: Date;        // first entry into any IP status for this cycle
+  end: Date;          // matching transition into done
+  isReopen: boolean;  // true if a reset status was seen before this cycle
 }
 
 export interface IssueCycles {
   issueKey: string;
-  cycles: CycleObservation[];          // all cycles, oldest → newest
-  representative: CycleObservation;    // last completed cycle
+  cycles: CycleObservation[];       // all cycles, oldest → newest
+  representative: CycleObservation; // last completed cycle
+  anomalyCount: number;             // dangling open IP at end of changelog
 }
 
 export function extractCycles(
   changelogs: JiraChangelog[],
   inProgressNames: Set<string>,
   doneNames: Set<string>,
-  notStartedNames: Set<string>,  // resets the cycle
+  resetNames: Set<string>,  // resets the cycle; Done→IP without this = premature close
 ): IssueCycles | null;
 ```
 
-All three services consume this utility. No service maintains its own
+All services consume this utility. No service maintains its own
 in-progress / done state machine.
 
 ### Aggregation contract
@@ -171,9 +210,27 @@ Ruled out because:
 - The first-IP + last-Done pairing is mathematically wrong by any
   definition of "cycle".
 
-### Alternative D (recommended) — Last-completed cycle, surface reopen count
+### Alternative D — Treat Done→IP as a new cycle (initial implementation)
 
-See Proposed Solution.
+Implemented initially: `Done → IP` without an intervening reset opened
+a new independent cycle, making the short reopen cycle the representative.
+
+Ruled out after real-data validation (ACC-1): a 6-hour hotfix reopen
+on Apr 14 produced a representative of 0.2 days, completely masking the
+original 49-day delivery. The user intent is "a Done which isn't final
+is just another IP status" — the full elapsed time from first IP to
+final Done is the single cycle time.
+
+### Alternative E (adopted) — `hadResetSinceDone` flag; absorb premature Done
+
+A `hadResetSinceDone` boolean in the state machine distinguishes:
+- `Done → Reset → IP`: genuine reopen → new cycle, `isReopen: true`
+- `Done → IP` (no reset): premature close → pop the prior cycle and
+  restore its `openStart`, continuing to the next Done as one cycle
+
+Combined with the fix that consecutive IP sub-status hops do not reset
+`openStart`, this produces semantically correct cycle times for issues
+with complex in-flight status flows.
 
 ---
 
@@ -219,21 +276,21 @@ See Proposed Solution.
   `extractCycles` — none implement their own cycle pairing.
 - A unit test in `cycle.spec.ts` constructs an issue with history
   `IP₁ → Done₁ → Backlog → IP₂ → Done₂`, asserts `cycles.length === 2`
-  and `representative === cycles[1]`.
+  and `representative === cycles[1]` (genuine reopen via reset).
 - A unit test in `cycle.spec.ts` constructs an issue with history
   `Done → IP → Done` (Done first), asserts the lone valid cycle is
   returned and `anomalyCount === 0` (the leading Done is ignored).
+- A unit test in `cycle.spec.ts` asserts that consecutive IP sub-status
+  hops (e.g. `In Progress → In Review → QA → Done`) do not reset
+  `openStart` — the cycle start is the first IP entry, not the last.
+- A unit test in `cycle.spec.ts` asserts that `Done → IP` without an
+  intervening reset is treated as a premature close: `cycles.length === 1`
+  spanning original start → final Done (ACC-1 regression test).
 - `cycle-time.service.ts` returns `band: null` and `medianDays: null`
   when `observations.length === 0`.
 - An integration test asserts that the same board returns the same
   cycle-time number across the cycle-time, sprint-detail, week-detail,
   and support views.
 - ADR 0056 (to be created on acceptance) records the canonical cycle
-  definition, the choice of last-completed-cycle as representative, and
-  the reuse of `boardEntryStatuses` as the cycle-reset set.
-- The existing test `cycle-time.service.spec.ts` line 504
-  (`'uses the LAST done-transition in period for re-opened issues'`)
-  is replaced by a test asserting the new representative-cycle
-  semantics: same input fixture, but expected `cycleStart` is the
-  *second* In Progress (not the first) and `cycleEnd` is the second
-  Done.
+  definition, the `hadResetSinceDone` mechanism, and the reuse of
+  `boardEntryStatuses` as the cycle-reset set.

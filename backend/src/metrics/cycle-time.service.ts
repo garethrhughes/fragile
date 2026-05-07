@@ -228,14 +228,11 @@ export class CycleTimeService {
       let isReopen = false;
 
       if (issueCycles) {
-        // Pick the latest representative cycle whose end falls inside the
-        // analysis window. This preserves the original "completed in window"
-        // semantics while consuming the canonical cycle definition.
+        // Pick the last cycle whose end falls inside the analysis window.
         const inWindow = issueCycles.cycles.filter(
           (c) => c.end >= startDate && c.end <= endDate,
         );
-        const repForWindow =
-          inWindow.length > 0 ? inWindow[inWindow.length - 1] : null;
+        const repForWindow = inWindow.length > 0 ? inWindow[inWindow.length - 1] : null;
 
         if (repForWindow) {
           cycleStart = repForWindow.start;
