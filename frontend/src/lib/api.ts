@@ -901,6 +901,8 @@ export function getAppConfig(): Promise<AppConfig> {
 export type SprintReportBand = 'strong' | 'good' | 'fair' | 'needs-attention'
 
 /** Canonical, ordered list of all scoreable sprint-report dimensions. */
+// ⚠️  Must match backend/src/sprint-report/scoring.service.ts ScoreDimension.
+//     Order is the canonical display order.
 export type ScoreDimension =
   | 'deliveryRate'
   | 'scopeStability'

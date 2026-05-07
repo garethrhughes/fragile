@@ -7,6 +7,8 @@ import { classifyComposite, SprintReportBand } from './sprint-report-bands.js';
 // ---------------------------------------------------------------------------
 
 /** Canonical, ordered list of all scoreable dimensions. */
+// ⚠️  Order is the canonical display order. If you change this list,
+//     also update frontend/src/lib/api.ts and apps/mcp/src tools.
 export type ScoreDimension =
   | 'deliveryRate'
   | 'scopeStability'

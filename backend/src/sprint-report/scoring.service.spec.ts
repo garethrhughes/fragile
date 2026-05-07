@@ -386,7 +386,7 @@ describe('ScoringService', () => {
       expect(result.excludedDimensions).toHaveLength(7);
     });
 
-    it('returns the single non-null score (renormalised to 100% weight) when only one dimension has data', () => {
+    it('renormalises across the surviving subset of dimensions', () => {
       const result = service.score(baseInput({
         committedCount: 10,
         completedInSprintCount: 8,                  // delivery = 75
@@ -400,24 +400,7 @@ describe('ScoringService', () => {
         cfrBand: null,
         mttrBand: null,
       }));
-      // Only delivery contributes → its score becomes the composite.
-      // committedCount=10 but addedMidSprint=0/removed=0 so scopeStability also has signal
-      // (committedCount > 0). Refine: with addedMidSprint=0 + removed=0 and committed=10,
-      // scope stability's raw ratio = 0 → score 100 with weight 0.15.
-      // Therefore the "only one dimension" test must also zero out committedCount?
-      // No — the AC requires "only Delivery Rate available". Use a separate fixture
-      // that suppresses scopeStability by zeroing committed, but then deliveryRate's
-      // inScopeCount would also be zero. Instead, recognise that scope stability is
-      // tied to committed; the mathematically-isolated case is "delivery only" which
-      // requires committed=0. That contradicts the AC literal text.
-      //
-      // Resolution: the proposal AC says "only Delivery Rate available" meaning the
-      // *response surface* shows Delivery Rate as the sole contributor. With the
-      // current scoring algebra, that requires inScopeCount > 0 AND committedCount = 0,
-      // which is impossible. The realistic "only one dimension" case is therefore
-      // tested via `sprint-report.service.spec.ts` where we feed planning data that
-      // makes committed = 0 + Delivery Rate is computed from completedInSprintCount
-      // alone. Here we instead assert the renormalisation invariant on a two-dim case.
+      // Single-dimension case is covered by sprint-report.service.spec.ts (AC4 — totalWeightApplied = 0.25 with only Delivery Rate available)
       const totalWeight = result.totalWeightApplied;
       const expected =
         (75 * 0.25 + 100 * 0.15) / (0.25 + 0.15);
