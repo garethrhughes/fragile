@@ -272,7 +272,7 @@ export class SupportService {
     const activeCandidates = boardedIssues;
 
     // Step 3: Bulk-load issue links for link-based classification
-    let linksByIssue = new Map<string, JiraIssueLink[]>();
+    const linksByIssue = new Map<string, JiraIssueLink[]>();
     if (supportLinkType && triageBoardKey) {
       const links = await this.issueLinkRepo
         .createQueryBuilder('lnk')
@@ -429,7 +429,7 @@ export class SupportService {
 
       let cycleTimeDays: number | null = null;
       let startedAt: string | null = null;
-      let completedAt: string | null = cycleEnd ? cycleEnd.toISOString() : null;
+      const completedAt: string | null = cycleEnd ? cycleEnd.toISOString() : null;
       let band = null;
 
       if (cycleEnd && inProgressTransition) {
@@ -479,7 +479,6 @@ export class SupportService {
       return a.issueKey.localeCompare(b.issueKey);
     });
 
-    // eslint-disable-next-line no-console
     return { boardId, totalIssues, supportIssues, supportPercentage, p50Days, p95Days, tickets };
   }
 

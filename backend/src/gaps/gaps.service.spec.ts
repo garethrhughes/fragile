@@ -166,6 +166,35 @@ describe('GapsService', () => {
     expect(result.noEpic).toHaveLength(0);
   });
 
+  // ── D-3 regression (proposal 0055) ────────────────────────────────────────
+  // When an issue belongs to a board that has NO BoardConfig row at all,
+  // the per-issue cancelled-status fallback (gaps.service.ts line ~133)
+  // must default to ['Cancelled', "Won't Do"] — previously it defaulted to
+  // ['Cancelled'] only, leaving "Won't Do" issues incorrectly classified
+  // as gaps on un-configured boards.
+  it("excludes \"Won't Do\" issues even when their board has no BoardConfig (D-3 regression)", async () => {
+    boardConfigRepo.find.mockResolvedValue([]); // no config rows at all
+    sprintRepo.find.mockResolvedValue([
+      { id: 'sprint-1', boardId: 'XYZ', state: 'active', name: 'Sprint 1' } as JiraSprint,
+    ]);
+    issueRepo.find.mockResolvedValue([
+      {
+        key: 'XYZ-1',
+        boardId: 'XYZ',
+        issueType: 'Story',
+        status: "Won't Do",
+        epicKey: null,
+        points: null,
+        summary: "Won't Do issue on unconfigured board",
+      } as unknown as JiraIssue,
+    ]);
+
+    const result = await service.getGaps();
+
+    expect(result.noEpic).toHaveLength(0);
+    expect(result.noEstimate).toHaveLength(0);
+  });
+
   it("excludes \"Won't Do\" issues from gaps (updated fallback)", async () => {
     boardConfigRepo.find.mockResolvedValue([
       // Board config with cancelledStatusNames including "Won't Do"

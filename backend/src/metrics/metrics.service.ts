@@ -275,7 +275,7 @@ export class MetricsService {
       return cached;
     }
 
-    let { startDate, endDate } = this.resolvePeriod({ quarter: effectiveQuarter });
+    const { startDate, endDate } = this.resolvePeriod({ quarter: effectiveQuarter });
     const boardIds = await this.resolveBoardIds(query.boardId);
 
     // RC-6: parallelize all per-board calls using Promise.all over boardIds.

@@ -128,7 +128,9 @@ export class GapsService {
     for (const issue of allIssues) {
       // Step 4a: exclude done / cancelled (existing logic — unchanged)
       const done = doneByBoard.get(issue.boardId) ?? ['Done', 'Closed', 'Released'];
-      const cancelled = cancelledByBoard.get(issue.boardId) ?? ['Cancelled'];
+      // D-3 (proposal 0055): default cancelled list aligned with the rest
+      // of the codebase (sprint-detail, support) — `Cancelled` and `Won't Do`.
+      const cancelled = cancelledByBoard.get(issue.boardId) ?? ['Cancelled', "Won't Do"];
       if (done.includes(issue.status) || cancelled.includes(issue.status)) continue;
 
       // Steps 4b–c: active sprint gate — exclude backlog issues and
@@ -306,7 +308,7 @@ export class GapsService {
 
     // Step 5 (Scrum only): Bulk-load Sprint-field changelogs
     // Also load JiraIssueSprint membership for snapshot fallback.
-    let sprintLogsByIssue = new Map<string, JiraChangelog[]>();
+    const sprintLogsByIssue = new Map<string, JiraChangelog[]>();
     let issueHasAnySprintMembership = new Set<string>();
     if (!isKanban) {
       const sprintChangelogs = await this.changelogRepo

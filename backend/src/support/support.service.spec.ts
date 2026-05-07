@@ -18,7 +18,6 @@ import type { SprintMembership } from '../sprint-membership/sprint-membership.se
 // Minimal fixture builders
 // ---------------------------------------------------------------------------
 
-const NOW = new Date('2026-04-01T00:00:00.000Z');
 const DONE_AT = new Date('2026-03-20T12:00:00.000Z');
 const STARTED_AT = new Date('2026-03-15T09:00:00.000Z');
 
