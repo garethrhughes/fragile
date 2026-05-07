@@ -17,11 +17,11 @@ export class SprintReport {
   @Column({ type: 'timestamptz', nullable: true })
   endDate!: Date | null;
 
-  @Column({ type: 'float' })
-  compositeScore!: number;
+  @Column({ type: 'float', nullable: true })
+  compositeScore!: number | null;
 
-  @Column()
-  compositeBand!: string;
+  @Column({ type: 'varchar', nullable: true })
+  compositeBand!: string | null;
 
   @Column({ type: 'jsonb' })
   payload!: object;

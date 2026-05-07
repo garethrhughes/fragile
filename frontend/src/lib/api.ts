@@ -900,8 +900,19 @@ export function getAppConfig(): Promise<AppConfig> {
 
 export type SprintReportBand = 'strong' | 'good' | 'fair' | 'needs-attention'
 
+/** Canonical, ordered list of all scoreable sprint-report dimensions. */
+export type ScoreDimension =
+  | 'deliveryRate'
+  | 'scopeStability'
+  | 'roadmapCoverage'
+  | 'leadTime'
+  | 'deploymentFrequency'
+  | 'changeFailureRate'
+  | 'mttr'
+
 export interface SprintDimensionScore {
-  score: number
+  /** null = insufficient data; the dimension was excluded from the composite. */
+  score: number | null
   band?: DoraBand
   rawValue: number | null
   rawUnit: string
@@ -927,7 +938,8 @@ export interface SprintRecommendation {
 export interface SprintReportTrendPoint {
   sprintId: string
   sprintName: string
-  compositeScore: number
+  /** null when that historical report had no data in any dimension. */
+  compositeScore: number | null
   scores: SprintDimensionScores
 }
 
@@ -937,9 +949,17 @@ export interface SprintReportResponse {
   sprintName: string
   startDate: string | null
   endDate: string | null
-  compositeScore: number
-  compositeBand: SprintReportBand
+  /** null = no dimension had data; UI shows "Insufficient data". */
+  compositeScore: number | null
+  /** null when compositeScore is null. */
+  compositeBand: SprintReportBand | null
   scores: SprintDimensionScores
+  /** Dimensions that contributed to the composite (had a non-null score). */
+  contributingDimensions: ScoreDimension[]
+  /** Dimensions excluded as N/A. UI uses this for the `~` modifier tooltip. */
+  excludedDimensions: ScoreDimension[]
+  /** Sum of contributing weights, in [0, 1]. UI shows `~` when < 1. */
+  totalWeightApplied: number
   recommendations: SprintRecommendation[]
   trend: SprintReportTrendPoint[]
   generatedAt: string
@@ -960,8 +980,8 @@ export interface SprintReportSummary {
   sprintName: string
   startDate: string | null
   endDate: string | null
-  compositeScore: number
-  compositeBand: SprintReportBand
+  compositeScore: number | null
+  compositeBand: SprintReportBand | null
   generatedAt: string
 }
 

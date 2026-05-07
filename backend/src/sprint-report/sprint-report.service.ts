@@ -7,15 +7,14 @@ import { PlanningService } from '../planning/planning.service.js';
 import { RoadmapService } from '../roadmap/roadmap.service.js';
 import { MetricsService } from '../metrics/metrics.service.js';
 import { GapsService, UnplannedDoneIssue } from '../gaps/gaps.service.js';
-import { ScoringService, ScoringInput, SprintDimensionScores } from './scoring.service.js';
-import { RecommendationService, SprintRecommendation, RecommendationContext } from './recommendation.service.js';
 import {
-  classifyDeploymentFrequency,
-  classifyLeadTime,
-  classifyChangeFailureRate,
-  classifyMTTR,
-  DoraBand,
-} from '../metrics/dora-bands.js';
+  ScoringService,
+  ScoringInput,
+  SprintDimensionScores,
+  ScoreDimension,
+} from './scoring.service.js';
+import { RecommendationService, SprintRecommendation, RecommendationContext } from './recommendation.service.js';
+import { SprintReportBand } from './sprint-report-bands.js';
 
 // ---------------------------------------------------------------------------
 // Exported interfaces
@@ -24,7 +23,8 @@ import {
 export interface SprintReportTrendPoint {
   sprintId: string;
   sprintName: string;
-  compositeScore: number;
+  /** null when the historical report had no data in any dimension. */
+  compositeScore: number | null;
   scores: SprintDimensionScores;
 }
 
@@ -34,9 +34,17 @@ export interface SprintReportResponse {
   sprintName: string;
   startDate: string | null;
   endDate: string | null;
-  compositeScore: number;
-  compositeBand: string;
+  /** null when no dimension has data — UI shows "Insufficient data". */
+  compositeScore: number | null;
+  /** null when compositeScore is null. */
+  compositeBand: SprintReportBand | null;
   scores: SprintDimensionScores;
+  /** Dimensions that contributed to the composite (had a non-null score). */
+  contributingDimensions: ScoreDimension[];
+  /** Dimensions excluded as N/A. UI uses this for the `~` modifier tooltip. */
+  excludedDimensions: ScoreDimension[];
+  /** Sum of contributing weights, in [0, 1]. UI shows `~` when < 1. */
+  totalWeightApplied: number;
   recommendations: SprintRecommendation[];
   trend: SprintReportTrendPoint[];
   generatedAt: string;
@@ -57,8 +65,8 @@ export interface SprintReportSummary {
   sprintName: string;
   startDate: string | null;
   endDate: string | null;
-  compositeScore: number;
-  compositeBand: string;
+  compositeScore: number | null;
+  compositeBand: SprintReportBand | null;
   generatedAt: string;
 }
 
@@ -181,14 +189,17 @@ export class SprintReportService {
     const roadmapCoverage = roadmap?.roadmapCoverage ?? 0;
 
     const medianLeadTimeDays = dora?.leadTime?.medianDays ?? summary.medianLeadTimeDays ?? null;
-    const deploymentsPerDay = dora?.deploymentFrequency?.deploymentsPerDay ?? 0;
-    const changeFailureRate = dora?.changeFailureRate?.changeFailureRate ?? 0;
-    const medianMttrHours = dora?.mttr?.medianHours ?? 0;
+    const deploymentsPerDay = dora?.deploymentFrequency?.deploymentsPerDay ?? null;
+    const changeFailureRate = dora?.changeFailureRate?.changeFailureRate ?? null;
+    const medianMttrHours = dora?.mttr?.medianHours ?? null;
 
-    const leadTimeBand: DoraBand = dora?.leadTime?.band ?? classifyLeadTime(medianLeadTimeDays ?? 9999);
-    const dfBand: DoraBand = dora?.deploymentFrequency?.band ?? classifyDeploymentFrequency(deploymentsPerDay);
-    const cfrBand: DoraBand = dora?.changeFailureRate?.band ?? classifyChangeFailureRate(changeFailureRate);
-    const mttrBand: DoraBand = dora?.mttr?.band ?? classifyMTTR(medianMttrHours);
+    // Bands propagate as null when the underlying numeric value is null.
+    // We do NOT re-classify a coerced default — that was the bug fixed by
+    // proposal 0051.
+    const leadTimeBand = dora?.leadTime?.band ?? null;
+    const dfBand = dora?.deploymentFrequency?.band ?? null;
+    const cfrBand = dora?.changeFailureRate?.band ?? null;
+    const mttrBand = dora?.mttr?.band ?? null;
 
     const scoringInput: ScoringInput = {
       committedCount,
@@ -208,7 +219,21 @@ export class SprintReportService {
     };
 
     // Step 6: Score
-    const { scores, compositeScore, compositeBand } = this.scoringService.score(scoringInput);
+    const {
+      scores,
+      compositeScore,
+      compositeBand,
+      contributingDimensions,
+      excludedDimensions,
+      totalWeightApplied,
+    } = this.scoringService.score(scoringInput);
+
+    if (excludedDimensions.length > 0) {
+      this.logger.log(
+        `Sprint report ${boardId}/${sprintId} — excludedDimensions=${excludedDimensions.join(',')} ` +
+          `totalWeightApplied=${totalWeightApplied}`,
+      );
+    }
 
     // Step 7: Recommendations
     const inScopeCount = committedCount + addedMidSprintCount - removedCount;
@@ -222,9 +247,9 @@ export class SprintReportService {
       removedCount,
       roadmapCoverage,
       medianLeadTimeDays,
-      deploymentsPerDay,
-      changeFailureRate,
-      medianMttrHours,
+      deploymentsPerDay: deploymentsPerDay ?? 0,
+      changeFailureRate: changeFailureRate ?? 0,
+      medianMttrHours: medianMttrHours ?? 0,
       incidentCount: summary.incidentCount,
       scores,
     };
@@ -259,6 +284,9 @@ export class SprintReportService {
       compositeScore,
       compositeBand,
       scores,
+      contributingDimensions,
+      excludedDimensions,
+      totalWeightApplied,
       recommendations,
       trend: trendPoints,
       generatedAt: new Date().toISOString(),

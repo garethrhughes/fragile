@@ -3,7 +3,7 @@ import {
   SprintReportService,
   SprintReportResponse,
 } from './sprint-report.service.js';
-import { ScoringService, CompositeResult } from './scoring.service.js';
+import { ScoringService } from './scoring.service.js';
 import { RecommendationService } from './recommendation.service.js';
 import { SprintDetailService } from '../sprint/sprint-detail.service.js';
 import { PlanningService } from '../planning/planning.service.js';

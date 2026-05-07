@@ -23,6 +23,7 @@ import {
   type SprintReportBand,
   type SprintDimensionScore,
   type SprintRecommendation,
+  type ScoreDimension,
   type DoraBand,
   type UnplannedDoneIssue,
 } from '@/lib/api'
@@ -109,7 +110,8 @@ function formatDateTime(iso: string): string {
 }
 
 /** Tailwind color classes for sprint report band */
-function reportBandColor(band: SprintReportBand): string {
+function reportBandColor(band: SprintReportBand | null): string {
+  if (band === null) return 'text-muted'
   switch (band) {
     case 'strong':
       return 'text-green-600'
@@ -122,7 +124,8 @@ function reportBandColor(band: SprintReportBand): string {
   }
 }
 
-function reportBandLabel(band: SprintReportBand): string {
+function reportBandLabel(band: SprintReportBand | null): string {
+  if (band === null) return 'Insufficient data'
   switch (band) {
     case 'strong':
       return 'Strong'
@@ -135,8 +138,9 @@ function reportBandLabel(band: SprintReportBand): string {
   }
 }
 
-/** Tailwind color class for a 0-100 dimension score */
-function scoreColor(score: number): string {
+/** Tailwind color class for a 0-100 dimension score (or null = neutral). */
+function scoreColor(score: number | null): string {
+  if (score === null) return 'text-muted'
   if (score >= 75) return 'text-green-600'
   if (score >= 50) return 'text-blue-600'
   if (score >= 25) return 'text-amber-600'
@@ -167,12 +171,13 @@ interface DimensionCardProps {
 function DimensionCard({ dimensionKey, score }: DimensionCardProps) {
   const label = DIMENSION_LABELS[dimensionKey] ?? dimensionKey
   const raw = formatRawValue(score)
+  const display = score.score === null ? 'N/A' : score.score.toFixed(1)
 
   return (
     <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
       <p className="text-xs font-medium text-muted">{label}</p>
       <p className={`mt-2 text-3xl font-bold tabular-nums ${scoreColor(score.score)}`}>
-        {score.score.toFixed(1)}
+        {display}
       </p>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         {score.band && <BandBadge band={score.band as DoraBand} />}
@@ -187,7 +192,7 @@ function DimensionCard({ dimensionKey, score }: DimensionCardProps) {
 // ---------------------------------------------------------------------------
 
 interface TrendChartProps {
-  data: Array<{ label: string; value: number }>
+  data: Array<{ label: string; value: number | null }>
 }
 
 function TrendChart({ data }: TrendChartProps) {
@@ -230,6 +235,7 @@ function TrendChart({ data }: TrendChartProps) {
             strokeWidth={2}
             dot={{ r: 3, fill: '#6366f1' }}
             activeDot={{ r: 5 }}
+            connectNulls={false}
           />
         </LineChart>
       </ResponsiveContainer>
@@ -623,11 +629,19 @@ export default function SprintReportPage() {
     ['mttr', data.scores.mttr],
   ]
 
-  // Build chart data from trend
+  // Build chart data from trend.
+  // For null compositeScores we keep the X-axis tick but emit `value: null`
+  // so Recharts renders a gap (connectNulls={false} on the Line).
   const chartData = data.trend.map((p) => ({
     label: abbreviateSprint(p.sprintName),
     value: p.compositeScore,
   }))
+
+  // Excluded-dimension labels for the `~` modifier tooltip
+  const excludedLabels = data.excludedDimensions
+    .map((d) => DIMENSION_LABELS[d] ?? d)
+    .join(', ')
+  const showApproximate = data.totalWeightApplied < 1 && data.compositeScore !== null
 
   // ── Main view ─────────────────────────────────────────────────────────────
   return (
@@ -670,14 +684,33 @@ export default function SprintReportPage() {
       {/* ── Composite score ────────────────────────────────────────────── */}
       <div className="flex flex-col items-center rounded-xl border border-border bg-card py-8 shadow-sm">
         <p className="text-sm font-medium text-muted">Composite Score</p>
-        <p
-          className={`mt-2 text-6xl font-bold tabular-nums leading-none ${reportBandColor(data.compositeBand)}`}
-        >
-          {data.compositeScore.toFixed(1)}
-        </p>
-        <p className={`mt-3 text-lg font-semibold ${reportBandColor(data.compositeBand)}`}>
-          {reportBandLabel(data.compositeBand)}
-        </p>
+        {data.compositeScore === null ? (
+          <>
+            <p className="mt-2 text-3xl font-semibold text-muted">Insufficient data</p>
+            <p className="mt-3 text-sm text-muted">
+              No dimension produced a usable score for this sprint.
+            </p>
+          </>
+        ) : (
+          <>
+            <p
+              className={`mt-2 text-6xl font-bold tabular-nums leading-none ${reportBandColor(data.compositeBand)}`}
+              title={showApproximate ? `Approximate — excludes: ${excludedLabels}` : undefined}
+            >
+              {showApproximate ? '~' : ''}
+              {data.compositeScore.toFixed(1)}
+            </p>
+            <p className={`mt-3 text-lg font-semibold ${reportBandColor(data.compositeBand)}`}>
+              {reportBandLabel(data.compositeBand)}
+            </p>
+            {showApproximate && (
+              <p className="mt-2 text-xs text-muted" title={excludedLabels}>
+                Computed from {(data.totalWeightApplied * 100).toFixed(0)}% of weights
+                {' — '}excludes: {excludedLabels}
+              </p>
+            )}
+          </>
+        )}
       </div>
 
       {/* ── Dimension scores grid ──────────────────────────────────────── */}
