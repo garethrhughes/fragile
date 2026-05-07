@@ -347,7 +347,9 @@ export class SprintReportService {
       startDate: r.startDate ? r.startDate.toISOString() : null,
       endDate: r.endDate ? r.endDate.toISOString() : null,
       compositeScore: r.compositeScore,
-      compositeBand: r.compositeBand,
+      // Persisted as nullable string in the entity; narrow to SprintReportBand here
+      // (only valid band values are ever written by generateReport()).
+      compositeBand: r.compositeBand as SprintReportBand | null,
       generatedAt: r.generatedAt.toISOString(),
     }));
   }

@@ -440,10 +440,15 @@ describe('CycleTimeService', () => {
     const result = await service.calculate('ACC', start, end, '2026-Q1');
 
     expect(result.count).toBe(5);
-    expect(result.p50Days).toBeGreaterThan(0);
-    expect(result.p95Days).toBeGreaterThanOrEqual(result.p85Days);
-    expect(result.p85Days).toBeGreaterThanOrEqual(result.p75Days);
-    expect(result.p75Days).toBeGreaterThanOrEqual(result.p50Days);
+    // count > 0 → percentile fields are non-null (proposal 0054 AC5).
+    expect(result.p50Days).not.toBeNull();
+    expect(result.p75Days).not.toBeNull();
+    expect(result.p85Days).not.toBeNull();
+    expect(result.p95Days).not.toBeNull();
+    expect(result.p50Days!).toBeGreaterThan(0);
+    expect(result.p95Days!).toBeGreaterThanOrEqual(result.p85Days!);
+    expect(result.p85Days!).toBeGreaterThanOrEqual(result.p75Days!);
+    expect(result.p75Days!).toBeGreaterThanOrEqual(result.p50Days!);
   });
 
   // ---------------------------------------------------------------------------

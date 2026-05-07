@@ -552,8 +552,8 @@ describe('MetricsService', () => {
         { boardId: 'PLAT' } as BoardConfig,
       ]);
       cycleTimeService.getCycleTimeObservations
-        .mockResolvedValueOnce({ observations: [{ cycleTimeDays: 2 } as never, { cycleTimeDays: 4 } as never], anomalyCount: 0 })
-        .mockResolvedValueOnce({ observations: [{ cycleTimeDays: 6 } as never, { cycleTimeDays: 8 } as never], anomalyCount: 0 });
+        .mockResolvedValueOnce({ observations: [{ cycleTimeDays: 2 } as never, { cycleTimeDays: 4 } as never], anomalyCount: 0, reopenedIssueCount: 0 })
+        .mockResolvedValueOnce({ observations: [{ cycleTimeDays: 6 } as never, { cycleTimeDays: 8 } as never], anomalyCount: 0, reopenedIssueCount: 0 });
 
       const points = await service.getCycleTimeTrend({ limit: 1 });
       // Both boards' observations pooled → sampleSize = 4 (for the 1 quarter)

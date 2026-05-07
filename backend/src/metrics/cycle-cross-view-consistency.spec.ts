@@ -43,7 +43,7 @@ function changelog(
     fromId: null,
     toId: null,
     changedAt: new Date(changedAt),
-  } as JiraChangelog;
+  } as unknown as JiraChangelog;
 }
 
 /**

@@ -825,10 +825,13 @@ export interface CycleTimeTrendPoint {
   label: string
   start: string
   end: string
-  medianCycleTimeDays: number
-  p85CycleTimeDays: number
+  /** Null when the period had no completed cycles (proposal 0054 AC5). */
+  medianCycleTimeDays: number | null
+  /** Null when the period had no completed cycles (proposal 0054 AC5). */
+  p85CycleTimeDays: number | null
   sampleSize: number
-  band: CycleTimeBand
+  /** Null when the period had no completed cycles — chart renders a gap. */
+  band: CycleTimeBand | null
 }
 
 export type CycleTimeTrendResponse = CycleTimeTrendPoint[]
