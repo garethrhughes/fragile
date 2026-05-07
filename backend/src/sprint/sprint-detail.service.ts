@@ -575,12 +575,18 @@ export class SprintDetailService {
           median(leadTimeSamples)
         : null;
 
+    // All three churn counts are read through the same helper as
+    // PlanningService so the two pages cannot disagree (proposal 0050 / ADR 0052).
+    const membershipSummary = summariseMembership(membership);
+
     const summary: SprintDetailSummary = {
-      // committedCount: issues present at sprint start that have not been removed
-      // (excludes issues removed from the sprint mid-flight)
-      committedCount: issues.filter((i) => !i.addedMidSprint).length,
-      addedMidSprintCount: issues.filter((i) => i.addedMidSprint).length,
-      removedCount: summariseMembership(membership).removedCount,
+      // committedCount: total issues committed at sprint start (includes those
+      // later removed) — matches PlanningService.commitment.
+      committedCount: membershipSummary.commitmentCount,
+      // addedMidSprintCount: gross added after sprint start (includes those
+      // later removed) — matches PlanningService.added.
+      addedMidSprintCount: membershipSummary.addedCount,
+      removedCount: membershipSummary.removedCount,
       completedInSprintCount: issues.filter((i) => i.completedInSprint).length,
       roadmapLinkedCount: issues.filter((i) => i.roadmapStatus !== 'none').length,
       incidentCount: issues.filter((i) => i.isIncident).length,

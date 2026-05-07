@@ -305,9 +305,12 @@ describe('SprintDetailService', () => {
 
     const result = await service.getDetail('ACC', 'sprint-1');
 
-    expect(result.summary.committedCount).toBe(1);
-    expect(result.summary.addedMidSprintCount).toBe(1);
-    expect(result.summary.removedCount).toBe(1);
+    // committedCount and addedMidSprintCount are gross counts of the membership
+    // sets — they include issues later removed (proposal 0050 / ADR 0052),
+    // so the sprint detail page agrees with PlanningService.
+    expect(result.summary.committedCount).toBe(2); // ACC-1, ACC-3 (incl. removed)
+    expect(result.summary.addedMidSprintCount).toBe(1); // ACC-2
+    expect(result.summary.removedCount).toBe(1); // committed-removed: ACC-3
     // Removed issue is excluded from the issues array (final = committed ∪ added \ removed).
     expect(result.issues.map((i) => i.key).sort()).toEqual(['ACC-1', 'ACC-2']);
     expect(result.issues.find((i) => i.key === 'ACC-1')?.addedMidSprint).toBe(
