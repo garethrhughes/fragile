@@ -1,8 +1,8 @@
 # Feature 0005 — DORA Band Boundary Canonicalisation
 
-**Status:** In Progress
+**Status:** Implemented
 **Proposal:** [0052](../proposals/0052-dora-band-boundary-canonicalisation.md)
-**ADR:** [0054](../decisions/0054-dora-band-boundary-canonicalisation.md) (pending)
+**ADR:** [0054](../decisions/0054-dora-band-boundary-canonicalisation.md)
 **Date:** 2026-05-07
 
 ---
