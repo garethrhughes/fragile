@@ -38,7 +38,8 @@ function emptyMembership(): SprintMembership {
   return {
     committedKeys: new Set<string>(),
     addedKeys: new Set<string>(),
-    removedKeys: new Set<string>(),
+    committedRemovedKeys: new Set<string>(),
+        addedRemovedKeys: new Set<string>(),
     currentMemberKeys: new Set<string>(),
     logsByIssue: new Map<string, JiraChangelog[]>(),
   };
@@ -154,7 +155,8 @@ describe('PlanningService', () => {
       membershipReconstruct.mockResolvedValue({
         committedKeys: new Set(['ACC-1', 'ACC-2']),
         addedKeys: new Set<string>(),
-        removedKeys: new Set<string>(),
+        committedRemovedKeys: new Set<string>(),
+        addedRemovedKeys: new Set<string>(),
         currentMemberKeys: new Set(['ACC-1', 'ACC-2']),
         logsByIssue: new Map(),
       });
@@ -195,7 +197,8 @@ describe('PlanningService', () => {
       membershipReconstruct.mockResolvedValue({
         committedKeys: new Set(['ACC-1']),
         addedKeys: new Set<string>(),
-        removedKeys: new Set<string>(),
+        committedRemovedKeys: new Set<string>(),
+        addedRemovedKeys: new Set<string>(),
         currentMemberKeys: new Set(['ACC-1']),
         logsByIssue: new Map(),
       });
@@ -227,7 +230,8 @@ describe('PlanningService', () => {
       membershipReconstruct.mockResolvedValue({
         committedKeys: new Set(['ACC-1']),
         addedKeys: new Set<string>(),
-        removedKeys: new Set<string>(),
+        committedRemovedKeys: new Set<string>(),
+        addedRemovedKeys: new Set<string>(),
         currentMemberKeys: new Set(['ACC-1']),
         logsByIssue: new Map(),
       });
@@ -259,7 +263,8 @@ describe('PlanningService', () => {
       membershipReconstruct.mockResolvedValue({
         committedKeys: new Set(['ACC-1', 'ACC-2']),
         addedKeys: new Set<string>(),
-        removedKeys: new Set<string>(),
+        committedRemovedKeys: new Set<string>(),
+        addedRemovedKeys: new Set<string>(),
         currentMemberKeys: new Set(['ACC-1', 'ACC-2']),
         logsByIssue: new Map(),
       });
@@ -290,8 +295,9 @@ describe('PlanningService', () => {
 
       membershipReconstruct.mockResolvedValue({
         committedKeys: new Set(['ACC-1', 'ACC-2', 'ACC-3', 'ACC-4']),
-        addedKeys: new Set(['ACC-5']),         // 1 added
-        removedKeys: new Set(['ACC-4']),       // 1 removed
+        addedKeys: new Set(['ACC-5']),                  // 1 added
+        committedRemovedKeys: new Set(['ACC-4']),       // 1 committed-removed
+        addedRemovedKeys: new Set<string>(),
         currentMemberKeys: new Set(['ACC-1', 'ACC-2', 'ACC-3', 'ACC-5']),
         logsByIssue: new Map(),
       });
@@ -354,7 +360,8 @@ describe('PlanningService', () => {
       membershipReconstruct.mockResolvedValue({
         committedKeys: new Set(['ACC-1', 'ACC-2', 'ACC-3']),
         addedKeys: new Set<string>(),
-        removedKeys: new Set<string>(),
+        committedRemovedKeys: new Set<string>(),
+        addedRemovedKeys: new Set<string>(),
         currentMemberKeys: new Set(['ACC-1', 'ACC-2', 'ACC-3']),
         logsByIssue: new Map(),
       });
@@ -391,7 +398,8 @@ describe('PlanningService', () => {
       membershipReconstruct.mockResolvedValue({
         committedKeys: new Set(['ACC-1', 'ACC-2']),
         addedKeys: new Set<string>(),
-        removedKeys: new Set<string>(),
+        committedRemovedKeys: new Set<string>(),
+        addedRemovedKeys: new Set<string>(),
         currentMemberKeys: new Set(['ACC-1', 'ACC-2']),
         logsByIssue: new Map(),
       });

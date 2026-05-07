@@ -58,7 +58,8 @@ function emptyMembership(): SprintMembership {
   return {
     committedKeys: new Set(),
     addedKeys: new Set(),
-    removedKeys: new Set(),
+    committedRemovedKeys: new Set(),
+    addedRemovedKeys: new Set(),
     currentMemberKeys: new Set(),
     logsByIssue: new Map(),
   };
@@ -101,7 +102,8 @@ function mockSprintMembership(): MockSprintMembership {
       memberships.set(sprintId, {
         committedKeys: new Set(parts.committed ?? []),
         addedKeys: new Set(parts.added ?? []),
-        removedKeys: new Set(parts.removed ?? []),
+        committedRemovedKeys: new Set(parts.removed ?? []),
+        addedRemovedKeys: new Set(),
         currentMemberKeys: new Set([
           ...(parts.committed ?? []),
           ...(parts.added ?? []),

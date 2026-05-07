@@ -356,7 +356,7 @@ describe('SprintMembershipService.reconstruct', () => {
     });
 
     expect(result.committedKeys.has('ACC-70')).toBe(true);
-    expect(result.removedKeys.has('ACC-70')).toBe(true);
+    expect(result.committedRemovedKeys.has('ACC-70')).toBe(true);
   });
 
   it('falls back to name-based matching for legacy rows with no fromId/toId', async () => {

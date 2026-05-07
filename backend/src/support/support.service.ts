@@ -239,7 +239,8 @@ export class SupportService {
       const allKeys = new Set<string>([
         ...m.committedKeys,
         ...m.addedKeys,
-        ...m.removedKeys,
+        ...m.committedRemovedKeys,
+        ...m.addedRemovedKeys,
         ...m.currentMemberKeys,
       ]);
       for (const key of allKeys) {
@@ -263,7 +264,8 @@ export class SupportService {
         ? new Set<string>([
             ...m.committedKeys,
             ...m.addedKeys,
-            ...m.removedKeys,
+            ...m.committedRemovedKeys,
+            ...m.addedRemovedKeys,
             ...m.currentMemberKeys,
           ])
         : new Set();

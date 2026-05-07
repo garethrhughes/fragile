@@ -21,8 +21,17 @@ export interface SprintMembership {
   committedKeys: Set<string>;
   /** Issues added to the sprint after start (mid-sprint additions, not carry-overs). */
   addedKeys: Set<string>;
-  /** Issues removed from the sprint before its end. */
-  removedKeys: Set<string>;
+  /**
+   * Subset of `committedKeys` whose membership ended before `sprint.endDate`.
+   * Disjoint from `addedRemovedKeys`. See proposal 0050 / ADR 0052.
+   */
+  committedRemovedKeys: Set<string>;
+  /**
+   * Subset of `addedKeys` whose membership ended before `sprint.endDate`
+   * (i.e. mid-sprint add-then-remove churn). Disjoint from
+   * `committedRemovedKeys`. See proposal 0050 / ADR 0052.
+   */
+  addedRemovedKeys: Set<string>;
   /** Issues currently in the sprint per the `JiraIssueSprint` join table. */
   currentMemberKeys: Set<string>;
   /**
@@ -31,6 +40,23 @@ export interface SprintMembership {
    * history but is in `currentMemberKeys` (created directly into the sprint).
    */
   logsByIssue: Map<string, JiraChangelog[]>;
+}
+
+/**
+ * Pure summary of a `SprintMembership` for planning-accuracy callers.
+ *
+ * `addedCount` is the gross count of `addedKeys` (includes add-then-remove
+ * churn). `removedCount` reports committed-removed only — add-then-remove
+ * churn is reflected via `addedKeys` exclusively to avoid double-counting in
+ * `scopeChangePercent`. See proposal 0050 / ADR 0052.
+ */
+export interface MembershipSummary {
+  commitmentCount: number;
+  addedCount: number;
+  netAddedCount: number;
+  removedCount: number;
+  finalSetSize: number;
+  scopeChangePercent: number;
 }
 
 /**
@@ -248,7 +274,8 @@ export class SprintMembershipService {
     );
     const committedKeys = new Set<string>();
     const addedKeys = new Set<string>();
-    const removedKeys = new Set<string>();
+    const committedRemovedKeys = new Set<string>();
+    const addedRemovedKeys = new Set<string>();
 
     for (const [issueKey, logs] of logsByIssue) {
       const createdAt = issueCreatedAtMap.get(issueKey);
@@ -309,17 +336,18 @@ export class SprintMembershipService {
 
       if (wasAtStart || wasCarryOver) {
         committedKeys.add(issueKey);
-        if (!inSprintAtEnd) removedKeys.add(issueKey);
+        if (!inSprintAtEnd) committedRemovedKeys.add(issueKey);
       } else if (wasAddedDuringSprint) {
         addedKeys.add(issueKey);
-        if (!inSprintAtEnd) removedKeys.add(issueKey);
+        if (!inSprintAtEnd) addedRemovedKeys.add(issueKey);
       }
     }
 
     return {
       committedKeys,
       addedKeys,
-      removedKeys,
+      committedRemovedKeys,
+      addedRemovedKeys,
       currentMemberKeys,
       logsByIssue,
     };
@@ -329,7 +357,8 @@ export class SprintMembershipService {
     return {
       committedKeys: new Set(),
       addedKeys: new Set(),
-      removedKeys: new Set(),
+      committedRemovedKeys: new Set(),
+      addedRemovedKeys: new Set(),
       currentMemberKeys: new Set(),
       logsByIssue: new Map(),
     };
@@ -477,4 +506,37 @@ export function isCarryOverFromSprint(
       name !== '' && name !== currentSprintName && closedSprintNames.has(name)
     );
   });
+}
+
+/**
+ * Pure projection of a `SprintMembership` to the counts and derived
+ * percentages that planning-accuracy and sprint-detail callers need.
+ *
+ * No I/O, no DB access — safe to call in tight loops or unit tests. See
+ * proposal 0050 / ADR 0052 for the canonical formulas.
+ */
+export function summariseMembership(m: SprintMembership): MembershipSummary {
+  const commitmentCount = m.committedKeys.size;
+  const addedCount = m.addedKeys.size;
+  const netAddedCount = m.addedKeys.size - m.addedRemovedKeys.size;
+  const removedCount = m.committedRemovedKeys.size;
+  const finalSetSize = m.currentMemberKeys.size;
+
+  const scopeChangePercent =
+    commitmentCount > 0
+      ? Math.round(
+          ((m.addedKeys.size + m.committedRemovedKeys.size) /
+            commitmentCount) *
+            10000,
+        ) / 100
+      : 0;
+
+  return {
+    commitmentCount,
+    addedCount,
+    netAddedCount,
+    removedCount,
+    finalSetSize,
+    scopeChangePercent,
+  };
 }

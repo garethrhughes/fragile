@@ -69,7 +69,8 @@ function emptyMembership(): SprintMembership {
   return {
     committedKeys: new Set<string>(),
     addedKeys: new Set<string>(),
-    removedKeys: new Set<string>(),
+    committedRemovedKeys: new Set<string>(),
+        addedRemovedKeys: new Set<string>(),
     currentMemberKeys: new Set<string>(),
     logsByIssue: new Map<string, JiraChangelog[]>(),
   };
@@ -83,7 +84,8 @@ function committedMembership(keys: string[]): SprintMembership {
   return {
     committedKeys: new Set(keys),
     addedKeys: new Set<string>(),
-    removedKeys: new Set<string>(),
+    committedRemovedKeys: new Set<string>(),
+        addedRemovedKeys: new Set<string>(),
     currentMemberKeys: new Set(keys),
     logsByIssue: new Map(keys.map((k) => [k, [] as JiraChangelog[]])),
   };
@@ -289,9 +291,10 @@ describe('SprintDetailService', () => {
       makeIssue({ key: 'ACC-3' }),
     ]);
     sprintMembership.reconstruct.mockResolvedValue({
-      committedKeys: new Set(['ACC-1']),
+      committedKeys: new Set(['ACC-1', 'ACC-3']),
       addedKeys: new Set(['ACC-2']),
-      removedKeys: new Set(['ACC-3']),
+      committedRemovedKeys: new Set(['ACC-3']),
+      addedRemovedKeys: new Set(),
       currentMemberKeys: new Set(['ACC-1', 'ACC-2']),
       logsByIssue: new Map([
         ['ACC-1', []],

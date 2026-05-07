@@ -19,7 +19,10 @@ import {
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
-import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
+import {
+  SprintMembershipService,
+  summariseMembership,
+} from '../sprint-membership/sprint-membership.service.js';
 import { DEFAULT_IN_PROGRESS_NAMES } from '../metrics/status-defaults.js';
 
 // ---------------------------------------------------------------------------
@@ -296,12 +299,19 @@ export class SprintDetailService {
       boardIssues,
     });
 
-    const { committedKeys, addedKeys, removedKeys } = membership;
+    const { committedKeys, addedKeys, committedRemovedKeys, addedRemovedKeys } =
+      membership;
     const sprintStart = sprint.startDate;
 
-    // Build final issue set: (committed ∪ added) \ removed
+    // Build final issue set: (committed ∪ added) \ (every key that left).
+    // The detail view shows "issues currently in the sprint", so we exclude
+    // both committed-removed AND added-then-removed — preserving the semantic
+    // of the old single `removedKeys` spread (proposal 0050 / ADR 0052).
     const finalIssueKeys = new Set<string>([...committedKeys, ...addedKeys]);
-    for (const key of removedKeys) {
+    for (const key of committedRemovedKeys) {
+      finalIssueKeys.delete(key);
+    }
+    for (const key of addedRemovedKeys) {
       finalIssueKeys.delete(key);
     }
 
@@ -570,7 +580,7 @@ export class SprintDetailService {
       // (excludes issues removed from the sprint mid-flight)
       committedCount: issues.filter((i) => !i.addedMidSprint).length,
       addedMidSprintCount: issues.filter((i) => i.addedMidSprint).length,
-      removedCount: removedKeys.size,
+      removedCount: summariseMembership(membership).removedCount,
       completedInSprintCount: issues.filter((i) => i.completedInSprint).length,
       roadmapLinkedCount: issues.filter((i) => i.roadmapStatus !== 'none').length,
       incidentCount: issues.filter((i) => i.isIncident).length,

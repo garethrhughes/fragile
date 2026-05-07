@@ -18,6 +18,7 @@ import { dateToIsoWeekKey } from '../lib/iso-week.js';
 import {
   SprintMembershipService,
   SPRINT_GRACE_PERIOD_MS,
+  summariseMembership,
 } from '../sprint-membership/sprint-membership.service.js';
 
 export interface SprintAccuracy {
@@ -169,7 +170,7 @@ export class PlanningService {
       boardIssues,
     });
 
-    const { committedKeys, addedKeys, removedKeys } = membership;
+    const { committedKeys, addedKeys, currentMemberKeys } = membership;
 
     if (committedKeys.size === 0 && addedKeys.size === 0) {
       return this.emptyAccuracy(sprint);
@@ -185,9 +186,10 @@ export class PlanningService {
       'Released',
     ];
 
-    // Only look at issues that ended up in the sprint (committed + added - removed)
-    const finalSprintKeys = new Set([...committedKeys, ...addedKeys]);
-    for (const key of removedKeys) finalSprintKeys.delete(key);
+    // The actual final-sprint set is `currentMemberKeys` from the join table —
+    // mathematically equivalent to (committed − committedRemoved) ∪ (added − addedRemoved)
+    // and the source of truth for completion checks (proposal 0050 / ADR 0052).
+    const finalSprintKeys = new Set(currentMemberKeys);
 
     const completedKeys = new Set<string>();
 
@@ -249,18 +251,18 @@ export class PlanningService {
       }
     }
 
-    const commitment = committedKeys.size;
-    const added = addedKeys.size;
-    const removed = removedKeys.size;
+    const summary = summariseMembership(membership);
+    const commitment = summary.commitmentCount;
+    const added = summary.addedCount;       // gross
+    const removed = summary.removedCount;   // committed-removed only
     const completed = completedKeys.size;
-    const scopeChangePercent =
-      commitment > 0
-        ? Math.round(((added + removed) / commitment) * 10000) / 100
-        : 0;
+    const scopeChangePercent = summary.scopeChangePercent;
+    // Divisor is the actual final-sprint set (per ADR 0052), not
+    // `commitment + added - removed` which under-counts when add-then-remove
+    // churn was double-subtracted under the old shape.
     const completionRate =
-      commitment + added - removed > 0
-        ? Math.round((completed / (commitment + added - removed)) * 10000) /
-          100
+      currentMemberKeys.size > 0
+        ? Math.round((completed / currentMemberKeys.size) * 10000) / 100
         : 0;
 
     // ---- Planning accuracy ------------------------------------------------
