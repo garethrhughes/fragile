@@ -1,7 +1,7 @@
 # 0054 — Cycle Time Reopen Handling: Pairing First-InProgress with Last-Done
 
 **Date:** 2026-05-06
-**Status:** Draft
+**Status:** Accepted
 **Author:** Architect Agent
 **Related ADRs:** ADR 0024 (Weekend Days Excluded from Lead Time / Cycle Time)
 **Related Proposals:** [0007](0007-cycle-time-report.md)
@@ -190,15 +190,25 @@ See Proposed Solution.
 | Observability | New log field | Log `reopenedIssueCount` per board per period; informs whether reopens are a widespread issue |
 | Security / Compliance | None | |
 
-## Open Questions
+## Resolved Decisions
 
-- **Definition of "reset" status:** the canonical cycle resets when an
-  issue moves into a not-started status (To Do, Backlog). Should
-  "Selected for Development" also reset? Recommend yes — make the reset
-  set the same `boardEntryStatuses` config used elsewhere.
-- **Should aggregation expose all cycles, not just representative?**
-  Yes for the new "rework" view (out of scope), no for the current
-  median-cycle-time card.
+- **Reset status set:** the existing `BoardConfig.boardEntryStatuses`
+  field is reused as the cycle-reset set. For boards where it is `null`
+  (Scrum default), fall back to the hardcoded list
+  `['To Do', 'Backlog', 'Open', 'Reopened']`. No schema change. The
+  helper accepts the resolved set as a parameter; resolution lives in
+  each calling service so the helper stays pure.
+- **Aggregation exposes representative cycle only.** All-cycles surface
+  is out of scope and reserved for a future "rework" view.
+- **Scope:** all four services
+  (`cycle-time.service.ts`, `support.service.ts`,
+  `week-detail.service.ts`, `sprint-detail.service.ts`) route through
+  the shared helper. `sprint-detail.service.ts` currently computes a
+  `leadTimeDays` field with `createdAt → first-Done` semantics; this is
+  preserved as `leadTimeDays`, and a separate `cycleTimeDays` is added
+  via the helper so sprint detail surfaces both — readers can compare
+  end-to-end lead time against pure in-flight cycle time. No existing
+  field is removed or repurposed.
 
 ## Acceptance Criteria
 
@@ -218,5 +228,12 @@ See Proposed Solution.
 - An integration test asserts that the same board returns the same
   cycle-time number across the cycle-time, sprint-detail, week-detail,
   and support views.
-- ADR 0055 (to be created on acceptance) records the canonical cycle
-  definition and the choice of last-completed-cycle as representative.
+- ADR 0056 (to be created on acceptance) records the canonical cycle
+  definition, the choice of last-completed-cycle as representative, and
+  the reuse of `boardEntryStatuses` as the cycle-reset set.
+- The existing test `cycle-time.service.spec.ts` line 504
+  (`'uses the LAST done-transition in period for re-opened issues'`)
+  is replaced by a test asserting the new representative-cycle
+  semantics: same input fixture, but expected `cycleStart` is the
+  *second* In Progress (not the first) and `cycleEnd` is the second
+  Done.
