@@ -1,7 +1,7 @@
 # 0049 — CFR Denominator Semantics: Failures Per Deployment vs Failures Per Deployment-Day
 
 **Date:** 2026-05-06
-**Status:** Draft
+**Status:** Accepted
 **Author:** Architect Agent
 **Related ADRs:** ADR 0001 (fixVersion as primary deployment signal), ADR 0021 (DORA Metrics Calculation Reference — proposal 0021)
 **Related Proposals:** [0017](0017-metric-calculation-audit.md), [0018](0018-metric-calculation-fixes.md), [0021](0021-dora-metrics-calculation-reference.md), [0030](0030-metrics-correctness-second-audit-fixes.md)
