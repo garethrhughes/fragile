@@ -262,25 +262,54 @@ describe('RecommendationService', () => {
       expect(recs.find((r) => r.id === 'LT-001')!.severity).toBe('critical');
     });
 
-    it('LT-001: does NOT fire when medianLeadTimeDays <= 30', () => {
-      const recs = service.recommend(baseCtx({ medianLeadTimeDays: 30 }));
+    it('LT-001: does NOT fire when medianLeadTimeDays < 30 (proposal 0052)', () => {
+      const recs = service.recommend(baseCtx({ medianLeadTimeDays: 29.99 }));
       expect(ids(recs)).not.toContain('LT-001');
     });
 
-    it('LT-002: fires when 7 < medianLeadTimeDays <= 30', () => {
+    // Proposal 0052: LT classifier now puts 30.0 in `low`, so LT-001
+    // (the low-band recommendation) must fire at the boundary.
+    it('LT-001: fires when medianLeadTimeDays === 30 exactly (proposal 0052 boundary)', () => {
+      const recs = service.recommend(baseCtx({ medianLeadTimeDays: 30 }));
+      expect(ids(recs)).toContain('LT-001');
+    });
+
+    it('LT-002: fires when 7 <= medianLeadTimeDays < 30 (medium band)', () => {
       const recs = service.recommend(baseCtx({ medianLeadTimeDays: 15 }));
       expect(ids(recs)).toContain('LT-002');
       expect(recs.find((r) => r.id === 'LT-002')!.severity).toBe('warning');
     });
 
-    it('LT-003: fires when 1 < medianLeadTimeDays <= 7', () => {
+    // Proposal 0052: LT 7.0 is now medium (not high), so LT-002 must fire.
+    it('LT-002: fires when medianLeadTimeDays === 7 exactly (proposal 0052 boundary)', () => {
+      const recs = service.recommend(baseCtx({ medianLeadTimeDays: 7 }));
+      expect(ids(recs)).toContain('LT-002');
+    });
+
+    it('LT-003: fires when 1 <= medianLeadTimeDays < 7 (high band)', () => {
       const recs = service.recommend(baseCtx({ medianLeadTimeDays: 3 }));
       expect(ids(recs)).toContain('LT-003');
     });
 
-    it('LT-004: fires when medianLeadTimeDays <= 1', () => {
+    // Proposal 0052: LT 1.0 is now high (not elite), so LT-003 fires and
+    // LT-004 must NOT fire at the boundary.
+    it('LT-003: fires when medianLeadTimeDays === 1 exactly (proposal 0052 boundary)', () => {
+      const recs = service.recommend(baseCtx({ medianLeadTimeDays: 1 }));
+      expect(ids(recs)).toContain('LT-003');
+    });
+
+    it('LT-004: fires when medianLeadTimeDays < 1 (elite band)', () => {
       const recs = service.recommend(baseCtx({ medianLeadTimeDays: 0.5 }));
       expect(ids(recs)).toContain('LT-004');
+    });
+
+    // RED contract test (proposal 0052 / feature 0005 AC): a team with
+    // exactly 1.0 day median lead time is in the `high` band per the
+    // canonical classifier; the elite-LT recommendation must NOT fire,
+    // otherwise the page contradicts itself (band='high' but rec='elite').
+    it('LT-004: does NOT fire when medianLeadTimeDays === 1 exactly (proposal 0052)', () => {
+      const recs = service.recommend(baseCtx({ medianLeadTimeDays: 1.0 }));
+      expect(ids(recs)).not.toContain('LT-004');
     });
 
     it('LT-005: fires when medianLeadTimeDays is null', () => {
@@ -339,25 +368,49 @@ describe('RecommendationService', () => {
       expect(recs.find((r) => r.id === 'CFR-001')!.severity).toBe('critical');
     });
 
-    it('CFR-001: does NOT fire when changeFailureRate <= 15', () => {
-      const recs = service.recommend(baseCtx({ changeFailureRate: 15 }));
+    it('CFR-001: does NOT fire when changeFailureRate < 15 (proposal 0052)', () => {
+      const recs = service.recommend(baseCtx({ changeFailureRate: 14.99 }));
       expect(ids(recs)).not.toContain('CFR-001');
     });
 
-    it('CFR-002: fires when 10 < changeFailureRate <= 15', () => {
+    // Proposal 0052: CFR classifier puts 15.0 in `low`, so CFR-001 fires.
+    it('CFR-001: fires when changeFailureRate === 15 exactly (proposal 0052 boundary)', () => {
+      const recs = service.recommend(baseCtx({ changeFailureRate: 15 }));
+      expect(ids(recs)).toContain('CFR-001');
+    });
+
+    it('CFR-002: fires when 10 <= changeFailureRate < 15 (medium band)', () => {
       const recs = service.recommend(baseCtx({ changeFailureRate: 12 }));
       expect(ids(recs)).toContain('CFR-002');
       expect(recs.find((r) => r.id === 'CFR-002')!.severity).toBe('warning');
     });
 
-    it('CFR-003: fires when 5 < changeFailureRate <= 10', () => {
+    // Proposal 0052: CFR 10.0 is now medium (not high), so CFR-002 fires.
+    it('CFR-002: fires when changeFailureRate === 10 exactly (proposal 0052 boundary)', () => {
+      const recs = service.recommend(baseCtx({ changeFailureRate: 10 }));
+      expect(ids(recs)).toContain('CFR-002');
+    });
+
+    it('CFR-003: fires when 5 <= changeFailureRate < 10 (high band)', () => {
       const recs = service.recommend(baseCtx({ changeFailureRate: 7 }));
       expect(ids(recs)).toContain('CFR-003');
     });
 
-    it('CFR-004: fires when changeFailureRate <= 5', () => {
+    // Proposal 0052: CFR 5.0 is now high (not elite), so CFR-003 fires.
+    it('CFR-003: fires when changeFailureRate === 5 exactly (proposal 0052 boundary)', () => {
+      const recs = service.recommend(baseCtx({ changeFailureRate: 5 }));
+      expect(ids(recs)).toContain('CFR-003');
+    });
+
+    it('CFR-004: fires when changeFailureRate < 5 (elite band)', () => {
       const recs = service.recommend(baseCtx({ changeFailureRate: 3 }));
       expect(ids(recs)).toContain('CFR-004');
+    });
+
+    // Proposal 0052: CFR 5.0 must NOT trigger the elite recommendation.
+    it('CFR-004: does NOT fire when changeFailureRate === 5 exactly (proposal 0052)', () => {
+      const recs = service.recommend(baseCtx({ changeFailureRate: 5 }));
+      expect(ids(recs)).not.toContain('CFR-004');
     });
 
     it('CFR-001 message interpolates failure rate percentage', () => {
