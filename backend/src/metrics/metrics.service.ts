@@ -275,7 +275,7 @@ export class MetricsService {
       return cached;
     }
 
-    let { startDate, endDate } = this.resolvePeriod({ quarter: effectiveQuarter });
+    const { startDate, endDate } = this.resolvePeriod({ quarter: effectiveQuarter });
     const boardIds = await this.resolveBoardIds(query.boardId);
 
     // RC-6: parallelize all per-board calls using Promise.all over boardIds.
@@ -552,6 +552,19 @@ export class MetricsService {
         );
         const allObs = results.flatMap((r) => r.observations);
         const sorted = allObs.map((o) => o.cycleTimeDays).sort((a, b) => a - b);
+        // Empty period → null percentiles + null band (proposal 0054 AC5).
+        // Avoid classifyCycleTime(0) which would mis-band as 'excellent'.
+        if (sorted.length === 0) {
+          return {
+            label: q.label,
+            start: q.startDate.toISOString(),
+            end: q.endDate.toISOString(),
+            medianCycleTimeDays: null,
+            p85CycleTimeDays: null,
+            sampleSize: 0,
+            band: null,
+          };
+        }
         const p50 = percentile(sorted, 50);
         return {
           label: q.label,

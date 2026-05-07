@@ -323,7 +323,7 @@ describe('LeadTimeService', () => {
 
       const slice = makeSlice({
         issues: [
-          { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', fixVersion: null, labels: [] } as JiraIssue,
+          { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', fixVersion: null, labels: [] } as unknown as JiraIssue,
         ],
         changelogs: [
           { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: inProgress } as JiraChangelog,
@@ -343,7 +343,7 @@ describe('LeadTimeService', () => {
 
       const slice = makeSlice({
         issues: [
-          { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', fixVersion: null, labels: [] } as JiraIssue,
+          { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', fixVersion: null, labels: [] } as unknown as JiraIssue,
         ],
         changelogs: [
           { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: inProgress } as JiraChangelog,
@@ -359,7 +359,7 @@ describe('LeadTimeService', () => {
     it('counts anomaly when no In Progress transition exists', () => {
       const slice = makeSlice({
         issues: [
-          { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', fixVersion: null, labels: [] } as JiraIssue,
+          { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', fixVersion: null, labels: [] } as unknown as JiraIssue,
         ],
         changelogs: [
           { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: new Date('2025-02-01') } as JiraChangelog,
@@ -381,7 +381,7 @@ describe('LeadTimeService', () => {
       const slice = makeSlice({
         wtEntity: makeWtEntity(true),
         issues: [
-          { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', fixVersion: null, labels: [] } as JiraIssue,
+          { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', fixVersion: null, labels: [] } as unknown as JiraIssue,
         ],
         changelogs: [
           { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: inProgress } as JiraChangelog,

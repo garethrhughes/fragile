@@ -5,6 +5,11 @@ const RoadmapYamlSchema = z.object({
   description: z.string().nullable().optional(),
   startDateFieldId: z.string().nullable().optional(),
   targetDateFieldId: z.string().nullable().optional(),
+  /**
+   * Conflict resolution policy when a single epic is linked to multiple
+   * JPD ideas (proposal 0053). Defaults to 'earliest' if absent.
+   */
+  epicConflictResolution: z.enum(['earliest', 'latest']).optional(),
 });
 
 export const RoadmapYamlFileSchema = z

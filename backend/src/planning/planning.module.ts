@@ -8,10 +8,12 @@ import {
   JiraChangelog,
   BoardConfig,
 } from '../database/entities/index.js';
+import { SprintMembershipModule } from '../sprint-membership/sprint-membership.module.js';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([JiraSprint, JiraIssue, JiraChangelog, BoardConfig]),
+    SprintMembershipModule,
   ],
   controllers: [PlanningController],
   providers: [PlanningService],

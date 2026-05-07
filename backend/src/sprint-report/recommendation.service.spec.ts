@@ -212,6 +212,29 @@ describe('RecommendationService', () => {
       expect(recs.find((r) => r.id === 'RC-002')!.severity).toBe('warning');
     });
 
+    // -----------------------------------------------------------------------
+    // D-1 regression (proposal 0055): && / || precedence in interpolate()
+    //
+    // Before the fix, `A || B || C && D` evaluated as `A || B || (C && D)`,
+    // so the {pct} branch for delivery-rate templates was selected for
+    // any template containing 'delivered only' OR 'Delivery rate'
+    // regardless of '%'. After the fix the predicate is
+    // `(A || B || C) && %`, so a roadmap template like
+    // '{pct}% roadmap coverage' falls through to the roadmap branch.
+    //
+    // Behavioural assertion: an RC-002 message at 35% coverage and 30%
+    // delivery rate must format the roadmap value (35), NOT the delivery
+    // rate value (30).
+    // -----------------------------------------------------------------------
+    it('RC-002 message interpolates roadmap coverage, not delivery rate (D-1 regression)', () => {
+      const recs = service.recommend(
+        baseCtx({ roadmapCoverage: 35, inScopeCount: 5, deliveryRate: 0.3 }),
+      );
+      const msg = recs.find((r) => r.id === 'RC-002')!.message;
+      expect(msg).toContain('35');
+      expect(msg).not.toContain('30%');
+    });
+
     it('RC-003: fires when 50 <= roadmapCoverage < 80', () => {
       const recs = service.recommend(baseCtx({ roadmapCoverage: 65, inScopeCount: 5 }));
       expect(ids(recs)).toContain('RC-003');
@@ -239,25 +262,54 @@ describe('RecommendationService', () => {
       expect(recs.find((r) => r.id === 'LT-001')!.severity).toBe('critical');
     });
 
-    it('LT-001: does NOT fire when medianLeadTimeDays <= 30', () => {
-      const recs = service.recommend(baseCtx({ medianLeadTimeDays: 30 }));
+    it('LT-001: does NOT fire when medianLeadTimeDays < 30 (proposal 0052)', () => {
+      const recs = service.recommend(baseCtx({ medianLeadTimeDays: 29.99 }));
       expect(ids(recs)).not.toContain('LT-001');
     });
 
-    it('LT-002: fires when 7 < medianLeadTimeDays <= 30', () => {
+    // Proposal 0052: LT classifier now puts 30.0 in `low`, so LT-001
+    // (the low-band recommendation) must fire at the boundary.
+    it('LT-001: fires when medianLeadTimeDays === 30 exactly (proposal 0052 boundary)', () => {
+      const recs = service.recommend(baseCtx({ medianLeadTimeDays: 30 }));
+      expect(ids(recs)).toContain('LT-001');
+    });
+
+    it('LT-002: fires when 7 <= medianLeadTimeDays < 30 (medium band)', () => {
       const recs = service.recommend(baseCtx({ medianLeadTimeDays: 15 }));
       expect(ids(recs)).toContain('LT-002');
       expect(recs.find((r) => r.id === 'LT-002')!.severity).toBe('warning');
     });
 
-    it('LT-003: fires when 1 < medianLeadTimeDays <= 7', () => {
+    // Proposal 0052: LT 7.0 is now medium (not high), so LT-002 must fire.
+    it('LT-002: fires when medianLeadTimeDays === 7 exactly (proposal 0052 boundary)', () => {
+      const recs = service.recommend(baseCtx({ medianLeadTimeDays: 7 }));
+      expect(ids(recs)).toContain('LT-002');
+    });
+
+    it('LT-003: fires when 1 <= medianLeadTimeDays < 7 (high band)', () => {
       const recs = service.recommend(baseCtx({ medianLeadTimeDays: 3 }));
       expect(ids(recs)).toContain('LT-003');
     });
 
-    it('LT-004: fires when medianLeadTimeDays <= 1', () => {
+    // Proposal 0052: LT 1.0 is now high (not elite), so LT-003 fires and
+    // LT-004 must NOT fire at the boundary.
+    it('LT-003: fires when medianLeadTimeDays === 1 exactly (proposal 0052 boundary)', () => {
+      const recs = service.recommend(baseCtx({ medianLeadTimeDays: 1 }));
+      expect(ids(recs)).toContain('LT-003');
+    });
+
+    it('LT-004: fires when medianLeadTimeDays < 1 (elite band)', () => {
       const recs = service.recommend(baseCtx({ medianLeadTimeDays: 0.5 }));
       expect(ids(recs)).toContain('LT-004');
+    });
+
+    // RED contract test (proposal 0052 / feature 0005 AC): a team with
+    // exactly 1.0 day median lead time is in the `high` band per the
+    // canonical classifier; the elite-LT recommendation must NOT fire,
+    // otherwise the page contradicts itself (band='high' but rec='elite').
+    it('LT-004: does NOT fire when medianLeadTimeDays === 1 exactly (proposal 0052)', () => {
+      const recs = service.recommend(baseCtx({ medianLeadTimeDays: 1.0 }));
+      expect(ids(recs)).not.toContain('LT-004');
     });
 
     it('LT-005: fires when medianLeadTimeDays is null', () => {
@@ -316,25 +368,49 @@ describe('RecommendationService', () => {
       expect(recs.find((r) => r.id === 'CFR-001')!.severity).toBe('critical');
     });
 
-    it('CFR-001: does NOT fire when changeFailureRate <= 15', () => {
-      const recs = service.recommend(baseCtx({ changeFailureRate: 15 }));
+    it('CFR-001: does NOT fire when changeFailureRate < 15 (proposal 0052)', () => {
+      const recs = service.recommend(baseCtx({ changeFailureRate: 14.99 }));
       expect(ids(recs)).not.toContain('CFR-001');
     });
 
-    it('CFR-002: fires when 10 < changeFailureRate <= 15', () => {
+    // Proposal 0052: CFR classifier puts 15.0 in `low`, so CFR-001 fires.
+    it('CFR-001: fires when changeFailureRate === 15 exactly (proposal 0052 boundary)', () => {
+      const recs = service.recommend(baseCtx({ changeFailureRate: 15 }));
+      expect(ids(recs)).toContain('CFR-001');
+    });
+
+    it('CFR-002: fires when 10 <= changeFailureRate < 15 (medium band)', () => {
       const recs = service.recommend(baseCtx({ changeFailureRate: 12 }));
       expect(ids(recs)).toContain('CFR-002');
       expect(recs.find((r) => r.id === 'CFR-002')!.severity).toBe('warning');
     });
 
-    it('CFR-003: fires when 5 < changeFailureRate <= 10', () => {
+    // Proposal 0052: CFR 10.0 is now medium (not high), so CFR-002 fires.
+    it('CFR-002: fires when changeFailureRate === 10 exactly (proposal 0052 boundary)', () => {
+      const recs = service.recommend(baseCtx({ changeFailureRate: 10 }));
+      expect(ids(recs)).toContain('CFR-002');
+    });
+
+    it('CFR-003: fires when 5 <= changeFailureRate < 10 (high band)', () => {
       const recs = service.recommend(baseCtx({ changeFailureRate: 7 }));
       expect(ids(recs)).toContain('CFR-003');
     });
 
-    it('CFR-004: fires when changeFailureRate <= 5', () => {
+    // Proposal 0052: CFR 5.0 is now high (not elite), so CFR-003 fires.
+    it('CFR-003: fires when changeFailureRate === 5 exactly (proposal 0052 boundary)', () => {
+      const recs = service.recommend(baseCtx({ changeFailureRate: 5 }));
+      expect(ids(recs)).toContain('CFR-003');
+    });
+
+    it('CFR-004: fires when changeFailureRate < 5 (elite band)', () => {
       const recs = service.recommend(baseCtx({ changeFailureRate: 3 }));
       expect(ids(recs)).toContain('CFR-004');
+    });
+
+    // Proposal 0052: CFR 5.0 must NOT trigger the elite recommendation.
+    it('CFR-004: does NOT fire when changeFailureRate === 5 exactly (proposal 0052)', () => {
+      const recs = service.recommend(baseCtx({ changeFailureRate: 5 }));
+      expect(ids(recs)).not.toContain('CFR-004');
     });
 
     it('CFR-001 message interpolates failure rate percentage', () => {
@@ -447,6 +523,92 @@ describe('RecommendationService', () => {
         const cfrRecs = recs.filter((r) => r.id.startsWith('CFR-'));
         expect(cfrRecs).toHaveLength(1);
       }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // N/A propagation (proposal 0051 / ADR 0053)
+  //
+  // When a DORA-derived input is null, the corresponding rules MUST be skipped
+  // — we never coerce a missing value into a synthesised recommendation. Lead
+  // time has its own dedicated null-signal rule (LT-005); the other three
+  // dimensions silently emit no recommendation when their input is null.
+  // -------------------------------------------------------------------------
+
+  describe('N/A propagation for DORA inputs', () => {
+    it('skips all DF rules when deploymentsPerDay is null', () => {
+      const recs = service.recommend(baseCtx({ deploymentsPerDay: null }));
+      const dfRecs = recs.filter((r) => r.id.startsWith('DF-'));
+      expect(dfRecs).toHaveLength(0);
+    });
+
+    it('skips all CFR rules when changeFailureRate is null', () => {
+      const recs = service.recommend(baseCtx({ changeFailureRate: null }));
+      const cfrRecs = recs.filter((r) => r.id.startsWith('CFR-'));
+      expect(cfrRecs).toHaveLength(0);
+    });
+
+    it('skips MT-001..MT-004 when medianMttrHours is null (MT-005 still fires when no incidents)', () => {
+      const recs = service.recommend(
+        baseCtx({ medianMttrHours: null, incidentCount: 0 }),
+      );
+      const mtRecs = recs.filter((r) => r.id.startsWith('MT-'));
+      // MT-005 fires on incidentCount===0 and does not depend on MTTR
+      expect(mtRecs.map((r) => r.id)).toEqual(['MT-005']);
+    });
+
+    it('skips ALL MT rules when medianMttrHours is null AND incidents > 0', () => {
+      const recs = service.recommend(
+        baseCtx({ medianMttrHours: null, incidentCount: 3 }),
+      );
+      const mtRecs = recs.filter((r) => r.id.startsWith('MT-'));
+      expect(mtRecs).toHaveLength(0);
+    });
+
+    it('still fires LT-005 when medianLeadTimeDays is null (existing behaviour)', () => {
+      const recs = service.recommend(baseCtx({ medianLeadTimeDays: null }));
+      expect(ids(recs)).toContain('LT-005');
+    });
+
+    // Composite assertion: a sprint with all-null DORA inputs produces zero
+    // DORA-derived recommendations (DF/CFR/MT) but still emits the non-DORA
+    // rules — delivery rate, scope stability, roadmap coverage — and the
+    // dedicated null-signal rules LT-005 (lead time absent) and MT-005 (no
+    // incidents).
+    it('all-null DORA inputs produce no DORA-derived recommendations (DF/CFR/MT-001..004), but non-DORA recommendations still fire', () => {
+      const recs = service.recommend(
+        baseCtx({
+          // All DORA inputs absent
+          medianLeadTimeDays: null,
+          deploymentsPerDay: null,
+          changeFailureRate: null,
+          medianMttrHours: null,
+          incidentCount: 0,
+          // Healthy non-DORA inputs
+          deliveryRate: 1.0,
+          inScopeCount: 10,
+          committedCount: 10,
+          addedMidSprintCount: 0,
+          removedCount: 0,
+          roadmapCoverage: 90,
+        }),
+      );
+
+      // No DF rule fires
+      expect(recs.filter((r) => r.id.startsWith('DF-'))).toHaveLength(0);
+      // No CFR rule fires
+      expect(recs.filter((r) => r.id.startsWith('CFR-'))).toHaveLength(0);
+      // No MT-001..004 rules fire (only the no-incidents MT-005 may)
+      expect(
+        recs.filter((r) => r.id.startsWith('MT-') && r.id !== 'MT-005'),
+      ).toHaveLength(0);
+
+      // Non-DORA recommendations still emitted
+      expect(ids(recs)).toContain('DR-004'); // delivery rate >= 1.0
+      expect(ids(recs)).toContain('SS-004'); // excellent scope stability
+      expect(ids(recs)).toContain('RC-004'); // strong roadmap alignment
+      // Lead time has its own dedicated null-signal rule
+      expect(ids(recs)).toContain('LT-005');
     });
   });
 });

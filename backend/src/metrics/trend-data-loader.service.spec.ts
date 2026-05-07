@@ -8,7 +8,7 @@
  * mock-intercepted so no real DB is required.
  */
 
-import { Repository, In, Between } from 'typeorm';
+import { Repository } from 'typeorm';
 import {
   JiraIssue,
   JiraChangelog,
@@ -120,14 +120,20 @@ describe('TrendDataLoader', () => {
     );
   });
 
-  it('queries changelogs with changedAt BETWEEN rangeStart and rangeEnd (lower and upper bounds)', async () => {
+  // Proposal 0055 B-1: changelogs are filtered by issueKey + field='status'
+  // ONLY — no changedAt date filter. A status transition may legitimately
+  // occur AFTER the date window for an issue created INSIDE the window
+  // (e.g. lead time computed from createdAt → first Done transition that
+  // happens days later). Filtering by changedAt would silently drop those.
+  it('queries changelogs by issueKey + field=status with NO changedAt window filter (B-1)', async () => {
     issueRepo.find.mockResolvedValue([
       { key: 'ACC-1', boardId: 'ACC', issueType: 'Story' },
     ] as unknown as JiraIssue[]);
 
+    const where = jest.fn().mockReturnThis();
     const andWhere = jest.fn().mockReturnThis();
     const qb = {
-      where: jest.fn().mockReturnThis(),
+      where,
       andWhere,
       orderBy: jest.fn().mockReturnThis(),
       getMany: jest.fn().mockResolvedValue([]),
@@ -136,14 +142,20 @@ describe('TrendDataLoader', () => {
 
     await loader.load('ACC', rangeStart, rangeEnd);
 
-    const changedAtCalls = andWhere.mock.calls.filter(
-      (args) => typeof args[0] === 'string' && args[0].includes('changedAt'),
-    );
-    expect(changedAtCalls.length).toBe(2);
-    // Lower bound
-    expect(changedAtCalls[0]?.[1]).toMatchObject({ from: rangeStart });
-    // Upper bound
-    expect(changedAtCalls[1]?.[1]).toMatchObject({ to: rangeEnd });
+    // Collect every SQL fragment passed to where/andWhere.
+    const allFragments = [
+      ...where.mock.calls.map((args) => (typeof args[0] === 'string' ? args[0] : '')),
+      ...andWhere.mock.calls.map((args) => (typeof args[0] === 'string' ? args[0] : '')),
+    ];
+
+    // No fragment may reference changedAt (the regression we are guarding).
+    expect(
+      allFragments.some((f) => f.includes('changedAt')),
+    ).toBe(false);
+
+    // Must filter by issue keys (limits blast radius) and status field.
+    expect(allFragments.some((f) => f.includes('issueKey'))).toBe(true);
+    expect(allFragments.some((f) => f.includes('field'))).toBe(true);
   });
 
   it('queries versions with releaseDate Between rangeStart and rangeEnd', async () => {

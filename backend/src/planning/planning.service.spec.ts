@@ -8,6 +8,10 @@ import {
   JiraChangelog,
   BoardConfig,
 } from '../database/entities/index.js';
+import {
+  SprintMembershipService,
+  SprintMembership,
+} from '../sprint-membership/sprint-membership.service.js';
 
 function mockRepo<T extends object>(): jest.Mocked<Repository<T>> {
   return {
@@ -24,8 +28,32 @@ function mockRepo<T extends object>(): jest.Mocked<Repository<T>> {
 
 function mockConfigService(): jest.Mocked<ConfigService> {
   return {
-    get: jest.fn().mockImplementation((_key: string, defaultValue?: unknown) => defaultValue ?? 'UTC'),
+    get: jest.fn().mockImplementation(
+      (_key: string, defaultValue?: unknown) => defaultValue ?? 'UTC',
+    ),
   } as unknown as jest.Mocked<ConfigService>;
+}
+
+function emptyMembership(): SprintMembership {
+  return {
+    committedKeys: new Set<string>(),
+    addedKeys: new Set<string>(),
+    committedRemovedKeys: new Set<string>(),
+    addedRemovedKeys: new Set<string>(),
+    currentMemberKeys: new Set<string>(),
+    logsByIssue: new Map<string, JiraChangelog[]>(),
+  };
+}
+
+function mockSprintMembership(): {
+  service: jest.Mocked<SprintMembershipService>;
+  reconstruct: jest.Mock;
+} {
+  const reconstruct = jest.fn().mockResolvedValue(emptyMembership());
+  return {
+    service: { reconstruct } as unknown as jest.Mocked<SprintMembershipService>,
+    reconstruct,
+  };
 }
 
 describe('PlanningService', () => {
@@ -34,6 +62,7 @@ describe('PlanningService', () => {
   let issueRepo: jest.Mocked<Repository<JiraIssue>>;
   let changelogRepo: jest.Mocked<Repository<JiraChangelog>>;
   let boardConfigRepo: jest.Mocked<Repository<BoardConfig>>;
+  let membershipReconstruct: jest.Mock;
 
   beforeEach(() => {
     sprintRepo = mockRepo<JiraSprint>();
@@ -41,14 +70,22 @@ describe('PlanningService', () => {
     changelogRepo = mockRepo<JiraChangelog>();
     boardConfigRepo = mockRepo<BoardConfig>();
 
+    const membership = mockSprintMembership();
+    membershipReconstruct = membership.reconstruct;
+
     service = new PlanningService(
       sprintRepo,
       issueRepo,
       changelogRepo,
       boardConfigRepo,
       mockConfigService(),
+      membership.service,
     );
   });
+
+  // -------------------------------------------------------------------------
+  // getAccuracy — Kanban + empty
+  // -------------------------------------------------------------------------
 
   describe('getAccuracy', () => {
     it('should throw for Kanban boards', async () => {
@@ -74,462 +111,370 @@ describe('PlanningService', () => {
 
       expect(result).toEqual([]);
     });
+  });
 
-    it('should calculate sprint accuracy with committed issues', async () => {
-      const sprint: JiraSprint = {
-        id: 'sprint-1',
-        name: 'Sprint 1',
-        boardId: 'ACC',
-        state: 'closed',
-        startDate: new Date('2025-01-06'),
-        endDate: new Date('2025-01-20'),
-        goal: '',
-      } as JiraSprint;
+  // -------------------------------------------------------------------------
+  // Orchestration: PlanningService composes membership + completion + points
+  //
+  // The membership reconstruction algorithm itself is covered in
+  // sprint-membership.service.spec.ts (see ADR 0049). These tests verify
+  // PlanningService correctly maps a SprintMembership into a SprintAccuracy.
+  // -------------------------------------------------------------------------
 
-      // find is called twice: first for closed sprints (closedSprintNames), then for active sprints
+  describe('getAccuracy orchestration', () => {
+    const sprint: JiraSprint = {
+      id: 'sprint-1',
+      name: 'Sprint 1',
+      boardId: 'ACC',
+      state: 'closed',
+      startDate: new Date('2025-01-01T00:00:00Z'),
+      endDate: new Date('2025-01-14T23:59:59Z'),
+      goal: '',
+    } as JiraSprint;
+
+    const activeSprint: JiraSprint = {
+      ...sprint,
+      state: 'active',
+      endDate: null as unknown as Date,
+    } as JiraSprint;
+
+    function setBoardSprints(sprints: JiraSprint[]): void {
       sprintRepo.find
-        .mockResolvedValueOnce([sprint])   // closed sprints (used for both closedSprintNames AND list)
-        .mockResolvedValueOnce([]);        // active sprints
+        .mockResolvedValueOnce(sprints.filter((s) => s.state === 'closed'))
+        .mockResolvedValueOnce(sprints.filter((s) => s.state === 'active'));
+    }
 
-      // All board issues (includes issues from this sprint)
+    it('uses status changelog to detect completion in closed sprints', async () => {
+      setBoardSprints([sprint]);
+
       issueRepo.find.mockResolvedValue([
-        { key: 'ACC-1', sprintId: 'sprint-1', status: 'Done', boardId: 'ACC', issueType: 'Story', points: null, createdAt: new Date('2025-01-01') },
-        { key: 'ACC-2', sprintId: 'sprint-1', status: 'Done', boardId: 'ACC', issueType: 'Story', points: null, createdAt: new Date('2025-01-01') },
-        { key: 'ACC-3', sprintId: 'sprint-1', status: 'In Progress', boardId: 'ACC', issueType: 'Story', points: null, createdAt: new Date('2025-01-01') },
+        { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', status: 'Done', points: null, createdAt: new Date('2024-12-01') },
+        { key: 'ACC-2', boardId: 'ACC', issueType: 'Story', status: 'In Progress', points: null, createdAt: new Date('2024-12-01') },
       ] as unknown as JiraIssue[]);
 
-      let qbCallCount = 0;
-      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-        qbCallCount++;
-        const qb = {
-          where: jest.fn().mockReturnThis(),
-          andWhere: jest.fn().mockReturnThis(),
-          orderBy: jest.fn().mockReturnThis(),
-          getMany: jest.fn(),
-        };
+      membershipReconstruct.mockResolvedValue({
+        committedKeys: new Set(['ACC-1', 'ACC-2']),
+        addedKeys: new Set<string>(),
+        committedRemovedKeys: new Set<string>(),
+        addedRemovedKeys: new Set<string>(),
+        currentMemberKeys: new Set(['ACC-1', 'ACC-2']),
+        logsByIssue: new Map(),
+      });
 
-        if (qbCallCount === 1) {
-          // Sprint changelogs: all 3 added before sprint start
-          qb.getMany.mockResolvedValue([
-            {
-              issueKey: 'ACC-1',
-              field: 'Sprint',
-              toValue: 'Sprint 1',
-              fromValue: null,
-              changedAt: new Date('2025-01-04'),
-            },
-            {
-              issueKey: 'ACC-2',
-              field: 'Sprint',
-              toValue: 'Sprint 1',
-              fromValue: null,
-              changedAt: new Date('2025-01-05'),
-            },
-            {
-              issueKey: 'ACC-3',
-              field: 'Sprint',
-              toValue: 'Sprint 1',
-              fromValue: null,
-              changedAt: new Date('2025-01-05'),
-            },
-          ]);
-        } else if (qbCallCount === 2) {
-          // Status changelogs for final sprint issues
-          qb.getMany.mockResolvedValue([
-            {
-              issueKey: 'ACC-1',
-              field: 'status',
-              toValue: 'Done',
-              changedAt: new Date('2025-01-15'),
-            },
-            {
-              issueKey: 'ACC-2',
-              field: 'status',
-              toValue: 'Done',
-              changedAt: new Date('2025-01-18'),
-            },
-          ]);
-        } else {
-          qb.getMany.mockResolvedValue([]);
-        }
-        return qb;
+      // Status changelog: only ACC-1 transitioned to Done before sprint end
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          { issueKey: 'ACC-1', field: 'status', toValue: 'Done',
+            changedAt: new Date('2025-01-10T00:00:00Z') },
+        ] as unknown as JiraChangelog[]),
       });
 
       const result = await service.getAccuracy('ACC');
 
       expect(result).toHaveLength(1);
-      expect(result[0].commitment).toBe(3);
-      expect(result[0].added).toBe(0);
-      expect(result[0].removed).toBe(0);
-      // completed: ACC-1 (Done status), ACC-2 (Done status) = 2
-      // ACC-3 is In Progress and has no done transition
-      expect(result[0].completed).toBe(2);
-      // completionRate = 2 / (3 + 0 - 0) * 100 = 66.67
-      expect(result[0].completionRate).toBeCloseTo(66.67, 1);
+      expect(result[0].commitment).toBe(2);
+      expect(result[0].completed).toBe(1);
+      expect(result[0].completionRate).toBe(50);
     });
 
-    it('should detect added issues (after sprint start)', async () => {
-      const sprint: JiraSprint = {
-        id: 'sprint-2',
-        name: 'Sprint 2',
-        boardId: 'ACC',
-        state: 'closed',
-        startDate: new Date('2025-02-01'),
-        endDate: new Date('2025-02-14'),
-        goal: '',
-      } as JiraSprint;
-
-      // find is called twice: first for closed sprints (closedSprintNames), then for active sprints
-      sprintRepo.find
-        .mockResolvedValueOnce([sprint])   // closed sprints (used for both closedSprintNames AND list)
-        .mockResolvedValueOnce([]);        // active sprints
+    // ── D-2 regression (proposal 0055) ────────────────────────────────────
+    // Carry-over scenario: an issue completed in a *previous* sprint must
+    // NOT be counted as completed in this sprint, even when it is added
+    // back to this sprint for follow-up work. Before the fix, the
+    // completion check only enforced an upper bound (changedAt <= sprint.endDate),
+    // so any pre-sprint Done transition counted.  After the fix the check
+    // requires changedAt >= sprint.startDate − GRACE.
+    it('does NOT count a Done transition that pre-dates the sprint start (D-2 regression)', async () => {
+      setBoardSprints([sprint]); // 2025-01-01 → 2025-01-14
 
       issueRepo.find.mockResolvedValue([
-        { key: 'ACC-10', sprintId: 'sprint-2', status: 'Done', boardId: 'ACC', issueType: 'Story', points: null, createdAt: new Date('2025-01-01') },
-        { key: 'ACC-11', sprintId: 'sprint-2', status: 'Done', boardId: 'ACC', issueType: 'Story', points: null, createdAt: new Date('2025-01-01') },
+        { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', status: 'Done', points: null, createdAt: new Date('2024-12-01') },
       ] as unknown as JiraIssue[]);
 
-      let qbCallCount = 0;
-      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-        qbCallCount++;
-        const qb = {
-          where: jest.fn().mockReturnThis(),
-          andWhere: jest.fn().mockReturnThis(),
-          orderBy: jest.fn().mockReturnThis(),
-          getMany: jest.fn(),
-        };
+      membershipReconstruct.mockResolvedValue({
+        committedKeys: new Set(['ACC-1']),
+        addedKeys: new Set<string>(),
+        committedRemovedKeys: new Set<string>(),
+        addedRemovedKeys: new Set<string>(),
+        currentMemberKeys: new Set(['ACC-1']),
+        logsByIssue: new Map(),
+      });
 
-        if (qbCallCount === 1) {
-          // Sprint changelogs: ACC-10 before start, ACC-11 after start
-          qb.getMany.mockResolvedValue([
-            {
-              issueKey: 'ACC-10',
-              field: 'Sprint',
-              toValue: 'Sprint 2',
-              fromValue: null,
-              changedAt: new Date('2025-01-30'),
-            },
-            {
-              issueKey: 'ACC-11',
-              field: 'Sprint',
-              toValue: 'Sprint 2',
-              fromValue: null,
-              changedAt: new Date('2025-02-05'), // After sprint start
-            },
-          ]);
-        } else if (qbCallCount === 2) {
-          qb.getMany.mockResolvedValue([
-            {
-              issueKey: 'ACC-10',
-              field: 'status',
-              toValue: 'Done',
-              changedAt: new Date('2025-02-10'),
-            },
-            {
-              issueKey: 'ACC-11',
-              field: 'status',
-              toValue: 'Done',
-              changedAt: new Date('2025-02-12'),
-            },
-          ]);
-        } else {
-          qb.getMany.mockResolvedValue([]);
-        }
-        return qb;
+      // Done transition occurred the day before sprint start — must be ignored.
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          { issueKey: 'ACC-1', field: 'status', toValue: 'Done',
+            changedAt: new Date('2024-12-31T12:00:00Z') },
+        ] as unknown as JiraChangelog[]),
       });
 
       const result = await service.getAccuracy('ACC');
 
       expect(result[0].commitment).toBe(1);
-      expect(result[0].added).toBe(1);
-      expect(result[0].scopeChangePercent).toBe(100); // (1+0)/1 * 100
+      expect(result[0].completed).toBe(0);
     });
 
-    it('should classify carry-over issues as committed, not added', async () => {
-      // Scenario: sprint starts at 12:00pm; previous sprint is completed at 3:00pm
-      // on the same day. The carry-over issues have fromValue = 'Sprint 1' because
-      // they were moved via Jira's "Complete Sprint" operation.
-      const sprint: JiraSprint = {
-        id: 'sprint-2',
-        name: 'Sprint 2',
-        boardId: 'ACC',
-        state: 'active',
-        startDate: new Date('2025-02-01T12:00:00Z'),
-        endDate: new Date('2025-02-15T00:00:00Z'),
-        goal: '',
-      } as JiraSprint;
-
-      // find is called twice: first for closed sprints (closedSprintNames), then for active sprints.
-      // Sprint 1 must be in closedSprintNames for carry-over detection to work.
-      sprintRepo.find
-        .mockResolvedValueOnce([{             // closed sprints (provides closedSprintNames)
-          id: 'sprint-1',
-          name: 'Sprint 1',
-          state: 'closed',
-          boardId: 'ACC',
-          startDate: new Date('2025-01-15'),
-          endDate: new Date('2025-02-01T12:00:00Z'),
-          goal: '',
-        }])
-        .mockResolvedValueOnce([sprint]);    // active sprints
+    it('counts a Done transition inside the sprint window (D-2 positive case)', async () => {
+      setBoardSprints([sprint]); // 2025-01-01 → 2025-01-14
 
       issueRepo.find.mockResolvedValue([
-        // Committed at sprint start
-        {
-          key: 'ACC-1',
-          sprintId: 'sprint-2',
-          status: 'In Progress',
-          boardId: 'ACC',
-          issueType: 'Story',
-          points: null,
-          createdAt: new Date('2025-01-01'),
-        },
-        // Carry-over: was in Sprint 1, moved at 3:00pm when Sprint 1 completed
-        {
-          key: 'ACC-2',
-          sprintId: 'sprint-2',
-          status: 'To Do',
-          boardId: 'ACC',
-          issueType: 'Story',
-          points: null,
-          createdAt: new Date('2025-01-01'),
-        },
-        // Genuine mid-sprint addition from backlog
-        {
-          key: 'ACC-3',
-          sprintId: 'sprint-2',
-          status: 'To Do',
-          boardId: 'ACC',
-          issueType: 'Story',
-          points: null,
-          createdAt: new Date('2025-01-01'),
-        },
+        { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', status: 'Done', points: null, createdAt: new Date('2024-12-01') },
       ] as unknown as JiraIssue[]);
 
-      let qbCallCount = 0;
-      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-        qbCallCount++;
-        const qb = {
-          where: jest.fn().mockReturnThis(),
-          andWhere: jest.fn().mockReturnThis(),
-          orderBy: jest.fn().mockReturnThis(),
-          getMany: jest.fn(),
-        };
+      membershipReconstruct.mockResolvedValue({
+        committedKeys: new Set(['ACC-1']),
+        addedKeys: new Set<string>(),
+        committedRemovedKeys: new Set<string>(),
+        addedRemovedKeys: new Set<string>(),
+        currentMemberKeys: new Set(['ACC-1']),
+        logsByIssue: new Map(),
+      });
 
-        if (qbCallCount === 1) {
-          qb.getMany.mockResolvedValue([
-            // ACC-1: added before sprint start (committed)
-            {
-              issueKey: 'ACC-1',
-              field: 'Sprint',
-              toValue: 'Sprint 2',
-              fromValue: null,
-              changedAt: new Date('2025-01-30T10:00:00Z'),
-            },
-            // ACC-2: carry-over at 3pm (fromValue = 'Sprint 1' → committed)
-            {
-              issueKey: 'ACC-2',
-              field: 'Sprint',
-              toValue: 'Sprint 2',
-              fromValue: 'Sprint 1',
-              changedAt: new Date('2025-02-01T15:00:00Z'),
-            },
-            // ACC-3: genuine addition at 3pm (fromValue = null → added)
-            {
-              issueKey: 'ACC-3',
-              field: 'Sprint',
-              toValue: 'Sprint 2',
-              fromValue: null,
-              changedAt: new Date('2025-02-01T15:00:00Z'),
-            },
-          ]);
-        } else {
-          qb.getMany.mockResolvedValue([]);
-        }
-        return qb;
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          { issueKey: 'ACC-1', field: 'status', toValue: 'Done',
+            changedAt: new Date('2025-01-10T00:00:00Z') },
+        ] as unknown as JiraChangelog[]),
       });
 
       const result = await service.getAccuracy('ACC');
 
-      expect(result[0].commitment).toBe(2); // ACC-1 + ACC-2
-      expect(result[0].added).toBe(1);      // ACC-3 only
-      expect(result[0].removed).toBe(0);
-      // scopeChangePercent = (1 + 0) / 2 * 100 = 50
+      expect(result[0].completed).toBe(1);
+    });
+
+    it('uses current status as completion proxy for active sprints', async () => {
+      setBoardSprints([activeSprint]);
+
+      issueRepo.find.mockResolvedValue([
+        // ACC-1 currently Done — counted as complete via status proxy
+        { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', status: 'Done', points: null, createdAt: new Date('2024-12-01') },
+        { key: 'ACC-2', boardId: 'ACC', issueType: 'Story', status: 'In Progress', points: null, createdAt: new Date('2024-12-01') },
+      ] as unknown as JiraIssue[]);
+
+      membershipReconstruct.mockResolvedValue({
+        committedKeys: new Set(['ACC-1', 'ACC-2']),
+        addedKeys: new Set<string>(),
+        committedRemovedKeys: new Set<string>(),
+        addedRemovedKeys: new Set<string>(),
+        currentMemberKeys: new Set(['ACC-1', 'ACC-2']),
+        logsByIssue: new Map(),
+      });
+
+      // No status changelog at all — completion must come from current status
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([]),
+      });
+
+      const result = await service.getAccuracy('ACC');
+
+      expect(result[0].state).toBe('active');
+      expect(result[0].completed).toBe(1);
+    });
+
+    it('computes scopeChangePercent from added + removed / commitment', async () => {
+      setBoardSprints([sprint]);
+
+      issueRepo.find.mockResolvedValue([
+        { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', status: 'Done', points: null, createdAt: new Date('2024-12-01') },
+        { key: 'ACC-2', boardId: 'ACC', issueType: 'Story', status: 'Done', points: null, createdAt: new Date('2024-12-01') },
+        { key: 'ACC-3', boardId: 'ACC', issueType: 'Story', status: 'To Do', points: null, createdAt: new Date('2024-12-01') },
+        { key: 'ACC-4', boardId: 'ACC', issueType: 'Story', status: 'To Do', points: null, createdAt: new Date('2024-12-01') },
+      ] as unknown as JiraIssue[]);
+
+      membershipReconstruct.mockResolvedValue({
+        committedKeys: new Set(['ACC-1', 'ACC-2', 'ACC-3', 'ACC-4']),
+        addedKeys: new Set(['ACC-5']),                  // 1 added
+        committedRemovedKeys: new Set(['ACC-4']),       // 1 committed-removed
+        addedRemovedKeys: new Set<string>(),
+        currentMemberKeys: new Set(['ACC-1', 'ACC-2', 'ACC-3', 'ACC-5']),
+        logsByIssue: new Map(),
+      });
+
+      const result = await service.getAccuracy('ACC');
+
+      expect(result[0].commitment).toBe(4);
+      expect(result[0].added).toBe(1);
+      expect(result[0].removed).toBe(1);
+      // scopeChangePercent = (1 + 1) / 4 * 100 = 50
       expect(result[0].scopeChangePercent).toBe(50);
     });
 
-    it('should treat issues added within the 5-minute grace period as committed', async () => {
-      // Regression guard: issues whose Sprint changelog falls within 5 minutes of
-      // startDate should be classified as committed (original commitment), not added.
-      // This covers Jira's bulk-add delay when a sprint is started.
-      const sprintStart = new Date('2025-03-01T10:00:00Z');
-      const sprint: JiraSprint = {
-        id: 'sprint-3',
-        name: 'Sprint 3',
-        boardId: 'ACC',
-        state: 'closed',
-        startDate: sprintStart,
-        endDate: new Date('2025-03-15T00:00:00Z'),
-        goal: '',
-      } as JiraSprint;
-
-      sprintRepo.find
-        .mockResolvedValueOnce([sprint])     // closed sprints (used for both closedSprintNames AND list)
-        .mockResolvedValueOnce([]);          // active sprints
+    // ── Proposal 0050 regression ──────────────────────────────────────────
+    // Five issues are added mid-sprint then removed before sprint end. Under
+    // the old single-`removedKeys` shape these issues appeared in BOTH
+    // `addedKeys` and `removedKeys`, double-counting them in
+    // `scopeChange% = (added + removed) / commitment * 100`.
+    //
+    // After the split, `removed` is committed-removed only — so
+    // add-then-remove churn contributes via `added` exactly once.
+    it('does not double-count add-then-remove churn in scopeChangePercent (proposal 0050)', async () => {
+      setBoardSprints([sprint]);
 
       issueRepo.find.mockResolvedValue([
-        // Added 90 seconds after startDate — within 5-minute grace → committed
-        {
-          key: 'ACC-20',
-          sprintId: 'sprint-3',
-          status: 'To Do',
-          boardId: 'ACC',
-          issueType: 'Story',
-          points: null,
-          createdAt: new Date('2025-01-01'),
-        },
-        // Added 10 minutes after startDate — outside grace → added
-        {
-          key: 'ACC-21',
-          sprintId: 'sprint-3',
-          status: 'To Do',
-          boardId: 'ACC',
-          issueType: 'Story',
-          points: null,
-          createdAt: new Date('2025-01-01'),
-        },
+        { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', status: 'To Do', points: null, createdAt: new Date('2024-12-01') },
+        { key: 'ACC-2', boardId: 'ACC', issueType: 'Story', status: 'To Do', points: null, createdAt: new Date('2024-12-01') },
+        { key: 'ACC-3', boardId: 'ACC', issueType: 'Story', status: 'To Do', points: null, createdAt: new Date('2024-12-01') },
+        { key: 'ACC-4', boardId: 'ACC', issueType: 'Story', status: 'To Do', points: null, createdAt: new Date('2024-12-01') },
       ] as unknown as JiraIssue[]);
 
-      let qbCallCount = 0;
-      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-        qbCallCount++;
-        const qb = {
-          where: jest.fn().mockReturnThis(),
-          andWhere: jest.fn().mockReturnThis(),
-          orderBy: jest.fn().mockReturnThis(),
-          getMany: jest.fn(),
-        };
-
-        if (qbCallCount === 1) {
-          qb.getMany.mockResolvedValue([
-            // ACC-20: changelog 90 seconds after start → within grace → committed
-            {
-              issueKey: 'ACC-20',
-              field: 'Sprint',
-              toValue: 'Sprint 3',
-              fromValue: null,
-              changedAt: new Date(sprintStart.getTime() + 90 * 1000),
-            },
-            // ACC-21: changelog 10 minutes after start → outside grace → added
-            {
-              issueKey: 'ACC-21',
-              field: 'Sprint',
-              toValue: 'Sprint 3',
-              fromValue: null,
-              changedAt: new Date(sprintStart.getTime() + 10 * 60 * 1000),
-            },
-          ]);
-        } else {
-          qb.getMany.mockResolvedValue([]);
-        }
-        return qb;
+      membershipReconstruct.mockResolvedValue({
+        committedKeys: new Set(['ACC-1', 'ACC-2', 'ACC-3', 'ACC-4']),
+        addedKeys: new Set(['ACC-5', 'ACC-6', 'ACC-7', 'ACC-8', 'ACC-9']),
+        addedRemovedKeys: new Set(['ACC-5', 'ACC-6', 'ACC-7', 'ACC-8', 'ACC-9']),
+        committedRemovedKeys: new Set<string>(),
+        currentMemberKeys: new Set(['ACC-1', 'ACC-2', 'ACC-3', 'ACC-4']),
+        logsByIssue: new Map(),
       });
 
       const result = await service.getAccuracy('ACC');
 
-      expect(result[0].commitment).toBe(1); // ACC-20 only
-      expect(result[0].added).toBe(1);      // ACC-21 only
+      expect(result[0].commitment).toBe(4);
+      expect(result[0].added).toBe(5);    // gross
+      expect(result[0].removed).toBe(0);  // no committed-removed
+      // (5 added + 0 committed-removed) / 4 * 100 = 125
+      // (NOT the buggy (5 + 5) / 4 * 100 = 250)
+      expect(result[0].scopeChangePercent).toBe(125);
+      // completionRate divisor = currentMemberKeys.size (= 4), per ADR 0052.
+      // No Done changelog rows are mocked and all four current members are
+      // 'To Do', so completed = 0 → completionRate = 0 / 4 * 100 = 0.
+      expect(result[0].completionRate).toBe(0);
     });
 
-    it('should treat issues moved from future sprints as added, not carry-over', async () => {
-      // Scenario: Sprint 3 (a future/groomed sprint) has an issue moved into the
-      // active Sprint 2. This is NOT a carry-over — it is a mid-sprint scope addition.
-      const sprint: JiraSprint = {
-        id: 'sprint-2',
-        name: 'Sprint 2',
-        boardId: 'ACC',
-        state: 'active',
-        startDate: new Date('2025-02-01T12:00:00Z'),
-        endDate: new Date('2025-02-15T00:00:00Z'),
-        goal: '',
-      } as JiraSprint;
-
-      // closed sprints: only Sprint 1 — Sprint 3 (future) is NOT in closedSprintNames
-      sprintRepo.find
-        .mockResolvedValueOnce([{
-          id: 'sprint-1',
-          name: 'Sprint 1',
-          state: 'closed',
-          boardId: 'ACC',
-          startDate: new Date('2025-01-15'),
-          endDate: new Date('2025-02-01T11:00:00Z'),
-          goal: '',
-        }])                    // closed sprints (Sprint 1 only, not Sprint 3)
-        .mockResolvedValueOnce([sprint]); // active sprints
+    it('computes points-based planningAccuracy when issues have story points', async () => {
+      setBoardSprints([sprint]);
 
       issueRepo.find.mockResolvedValue([
-        {
-          key: 'ACC-10',
-          sprintId: 'sprint-2',
-          status: 'In Progress',
-          boardId: 'ACC',
-          issueType: 'Story',
-          points: null,
-          createdAt: new Date('2025-01-01'),
-        },
-        // Moved from future Sprint 3 — should be classified as added, not committed
-        {
-          key: 'ACC-11',
-          sprintId: 'sprint-2',
-          status: 'To Do',
-          boardId: 'ACC',
-          issueType: 'Story',
-          points: null,
-          createdAt: new Date('2025-01-01'),
-        },
+        { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', status: 'Done', points: 5, createdAt: new Date('2024-12-01') },
+        { key: 'ACC-2', boardId: 'ACC', issueType: 'Story', status: 'Done', points: 3, createdAt: new Date('2024-12-01') },
+        { key: 'ACC-3', boardId: 'ACC', issueType: 'Story', status: 'In Progress', points: 2, createdAt: new Date('2024-12-01') },
       ] as unknown as JiraIssue[]);
 
-      let qbCallCount = 0;
-      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-        qbCallCount++;
-        const qb = {
-          where: jest.fn().mockReturnThis(),
-          andWhere: jest.fn().mockReturnThis(),
-          orderBy: jest.fn().mockReturnThis(),
-          getMany: jest.fn(),
-        };
+      membershipReconstruct.mockResolvedValue({
+        committedKeys: new Set(['ACC-1', 'ACC-2', 'ACC-3']),
+        addedKeys: new Set<string>(),
+        committedRemovedKeys: new Set<string>(),
+        addedRemovedKeys: new Set<string>(),
+        currentMemberKeys: new Set(['ACC-1', 'ACC-2', 'ACC-3']),
+        logsByIssue: new Map(),
+      });
 
-        if (qbCallCount === 1) {
-          qb.getMany.mockResolvedValue([
-            // ACC-10: committed at sprint start
-            {
-              issueKey: 'ACC-10',
-              field: 'Sprint',
-              toValue: 'Sprint 2',
-              fromValue: null,
-              changedAt: new Date('2025-01-30T10:00:00Z'),
-            },
-            // ACC-11: moved from future Sprint 3 mid-sprint — should be 'added'
-            {
-              issueKey: 'ACC-11',
-              field: 'Sprint',
-              toValue: 'Sprint 2',
-              fromValue: 'Sprint 3',              // future sprint, not in closedSprintNames
-              changedAt: new Date('2025-02-05T10:00:00Z'),
-            },
-          ]);
-        } else {
-          qb.getMany.mockResolvedValue([]);
-        }
-        return qb;
+      // ACC-1 and ACC-2 transitioned to Done before end
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          { issueKey: 'ACC-1', field: 'status', toValue: 'Done',
+            changedAt: new Date('2025-01-10T00:00:00Z') },
+          { issueKey: 'ACC-2', field: 'status', toValue: 'Done',
+            changedAt: new Date('2025-01-12T00:00:00Z') },
+        ] as unknown as JiraChangelog[]),
       });
 
       const result = await service.getAccuracy('ACC');
 
-      expect(result[0].commitment).toBe(1); // ACC-10 only
-      expect(result[0].added).toBe(1);      // ACC-11 is added, not committed
+      // committedPoints = 5+3+2 = 10; completedPoints = 5+3 = 8
+      expect(result[0].committedPoints).toBe(10);
+      expect(result[0].completedPoints).toBe(8);
+      expect(result[0].planningAccuracy).toBe(80);
+    });
+
+    it('falls back to ticket-count planningAccuracy when all committed issues lack points', async () => {
+      setBoardSprints([sprint]);
+
+      issueRepo.find.mockResolvedValue([
+        { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', status: 'Done', points: null, createdAt: new Date('2024-12-01') },
+        { key: 'ACC-2', boardId: 'ACC', issueType: 'Story', status: 'In Progress', points: null, createdAt: new Date('2024-12-01') },
+      ] as unknown as JiraIssue[]);
+
+      membershipReconstruct.mockResolvedValue({
+        committedKeys: new Set(['ACC-1', 'ACC-2']),
+        addedKeys: new Set<string>(),
+        committedRemovedKeys: new Set<string>(),
+        addedRemovedKeys: new Set<string>(),
+        currentMemberKeys: new Set(['ACC-1', 'ACC-2']),
+        logsByIssue: new Map(),
+      });
+
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          { issueKey: 'ACC-1', field: 'status', toValue: 'Done',
+            changedAt: new Date('2025-01-10T00:00:00Z') },
+        ] as unknown as JiraChangelog[]),
+      });
+
+      const result = await service.getAccuracy('ACC');
+
+      // null signals ticket-count fallback
+      expect(result[0].committedPoints).toBeNull();
+      expect(result[0].completedPoints).toBeNull();
+      // 1 of 2 committed → 50% by ticket count
+      expect(result[0].planningAccuracy).toBe(50);
+    });
+
+    it('returns empty accuracy when board has no work-item issues', async () => {
+      setBoardSprints([sprint]);
+      issueRepo.find.mockResolvedValue([]);
+
+      const result = await service.getAccuracy('ACC');
+
+      expect(result).toHaveLength(1);
+      expect(result[0].commitment).toBe(0);
+      expect(result[0].planningAccuracy).toBeNull();
+      // membership service should not even be invoked when no work items exist
+      expect(membershipReconstruct).not.toHaveBeenCalled();
+    });
+
+    it('passes the sprint and board issues to SprintMembershipService.reconstruct', async () => {
+      setBoardSprints([sprint]);
+
+      issueRepo.find.mockResolvedValue([
+        { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', status: 'Done', points: null, createdAt: new Date('2024-12-01') },
+      ] as unknown as JiraIssue[]);
+
+      await service.getAccuracy('ACC');
+
+      expect(membershipReconstruct).toHaveBeenCalledTimes(1);
+      const arg = membershipReconstruct.mock.calls[0][0];
+      expect(arg.sprint.id).toBe('sprint-1');
+      expect(arg.boardId).toBe('ACC');
+      expect(arg.boardIssues.map((i: JiraIssue) => i.key)).toEqual(['ACC-1']);
+    });
+
+    it('excludes Epics and Sub-tasks from boardIssues passed to membership service', async () => {
+      setBoardSprints([sprint]);
+
+      issueRepo.find.mockResolvedValue([
+        { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', status: 'Done', points: null, createdAt: new Date('2024-12-01') },
+        { key: 'ACC-2', boardId: 'ACC', issueType: 'Epic', status: 'Done', points: null, createdAt: new Date('2024-12-01') },
+        { key: 'ACC-3', boardId: 'ACC', issueType: 'Sub-task', status: 'Done', points: null, createdAt: new Date('2024-12-01') },
+      ] as unknown as JiraIssue[]);
+
+      await service.getAccuracy('ACC');
+
+      const arg = membershipReconstruct.mock.calls[0][0];
+      expect(arg.boardIssues.map((i: JiraIssue) => i.key)).toEqual(['ACC-1']);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // getSprints
+  // -------------------------------------------------------------------------
 
   describe('getSprints', () => {
     it('should return sprints for a board', async () => {
@@ -549,24 +494,16 @@ describe('PlanningService', () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // getQuarters
+  // -------------------------------------------------------------------------
+
   describe('getQuarters', () => {
     it('should extract unique quarters from sprint dates', async () => {
       sprintRepo.find.mockResolvedValue([
-        {
-          id: 's1',
-          state: 'closed',
-          startDate: new Date('2025-01-10'),
-        },
-        {
-          id: 's2',
-          state: 'closed',
-          startDate: new Date('2025-01-24'),
-        },
-        {
-          id: 's3',
-          state: 'closed',
-          startDate: new Date('2025-04-01'),
-        },
+        { id: 's1', state: 'closed', startDate: new Date('2025-01-10') },
+        { id: 's2', state: 'closed', startDate: new Date('2025-01-24') },
+        { id: 's3', state: 'closed', startDate: new Date('2025-04-01') },
       ] as JiraSprint[]);
 
       const result = await service.getQuarters();
@@ -578,9 +515,7 @@ describe('PlanningService', () => {
 
     it('should return empty array when no sprints', async () => {
       sprintRepo.find.mockResolvedValue([]);
-
       const result = await service.getQuarters();
-
       expect(result).toEqual([]);
     });
 
@@ -743,16 +678,13 @@ describe('PlanningService', () => {
         };
 
         if (qbCallCount === 1) {
-          // Call 1: "To Do" exit changelogs (board-entry date)
           qb.getMany.mockResolvedValue([
             { issueKey: 'PLAT-1', field: 'status', fromValue: 'To Do', toValue: 'In Progress',
               changedAt: new Date('2026-01-10T09:00:00Z') },
           ]);
         } else if (qbCallCount === 2) {
-          // Call 2: DISTINCT issueKey query (backlogStatusIds is empty, uses getRawMany)
           qb.getRawMany.mockResolvedValue([{ issueKey: 'PLAT-1' }]);
         } else if (qbCallCount === 3) {
-          // Call 3: done-transition changelogs
           qb.getMany.mockResolvedValue([
             { issueKey: 'PLAT-1', field: 'status', fromValue: 'In Progress', toValue: 'Done',
               changedAt: new Date('2026-01-20T09:00:00Z') },
@@ -830,16 +762,13 @@ describe('PlanningService', () => {
         };
 
         if (qbCallCount === 1) {
-          // Call 1: "To Do" exit changelogs (board-entry date) — issue entered in W02 2026
           qb.getMany.mockResolvedValue([
             { issueKey: 'PLAT-1', field: 'status', fromValue: 'To Do', toValue: 'In Progress',
               changedAt: new Date('2026-01-06T09:00:00Z') },
           ]);
         } else if (qbCallCount === 2) {
-          // Call 2: DISTINCT issueKey query (backlogStatusIds is empty, uses getRawMany)
           qb.getRawMany.mockResolvedValue([{ issueKey: 'PLAT-1' }]);
         } else if (qbCallCount === 3) {
-          // Call 3: done-transition changelogs
           qb.getMany.mockResolvedValue([
             { issueKey: 'PLAT-1', field: 'status', fromValue: 'In Progress', toValue: 'Done',
               changedAt: new Date('2026-01-08T09:00:00Z') },
@@ -874,8 +803,7 @@ describe('PlanningService', () => {
       issueRepo.find.mockResolvedValue([
         {
           key: 'PLAT-1', boardId: 'PLAT', issueType: 'Story', summary: 'S',
-          status: 'Done', labels: [], epicKey: null, fixVersion: null,
-          sprintId: null, createdAt: new Date('2025-12-01T00:00:00Z'),
+          status: 'Done', labels: [], epicKey: null, fixVersion: null, createdAt: new Date('2025-12-01T00:00:00Z'),
           priority: null, points: null, statusId: null,
         } as unknown as JiraIssue,
       ]);
@@ -912,7 +840,6 @@ describe('PlanningService', () => {
 
       await service.getKanbanQuarters('PLAT');
 
-      // After fix: first board-entry query uses toValue IN (...) not fromValue = 'To Do'
       const andWhereCalls = firstQb.andWhere.mock.calls.map((c) => c[0]);
       expect(andWhereCalls).not.toContain('cl.fromValue = :from');
       expect(andWhereCalls.some((c: string) => c.includes('toValue IN'))).toBe(true);
@@ -925,14 +852,12 @@ describe('PlanningService', () => {
         doneStatusNames: ['Done'],
         backlogStatusIds: [],
         dataStartDate: null,
-        // boardEntryStatuses: not set
       } as unknown as BoardConfig);
 
       issueRepo.find.mockResolvedValue([
         {
           key: 'PLAT-2', boardId: 'PLAT', issueType: 'Story', summary: 'T',
-          status: 'Done', labels: [], epicKey: null, fixVersion: null,
-          sprintId: null, createdAt: new Date('2025-11-01T00:00:00Z'),
+          status: 'Done', labels: [], epicKey: null, fixVersion: null, createdAt: new Date('2025-11-01T00:00:00Z'),
           priority: null, points: null, statusId: null,
         } as unknown as JiraIssue,
       ]);
@@ -963,8 +888,6 @@ describe('PlanningService', () => {
 
       await service.getKanbanQuarters('PLAT');
 
-      // The second andWhere call for the board-entry query should pass the default list
-      // containing at minimum 'To Do', 'Backlog', 'Open', 'New'
       const andWhereCalls = firstQb.andWhere.mock.calls;
       const statusesCall = andWhereCalls.find((c) =>
         typeof c[0] === 'string' && c[0].includes('toValue IN'),

@@ -94,4 +94,50 @@ export class UpdateBoardConfigDto {
   @IsArray()
   @IsString({ each: true })
   roadmapLinkTypes?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['support', 'triage'],
+    description:
+      'Labels that classify an issue as a support ticket for this board. ' +
+      'Empty array (default) disables label-based classification. (ADR 0045)',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  supportLabels?: string[];
+
+  @ApiPropertyOptional({
+    type: String,
+    example: 'clones',
+    description:
+      'Jira issue link type name whose target points to the triage board ' +
+      '(e.g. "clones"). Null disables link-based classification. (ADR 0045)',
+  })
+  @IsOptional()
+  @IsString()
+  supportLinkType?: string | null;
+
+  @ApiPropertyOptional({
+    type: String,
+    example: 'TTB',
+    description:
+      'Project key prefix for the triage board (e.g. "TTB"). ' +
+      'Used with supportLinkType to identify support tickets via issue links. (ADR 0045)',
+  })
+  @IsOptional()
+  @IsString()
+  triageBoardKey?: string | null;
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['PROJ-1', 'PROJ-2'],
+    description:
+      'Epic keys whose child tickets count as support work. ' +
+      'Comparison is case-insensitive. Empty array (default) disables epic-based classification. (ADR 0047)',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  supportEpics?: string[];
 }

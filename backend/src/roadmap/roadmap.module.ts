@@ -12,6 +12,7 @@ import {
   BoardConfig,
 } from '../database/entities/index.js';
 import { SyncModule } from '../sync/sync.module.js';
+import { SprintMembershipModule } from '../sprint-membership/sprint-membership.module.js';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { SyncModule } from '../sync/sync.module.js';
       BoardConfig,
     ]),
     forwardRef(() => SyncModule),
+    SprintMembershipModule,
   ],
   controllers: [RoadmapController],
   providers: [RoadmapService],

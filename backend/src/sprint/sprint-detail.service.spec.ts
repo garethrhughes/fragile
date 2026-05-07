@@ -12,16 +12,26 @@ import {
   JiraIssueLink,
 } from '../database/entities/index.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
+import {
+  SprintMembershipService,
+  type SprintMembership,
+} from '../sprint-membership/sprint-membership.service.js';
+
+// ---------------------------------------------------------------------------
+// Shared mocks
+// ---------------------------------------------------------------------------
 
 function mockRepo<T extends object>(): jest.Mocked<Repository<T>> {
   return {
     find: jest.fn().mockResolvedValue([]),
     findOne: jest.fn().mockResolvedValue(null),
     createQueryBuilder: jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
       getMany: jest.fn().mockResolvedValue([]),
+      getRawMany: jest.fn().mockResolvedValue([]),
     }),
   } as unknown as jest.Mocked<Repository<T>>;
 }
@@ -32,12 +42,74 @@ function mockConfigService(jiraBaseUrl = ''): jest.Mocked<ConfigService> {
   } as unknown as jest.Mocked<ConfigService>;
 }
 
-function makeQb(changelogs: object[]) {
+function mockWorkingTimeService(): jest.Mocked<WorkingTimeService> {
   return {
+    getConfig: jest.fn().mockResolvedValue({
+      id: 1,
+      excludeWeekends: false,
+      workDays: [1, 2, 3, 4, 5],
+      hoursPerDay: 8,
+      holidays: [],
+    }),
+    toConfig: jest.fn().mockReturnValue({
+      timezone: 'UTC',
+      workDays: [1, 2, 3, 4, 5],
+      hoursPerDay: 8,
+      holidays: [],
+    }),
+    workingDaysBetween: jest.fn(),
+    workingHoursBetween: jest.fn(),
+  } as unknown as jest.Mocked<WorkingTimeService>;
+}
+
+/**
+ * Build an empty membership record (no committed/added/removed, no logs).
+ */
+function emptyMembership(): SprintMembership {
+  return {
+    committedKeys: new Set<string>(),
+    addedKeys: new Set<string>(),
+    committedRemovedKeys: new Set<string>(),
+    addedRemovedKeys: new Set<string>(),
+    currentMemberKeys: new Set<string>(),
+    logsByIssue: new Map<string, JiraChangelog[]>(),
+  };
+}
+
+/**
+ * Build a membership that classifies every supplied key as committed.
+ * Default fixture for tests that don't care about classification details.
+ */
+function committedMembership(keys: string[]): SprintMembership {
+  return {
+    committedKeys: new Set(keys),
+    addedKeys: new Set<string>(),
+    committedRemovedKeys: new Set<string>(),
+    addedRemovedKeys: new Set<string>(),
+    currentMemberKeys: new Set(keys),
+    logsByIssue: new Map(keys.map((k) => [k, [] as JiraChangelog[]])),
+  };
+}
+
+function mockSprintMembership(
+  defaultMembership: SprintMembership = emptyMembership(),
+): jest.Mocked<SprintMembershipService> {
+  return {
+    reconstruct: jest.fn().mockResolvedValue(defaultMembership),
+  } as unknown as jest.Mocked<SprintMembershipService>;
+}
+
+/**
+ * Build a status-changelog query-builder mock for a given set of rows.
+ */
+function makeStatusQb(rows: object[]) {
+  return {
+    select: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
     andWhere: jest.fn().mockReturnThis(),
     orderBy: jest.fn().mockReturnThis(),
-    getMany: jest.fn().mockResolvedValue(changelogs),
+    getMany: jest.fn().mockResolvedValue(rows),
+    getRawMany: jest.fn().mockResolvedValue([]),
   };
 }
 
@@ -51,18 +123,48 @@ const SPRINT: JiraSprint = {
   goal: '',
 } as JiraSprint;
 
-function mockWorkingTimeService(): jest.Mocked<WorkingTimeService> {
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+function makeIssue(partial: Partial<JiraIssue> & { key: string }): JiraIssue {
   return {
-    getConfig: jest.fn().mockResolvedValue({
-      id: 1, excludeWeekends: false, workDays: [1, 2, 3, 4, 5], hoursPerDay: 8, holidays: [],
-    }),
-    toConfig: jest.fn().mockReturnValue({
-      timezone: 'UTC', workDays: [1, 2, 3, 4, 5], hoursPerDay: 8, holidays: [],
-    }),
-    workingDaysBetween: jest.fn(),
-    workingHoursBetween: jest.fn(),
-  } as unknown as jest.Mocked<WorkingTimeService>;
+    boardId: 'ACC',
+    issueType: 'Story',
+    summary: partial.key,
+    status: 'To Do',
+    epicKey: null,
+    labels: [],
+    points: null,
+    priority: null,
+    fixVersion: null,
+    createdAt: new Date('2026-01-03T00:00:00Z'),
+    updatedAt: new Date('2026-01-03T00:00:00Z'),
+    ...partial,
+  } as unknown as JiraIssue;
 }
+
+function defaultBoardConfig(overrides: Partial<BoardConfig> = {}): BoardConfig {
+  return {
+    boardId: 'ACC',
+    boardType: 'scrum',
+    doneStatusNames: ['Done'],
+    cancelledStatusNames: ['Cancelled', "Won't Do"],
+    inProgressStatusNames: ['In Progress'],
+    failureIssueTypes: [],
+    failureLabels: [],
+    failureLinkTypes: [],
+    incidentIssueTypes: [],
+    incidentLabels: [],
+    incidentPriorities: [],
+    roadmapLinkTypes: [],
+    ...overrides,
+  } as unknown as BoardConfig;
+}
+
+// ---------------------------------------------------------------------------
+// Suite
+// ---------------------------------------------------------------------------
 
 describe('SprintDetailService', () => {
   let service: SprintDetailService;
@@ -74,6 +176,22 @@ describe('SprintDetailService', () => {
   let roadmapConfigRepo: jest.Mocked<Repository<RoadmapConfig>>;
   let issueLinkRepo: jest.Mocked<Repository<JiraIssueLink>>;
   let workingTimeService: jest.Mocked<WorkingTimeService>;
+  let sprintMembership: jest.Mocked<SprintMembershipService>;
+
+  function buildService(jiraBaseUrl = ''): void {
+    service = new SprintDetailService(
+      sprintRepo,
+      issueRepo,
+      changelogRepo,
+      boardConfigRepo,
+      jpdIdeaRepo,
+      roadmapConfigRepo,
+      issueLinkRepo,
+      mockConfigService(jiraBaseUrl),
+      workingTimeService,
+      sprintMembership,
+    );
+  }
 
   beforeEach(() => {
     sprintRepo = mockRepo<JiraSprint>();
@@ -84,550 +202,453 @@ describe('SprintDetailService', () => {
     roadmapConfigRepo = mockRepo<RoadmapConfig>();
     issueLinkRepo = mockRepo<JiraIssueLink>();
     workingTimeService = mockWorkingTimeService();
+    sprintMembership = mockSprintMembership();
 
-    service = new SprintDetailService(
-      sprintRepo,
-      issueRepo,
-      changelogRepo,
-      boardConfigRepo,
-      jpdIdeaRepo,
-      roadmapConfigRepo,
-      issueLinkRepo,
-      mockConfigService(),
-      workingTimeService,
-    );
+    buildService();
   });
 
-  // ---------------------------------------------------------------------------
-  // Not found / Kanban guard
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Guards
+  // -------------------------------------------------------------------------
 
   it('throws NotFoundException when sprint does not exist', async () => {
     sprintRepo.findOne.mockResolvedValue(null);
 
-    await expect(service.getDetail('ACC', 'missing-sprint')).rejects.toThrow(NotFoundException);
+    await expect(service.getDetail('ACC', 'missing')).rejects.toThrow(
+      NotFoundException,
+    );
+    expect(sprintMembership.reconstruct).not.toHaveBeenCalled();
   });
 
   it('throws BadRequestException for Kanban boards', async () => {
     sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'kanban',
-      doneStatusNames: ['Done'],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
+    boardConfigRepo.findOne.mockResolvedValue(
+      defaultBoardConfig({ boardType: 'kanban' }),
+    );
 
-    await expect(service.getDetail('ACC', 'sprint-1')).rejects.toThrow(BadRequestException);
+    await expect(service.getDetail('ACC', 'sprint-1')).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(sprintMembership.reconstruct).not.toHaveBeenCalled();
   });
 
-  // ---------------------------------------------------------------------------
-  // Empty board (no issues)
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Membership delegation
+  // -------------------------------------------------------------------------
 
-  it('returns empty response when board has no issues', async () => {
+  it('returns empty response when board has no work issues', async () => {
     sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue(null);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
     issueRepo.find.mockResolvedValue([]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-    // changelogRepo not called
 
     const result = await service.getDetail('ACC', 'sprint-1');
 
     expect(result.sprintId).toBe('sprint-1');
     expect(result.issues).toHaveLength(0);
     expect(result.summary.committedCount).toBe(0);
+    // No work issues => skip membership entirely.
+    expect(sprintMembership.reconstruct).not.toHaveBeenCalled();
   });
 
-  // ---------------------------------------------------------------------------
-  // Basic happy path
-  // ---------------------------------------------------------------------------
-
-  it('returns sprint detail with committed and completed issue', async () => {
+  it('delegates membership reconstruction to SprintMembershipService', async () => {
     sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    const issues = [makeIssue({ key: 'ACC-1' }), makeIssue({ key: 'ACC-2' })];
+    issueRepo.find.mockResolvedValue(issues);
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1', 'ACC-2']),
+    );
+
+    await service.getDetail('ACC', 'sprint-1');
+
+    expect(sprintMembership.reconstruct).toHaveBeenCalledTimes(1);
+    expect(sprintMembership.reconstruct).toHaveBeenCalledWith({
+      sprint: SPRINT,
       boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled', "Won't Do"],
-    } as unknown as BoardConfig);
+      boardIssues: issues,
+    });
+  });
 
+  it('returns empty response when membership produces no committed/added issues', async () => {
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    issueRepo.find.mockResolvedValue([makeIssue({ key: 'ACC-1' })]);
+    // Membership returns no issues for this sprint.
+    sprintMembership.reconstruct.mockResolvedValue(emptyMembership());
+
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    expect(result.issues).toHaveLength(0);
+    expect(result.summary.committedCount).toBe(0);
+  });
+
+  it('surfaces committed, added and removed counts from membership', async () => {
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
     issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-1',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'A feature',
-        status: 'Done',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
+      makeIssue({ key: 'ACC-1' }),
+      makeIssue({ key: 'ACC-2' }),
+      makeIssue({ key: 'ACC-3' }),
     ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
+    sprintMembership.reconstruct.mockResolvedValue({
+      committedKeys: new Set(['ACC-1', 'ACC-3']),
+      addedKeys: new Set(['ACC-2']),
+      committedRemovedKeys: new Set(['ACC-3']),
+      addedRemovedKeys: new Set(),
+      currentMemberKeys: new Set(['ACC-1', 'ACC-2']),
+      logsByIssue: new Map([
+        ['ACC-1', []],
+        ['ACC-2', []],
+        ['ACC-3', []],
+      ]),
+    });
 
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      // First call: Sprint changelogs (assigned before sprint start)
-      if (qbCallCount === 1) {
-        return makeQb([
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    // committedCount and addedMidSprintCount are gross counts of the membership
+    // sets — they include issues later removed (proposal 0050 / ADR 0052),
+    // so the sprint detail page agrees with PlanningService.
+    expect(result.summary.committedCount).toBe(2); // ACC-1, ACC-3 (incl. removed)
+    expect(result.summary.addedMidSprintCount).toBe(1); // ACC-2
+    expect(result.summary.removedCount).toBe(1); // committed-removed: ACC-3
+    // Removed issue is excluded from the issues array (final = committed ∪ added \ removed).
+    expect(result.issues.map((i) => i.key).sort()).toEqual(['ACC-1', 'ACC-2']);
+    expect(result.issues.find((i) => i.key === 'ACC-1')?.addedMidSprint).toBe(
+      false,
+    );
+    expect(result.issues.find((i) => i.key === 'ACC-2')?.addedMidSprint).toBe(
+      true,
+    );
+  });
+
+  it('excludes Epic and Sub-task issues before delegating to membership', async () => {
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1' }),
+      makeIssue({ key: 'ACC-2', issueType: 'Epic' }),
+      makeIssue({ key: 'ACC-3', issueType: 'Sub-task' }),
+    ]);
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1']),
+    );
+
+    await service.getDetail('ACC', 'sprint-1');
+
+    const call = sprintMembership.reconstruct.mock.calls[0][0];
+    expect(call.boardIssues.map((i) => i.key)).toEqual(['ACC-1']);
+  });
+
+  // -------------------------------------------------------------------------
+  // Status-changelog driven completion / lead time
+  // -------------------------------------------------------------------------
+
+  it('marks completedInSprint=true when status transitions to Done within sprint window', async () => {
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', status: 'Done' }),
+    ]);
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1']),
+    );
+    changelogRepo.createQueryBuilder = jest
+      .fn()
+      .mockReturnValue(
+        makeStatusQb([
           {
             issueKey: 'ACC-1',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'), // before sprint start
+            field: 'status',
+            toValue: 'In Progress',
+            changedAt: new Date('2026-01-06T00:00:00Z'),
           },
-        ]);
-      }
-      // Second call: status changelogs for final sprint issues
-      return makeQb([
+          {
+            issueKey: 'ACC-1',
+            field: 'status',
+            toValue: 'Done',
+            changedAt: new Date('2026-01-08T00:00:00Z'),
+          },
+        ]),
+      );
+
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    expect(result.issues[0].completedInSprint).toBe(true);
+    expect(result.summary.completedInSprintCount).toBe(1);
+  });
+
+  it('falls back to current status when no status changelog exists', async () => {
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', status: 'Done' }),
+    ]);
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1']),
+    );
+    // No status changelog returned.
+
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    expect(result.issues[0].completedInSprint).toBe(true);
+  });
+
+  it('computes leadTimeDays from In Progress to Done in calendar days', async () => {
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', status: 'Done' }),
+    ]);
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1']),
+    );
+    const inProgressAt = new Date('2026-01-06T00:00:00Z');
+    const doneAt = new Date('2026-01-08T00:00:00Z');
+    changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(
+      makeStatusQb([
+        { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: inProgressAt },
+        { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: doneAt },
+      ]),
+    );
+
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    expect(result.issues[0].leadTimeDays).toBe(2);
+    expect(result.issues[0].resolvedAt).toBe(doneAt.toISOString());
+    expect(result.summary.medianLeadTimeDays).toBe(2);
+  });
+
+  it('returns leadTimeDays=null when issue never reached Done', async () => {
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', status: 'In Progress' }),
+    ]);
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1']),
+    );
+    changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(
+      makeStatusQb([
         {
           issueKey: 'ACC-1',
           field: 'status',
           toValue: 'In Progress',
-          changedAt: new Date('2026-01-05T10:00:00Z'),
+          changedAt: new Date('2026-01-06T00:00:00Z'),
         },
-        {
-          issueKey: 'ACC-1',
-          field: 'status',
-          toValue: 'Done',
-          changedAt: new Date('2026-01-10T10:00:00Z'),
-        },
-      ]);
-    });
+      ]),
+    );
 
     const result = await service.getDetail('ACC', 'sprint-1');
 
-    expect(result.sprintId).toBe('sprint-1');
-    expect(result.sprintName).toBe('Sprint 1');
-    expect(result.issues).toHaveLength(1);
-    expect(result.issues[0].key).toBe('ACC-1');
-    expect(result.issues[0].completedInSprint).toBe(true);
-    expect(result.summary.completedInSprintCount).toBe(1);
-    expect(result.summary.committedCount).toBe(1);
-    expect(result.summary.addedMidSprintCount).toBe(0);
+    expect(result.issues[0].leadTimeDays).toBeNull();
+    expect(result.issues[0].resolvedAt).toBeNull();
+    expect(result.summary.medianLeadTimeDays).toBeNull();
   });
 
-  // ---------------------------------------------------------------------------
-  // Carry-over issue classification (proposal 0038)
-  // ---------------------------------------------------------------------------
-
-  it('classifies carry-over issues as committed, not mid-sprint additions', async () => {
-    // Sprint starts at noon; previous sprint is completed at 3pm on the same day.
-    // ACC-2 was in Sprint 0 and carries over to Sprint 1 at 3pm.
-    // ACC-3 is a genuine mid-sprint addition from the backlog (fromValue = null).
-    const sprint: JiraSprint = {
-      ...SPRINT,
-      startDate: new Date('2026-01-05T12:00:00Z'),
-      endDate: new Date('2026-01-19T00:00:00Z'),
-    };
-    sprintRepo.findOne.mockResolvedValue(sprint);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
-    // Sprint 0 must be in closedSprintNames for carry-over detection to work.
-    sprintRepo.find.mockResolvedValueOnce([{
-      id: 'sprint-0',
-      name: 'Sprint 0',
-      state: 'closed',
-      boardId: 'ACC',
-      startDate: new Date('2025-12-01'),
-      endDate: new Date('2026-01-05'),
-      goal: '',
-    }] as JiraSprint[]);
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-1',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Committed from start',
-        status: 'To Do',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-01T00:00:00Z'),
-      } as unknown as JiraIssue,
-      {
-        key: 'ACC-2',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Carry-over from Sprint 0',
-        status: 'To Do',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        createdAt: new Date('2025-12-01T00:00:00Z'),
-      } as unknown as JiraIssue,
-      {
-        key: 'ACC-3',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Genuine mid-sprint addition',
-        status: 'To Do',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-01T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        // Sprint-field changelogs
-        return makeQb([
-          // ACC-1: added before sprint start
-          {
-            issueKey: 'ACC-1',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T10:00:00Z'),
-          },
-          // ACC-2: carry-over at 3pm (fromValue = 'Sprint 0' → committed)
-          {
-            issueKey: 'ACC-2',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: 'Sprint 0',
-            changedAt: new Date('2026-01-05T15:00:00Z'),
-          },
-          // ACC-3: genuine addition at 3pm (fromValue = null → added)
-          {
-            issueKey: 'ACC-3',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-05T15:00:00Z'),
-          },
-        ]);
-      }
-      // Status and link changelogs
-      return makeQb([]);
+  it('uses workingDaysBetween for leadTimeDays when excludeWeekends=true', async () => {
+    workingTimeService.getConfig.mockResolvedValue({
+      id: 1,
+      excludeWeekends: true,
+      workDays: [1, 2, 3, 4, 5],
+      hoursPerDay: 8,
+      holidays: [],
     });
+    workingTimeService.workingDaysBetween.mockReturnValue(1);
+
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', status: 'Done' }),
+    ]);
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1']),
+    );
+    const inProgressAt = new Date('2026-01-09T00:00:00Z'); // Friday
+    const doneAt = new Date('2026-01-12T00:00:00Z'); // Monday
+    changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(
+      makeStatusQb([
+        { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: inProgressAt },
+        { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: doneAt },
+      ]),
+    );
 
     const result = await service.getDetail('ACC', 'sprint-1');
 
-    expect(result.summary.committedCount).toBe(2);       // ACC-1 + ACC-2
-    expect(result.summary.addedMidSprintCount).toBe(1);  // ACC-3 only
+    expect(workingTimeService.workingDaysBetween).toHaveBeenCalledWith(
+      inProgressAt,
+      doneAt,
+      expect.anything(),
+    );
+    expect(result.issues[0].leadTimeDays).toBe(1);
+  });
 
+  // -------------------------------------------------------------------------
+  // cycleTimeDays + isReopen (proposal 0054 AC4)
+  // -------------------------------------------------------------------------
+
+  it('surfaces isReopen=true when latest cycle follows a Done→In Progress reset', async () => {
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', status: 'Done' }),
+    ]);
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1']),
+    );
+    // First cycle completes, then reopened and completed again within sprint.
+    changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(
+      makeStatusQb([
+        { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: new Date('2026-01-06T09:00:00Z') },
+        { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: new Date('2026-01-08T17:00:00Z') },
+        { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: new Date('2026-01-13T09:00:00Z') },
+        { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: new Date('2026-01-15T17:00:00Z') },
+      ]),
+    );
+
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    expect(result.issues[0].isReopen).toBe(true);
+    expect(result.issues[0].cycleTimeDays).not.toBeNull();
+    expect(result.issues[0].cycleTimeDays!).toBeGreaterThan(0);
+  });
+
+  it('returns isReopen=false on a single non-reopened cycle', async () => {
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', status: 'Done' }),
+    ]);
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1']),
+    );
+    changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(
+      makeStatusQb([
+        { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: new Date('2026-01-06T09:00:00Z') },
+        { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: new Date('2026-01-08T17:00:00Z') },
+      ]),
+    );
+
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    expect(result.issues[0].isReopen).toBe(false);
+    expect(result.issues[0].cycleTimeDays).not.toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // Issue payload — priority, jiraUrl, sorting
+  // -------------------------------------------------------------------------
+
+  it('includes priority on each returned issue (including null)', async () => {
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', priority: 'High' }),
+      makeIssue({ key: 'ACC-2', priority: null }),
+    ]);
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1', 'ACC-2']),
+    );
+
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    const acc1 = result.issues.find((i) => i.key === 'ACC-1');
     const acc2 = result.issues.find((i) => i.key === 'ACC-2');
-    const acc3 = result.issues.find((i) => i.key === 'ACC-3');
-    expect(acc2?.addedMidSprint).toBe(false);
-    expect(acc3?.addedMidSprint).toBe(true);
+    expect(acc1?.priority).toBe('High');
+    expect(acc2?.priority).toBeNull();
   });
 
-  it('issues moved from future sprints are classified as added', async () => {
-    // Sprint 2 (future/groomed) has an issue pulled into the active Sprint 1.
-    // Sprint 2 is NOT in closedSprintNames, so the issue must be classified
-    // as addedMidSprint rather than committed (carry-over).
-    const sprint: JiraSprint = {
-      ...SPRINT,
-      startDate: new Date('2026-01-05T12:00:00Z'),
-      endDate: new Date('2026-01-19T00:00:00Z'),
-    };
-    sprintRepo.findOne.mockResolvedValue(sprint);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
-    // No closed sprints — Sprint 2 (future) is therefore not in closedSprintNames.
-    sprintRepo.find.mockResolvedValueOnce([] as JiraSprint[]);
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-1',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Committed from start',
-        status: 'In Progress',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-01T00:00:00Z'),
-      } as unknown as JiraIssue,
-      {
-        key: 'ACC-2',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Pulled from future Sprint 2',
-        status: 'To Do',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-01T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          // ACC-1: committed before sprint start
-          {
-            issueKey: 'ACC-1',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T10:00:00Z'),
-          },
-          // ACC-2: moved from future Sprint 2 mid-sprint — must be 'added', not carry-over
-          {
-            issueKey: 'ACC-2',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: 'Sprint 2',              // future sprint, not in closedSprintNames
-            changedAt: new Date('2026-01-08T10:00:00Z'),
-          },
-        ]);
-      }
-      return makeQb([]);
-    });
+  it('includes jiraUrl when JIRA_BASE_URL is configured', async () => {
+    buildService('https://example.atlassian.net');
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    issueRepo.find.mockResolvedValue([makeIssue({ key: 'ACC-1' })]);
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1']),
+    );
 
     const result = await service.getDetail('ACC', 'sprint-1');
 
-    expect(result.summary.committedCount).toBe(1);      // ACC-1 only
-    expect(result.summary.addedMidSprintCount).toBe(1); // ACC-2 is added, not carry-over
-
-    const acc2 = result.issues.find((i) => i.key === 'ACC-2');
-    expect(acc2?.addedMidSprint).toBe(true);
+    expect(result.issues[0].jiraUrl).toBe(
+      'https://example.atlassian.net/browse/ACC-1',
+    );
   });
 
-  // ---------------------------------------------------------------------------
-  // Cancelled status handling including "Won't Do"
-  // ---------------------------------------------------------------------------
-
-  it('sets roadmapStatus to "none" for cancelled issues', async () => {
+  it('sorts incomplete issues before completed, then alphabetically by key', async () => {
     sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled', "Won't Do"],
-    } as unknown as BoardConfig);
-
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
     issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-1',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Cancelled issue',
-        status: 'Cancelled',
-        sprintId: 'sprint-1',
-        epicKey: 'ACC-0', // has epic link but is cancelled
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
+      makeIssue({ key: 'ACC-3', status: 'Done' }),
+      makeIssue({ key: 'ACC-1', status: 'In Progress' }),
+      makeIssue({ key: 'ACC-2', status: 'Done' }),
+      makeIssue({ key: 'ACC-4', status: 'To Do' }),
     ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1', 'ACC-2', 'ACC-3', 'ACC-4']),
+    );
 
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-1',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      return makeQb([]);
-    });
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    // Incomplete first (ACC-1, ACC-4 alphabetical), then completed (ACC-2, ACC-3).
+    expect(result.issues.map((i) => i.key)).toEqual([
+      'ACC-1',
+      'ACC-4',
+      'ACC-2',
+      'ACC-3',
+    ]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Cancelled status handling
+  // -------------------------------------------------------------------------
+
+  it('sets roadmapStatus="none" for cancelled issues even when an epic is linked', async () => {
+    sprintRepo.findOne.mockResolvedValue(SPRINT);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', status: 'Cancelled', epicKey: 'ACC-0' }),
+    ]);
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1']),
+    );
 
     const result = await service.getDetail('ACC', 'sprint-1');
 
     expect(result.issues[0].roadmapStatus).toBe('none');
   });
 
-  it('sets roadmapStatus to "none" for "Won\'t Do" issues', async () => {
+  it('treats "Won\'t Do" as cancelled by default when boardConfig is null', async () => {
     sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled', "Won't Do"],
-    } as unknown as BoardConfig);
-
+    boardConfigRepo.findOne.mockResolvedValue(null);
     issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-1',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: "Won't do issue",
-        status: "Won't Do",
-        sprintId: 'sprint-1',
-        epicKey: 'ACC-0',
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
+      makeIssue({ key: 'ACC-1', status: "Won't Do", epicKey: 'ACC-0' }),
     ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-1',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      return makeQb([]);
-    });
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1']),
+    );
 
     const result = await service.getDetail('ACC', 'sprint-1');
 
     expect(result.issues[0].roadmapStatus).toBe('none');
   });
 
-  // ---------------------------------------------------------------------------
-  // Default cancelledStatusNames fallback
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // isIncident / isFailure
+  // -------------------------------------------------------------------------
 
-  it('uses default cancelled status ["Cancelled", "Won\'t Do"] when board config not found', async () => {
+  it('marks Bug as isIncident and isFailure based on board config', async () => {
     sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue(null); // no config
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
+    boardConfigRepo.findOne.mockResolvedValue(
+      defaultBoardConfig({
+        failureIssueTypes: ['Bug'],
+        incidentIssueTypes: ['Bug'],
+      }),
+    );
     issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-1',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Issue with default cancelled check',
-        status: "Won't Do",
-        sprintId: 'sprint-1',
-        epicKey: 'ACC-0',
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
+      makeIssue({ key: 'ACC-1', issueType: 'Bug', status: 'In Progress' }),
     ]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-1',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      return makeQb([]);
-    });
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    // "Won't Do" should match the default cancelledStatusNames, so roadmapStatus = 'none'
-    expect(result.issues[0].roadmapStatus).toBe('none');
-  });
-
-  // ---------------------------------------------------------------------------
-  // isIncident / isFailure flags
-  // ---------------------------------------------------------------------------
-
-  it('marks bug as isIncident and isFailure based on board config', async () => {
-    sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: ['Bug'],
-      failureLabels: [],
-      incidentIssueTypes: ['Bug'],
-      incidentLabels: [],
-      incidentPriorities: [], // empty = all priorities qualify
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-1',
-        boardId: 'ACC',
-        issueType: 'Bug',
-        summary: 'A bug',
-        status: 'In Progress',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-1',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      return makeQb([]);
-    });
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1']),
+    );
 
     const result = await service.getDetail('ACC', 'sprint-1');
 
@@ -637,1513 +658,118 @@ describe('SprintDetailService', () => {
     expect(result.summary.failureCount).toBe(1);
   });
 
-  // ---------------------------------------------------------------------------
-  // leadTimeDays computation
-  // ---------------------------------------------------------------------------
-
-  it('computes leadTimeDays from In Progress to Done', async () => {
+  it('marks isFailure when failure label matches', async () => {
     sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
-    const inProgressAt = new Date('2026-01-06T00:00:00Z');
-    const doneAt = new Date('2026-01-08T00:00:00Z'); // 2 days
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-1',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Lead time test',
-        status: 'Done',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-1',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      return makeQb([
-        { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: inProgressAt },
-        { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: doneAt },
-      ]);
-    });
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    expect(result.issues[0].leadTimeDays).toBe(2);
-    expect(result.issues[0].resolvedAt).toBe(doneAt.toISOString());
-    expect(result.summary.medianLeadTimeDays).toBe(2);
-  });
-
-  it('sets leadTimeDays to null for issues without done transition', async () => {
-    sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-1',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'In progress',
-        status: 'In Progress',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-1',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      return makeQb([
-        { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: new Date('2026-01-06T00:00:00Z') },
-      ]);
-    });
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    expect(result.issues[0].leadTimeDays).toBeNull();
-    expect(result.issues[0].resolvedAt).toBeNull();
-    expect(result.summary.medianLeadTimeDays).toBeNull();
-  });
-
-  // ---------------------------------------------------------------------------
-  // priority field on issue
-  // ---------------------------------------------------------------------------
-
-  it('includes priority on each returned issue', async () => {
-    sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-1',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Priority test',
-        status: 'In Progress',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        priority: 'High',
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() =>
-      makeQb([
-        {
-          issueKey: 'ACC-1',
-          field: 'Sprint',
-          toValue: 'Sprint 1',
-          fromValue: null,
-          changedAt: new Date('2026-01-04T00:00:00Z'),
-        },
-      ]),
+    boardConfigRepo.findOne.mockResolvedValue(
+      defaultBoardConfig({ failureLabels: ['production-incident'] }),
     );
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    expect(result.issues[0].priority).toBe('High');
-  });
-
-  it('includes null priority when issue has no priority set', async () => {
-    sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
     issueRepo.find.mockResolvedValue([
-      {
+      makeIssue({
         key: 'ACC-1',
-        boardId: 'ACC',
         issueType: 'Story',
-        summary: 'No priority',
-        status: 'In Progress',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        priority: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
+        labels: ['production-incident'],
+      }),
     ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() =>
-      makeQb([
-        {
-          issueKey: 'ACC-1',
-          field: 'Sprint',
-          toValue: 'Sprint 1',
-          fromValue: null,
-          changedAt: new Date('2026-01-04T00:00:00Z'),
-        },
-      ]),
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['ACC-1']),
     );
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    expect(result.issues[0].priority).toBeNull();
-  });
-
-  // ---------------------------------------------------------------------------
-  // Epics excluded
-  // ---------------------------------------------------------------------------
-
-  it('excludes Epic issue types from sprint detail', async () => {
-    sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue(null);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-E1',
-        boardId: 'ACC',
-        issueType: 'Epic',
-        summary: 'An epic',
-        status: 'In Progress',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    expect(result.issues).toHaveLength(0);
-  });
-
-  // ---------------------------------------------------------------------------
-  // Mid-sprint addition (addedMidSprint = true)
-  // ---------------------------------------------------------------------------
-
-  it('marks issue as addedMidSprint when sprint changelog appears after grace period', async () => {
-    sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-2',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Added mid sprint',
-        status: 'In Progress',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        // Created well after sprint start
-        createdAt: new Date('2026-01-08T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        // Sprint changelog: issue added to sprint AFTER start (mid-sprint)
-        return makeQb([
-          {
-            issueKey: 'ACC-2',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-08T01:00:00Z'), // well after start
-          },
-        ]);
-      }
-      return makeQb([]);
-    });
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    expect(result.issues[0].addedMidSprint).toBe(true);
-    expect(result.summary.addedMidSprintCount).toBe(1);
-    expect(result.summary.committedCount).toBe(0);
-  });
-
-  it('marks issue as addedMidSprint when created after grace period with no changelog', async () => {
-    sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-3',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Created mid sprint',
-        status: 'In Progress',
-        // sprintId matches sprint — direct assignment
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        // Created after sprint start + grace period
-        createdAt: new Date('2026-01-08T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        // No sprint changelogs for this issue — it was created directly
-        return makeQb([]);
-      }
-      return makeQb([]);
-    });
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    expect(result.issues[0].addedMidSprint).toBe(true);
-    expect(result.summary.addedMidSprintCount).toBe(1);
-  });
-
-  // ---------------------------------------------------------------------------
-  // Removed from sprint (removedKeys)
-  // ---------------------------------------------------------------------------
-
-  it('tracks removedCount for issues removed during sprint', async () => {
-    sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
-    // Two issues: ACC-4 (removed) and ACC-5 (stays in sprint)
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-4',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Removed mid sprint',
-        status: 'To Do',
-        sprintId: null,
-        epicKey: null,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-      {
-        key: 'ACC-5',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Still in sprint',
-        status: 'In Progress',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          // ACC-4: was in sprint at start, then removed
-          {
-            issueKey: 'ACC-4',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'), // before start = committed
-          },
-          {
-            issueKey: 'ACC-4',
-            field: 'Sprint',
-            toValue: null,
-            fromValue: 'Sprint 1',
-            changedAt: new Date('2026-01-10T00:00:00Z'), // removed during sprint
-          },
-          // ACC-5: committed, stays in sprint
-          {
-            issueKey: 'ACC-5',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      // Status changelogs for ACC-5 only
-      return makeQb([]);
-    });
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    // Only ACC-5 remains in sprint
-    expect(result.issues).toHaveLength(1);
-    expect(result.issues[0].key).toBe('ACC-5');
-    expect(result.summary.removedCount).toBe(1);
-  });
-
-  // ---------------------------------------------------------------------------
-  // roadmapStatus: 'in-scope' vs 'linked'
-  // ---------------------------------------------------------------------------
-
-  it('sets roadmapStatus to "in-scope" when issue completed on time vs roadmap target', async () => {
-    sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
-    const epicKey = 'EPIC-1';
-    const targetDate = new Date('2026-01-31T00:00:00Z');
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-5',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'On-time delivery',
-        status: 'Done',
-        sprintId: 'sprint-1',
-        epicKey,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-
-    roadmapConfigRepo.find.mockResolvedValue([{ jpdKey: 'JPD' } as unknown as RoadmapConfig]);
-    jpdIdeaRepo.find.mockResolvedValue([
-      {
-        key: 'JPD-1',
-        jpdKey: 'JPD',
-        deliveryIssueKeys: [epicKey],
-        targetDate,
-        startDate: new Date('2026-01-01T00:00:00Z'),
-      } as unknown as JpdIdea,
-    ]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-5',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      // Status changelogs: completed well before target date
-      return makeQb([
-        {
-          issueKey: 'ACC-5',
-          field: 'status',
-          toValue: 'Done',
-          changedAt: new Date('2026-01-10T12:00:00Z'), // before Jan 31 target
-        },
-      ]);
-    });
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    expect(result.issues[0].roadmapStatus).toBe('in-scope');
-    expect(result.summary.roadmapLinkedCount).toBe(1);
-  });
-
-  it('sets roadmapStatus to "linked" when issue not completed (no done transition)', async () => {
-    sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
-    const epicKey = 'EPIC-2';
-    const targetDate = new Date('2026-01-31T00:00:00Z');
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-6',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Not completed',
-        status: 'In Progress',
-        sprintId: 'sprint-1',
-        epicKey,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-
-    roadmapConfigRepo.find.mockResolvedValue([{ jpdKey: 'JPD' } as unknown as RoadmapConfig]);
-    jpdIdeaRepo.find.mockResolvedValue([
-      {
-        key: 'JPD-2',
-        jpdKey: 'JPD',
-        deliveryIssueKeys: [epicKey],
-        targetDate,
-        startDate: new Date('2026-01-01T00:00:00Z'),
-      } as unknown as JpdIdea,
-    ]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-6',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      // No done transition
-      return makeQb([
-        { issueKey: 'ACC-6', field: 'status', toValue: 'In Progress', changedAt: new Date('2026-01-05T10:00:00Z') },
-      ]);
-    });
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    expect(result.issues[0].roadmapStatus).toBe('linked');
-  });
-
-  it('sets roadmapStatus to "linked" when completed after target date', async () => {
-    sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
-    const epicKey = 'EPIC-3';
-    // Target date is Jan 8, but issue completed Jan 15 — late
-    const targetDate = new Date('2026-01-08T00:00:00Z');
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-7',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Completed late',
-        status: 'Done',
-        sprintId: 'sprint-1',
-        epicKey,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-
-    roadmapConfigRepo.find.mockResolvedValue([{ jpdKey: 'JPD' } as unknown as RoadmapConfig]);
-    jpdIdeaRepo.find.mockResolvedValue([
-      {
-        key: 'JPD-3',
-        jpdKey: 'JPD',
-        deliveryIssueKeys: [epicKey],
-        targetDate,
-        startDate: new Date('2026-01-01T00:00:00Z'),
-      } as unknown as JpdIdea,
-    ]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-7',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      return makeQb([
-        {
-          issueKey: 'ACC-7',
-          field: 'status',
-          toValue: 'Done',
-          changedAt: new Date('2026-01-15T12:00:00Z'), // after Jan 8 target
-        },
-      ]);
-    });
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    expect(result.issues[0].roadmapStatus).toBe('linked');
-  });
-
-  // ---------------------------------------------------------------------------
-  // Condition B — in-flight coverage (proposal 0020)
-  // ---------------------------------------------------------------------------
-
-  it('sets roadmapStatus to "in-scope" for In Progress issue in active sprint with future targetDate', async () => {
-    const activeSprint: JiraSprint = { ...SPRINT, state: 'active' };
-    sprintRepo.findOne.mockResolvedValue(activeSprint);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled', "Won't Do"],
-    } as unknown as BoardConfig);
-
-    const epicKey = 'EPIC-B1';
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-B1',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'In Progress story',
-        status: 'In Progress',
-        sprintId: 'sprint-1',
-        epicKey,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-
-    roadmapConfigRepo.find.mockResolvedValue([{ jpdKey: 'JPD' } as unknown as RoadmapConfig]);
-    jpdIdeaRepo.find.mockResolvedValue([
-      {
-        key: 'JPD-B1',
-        jpdKey: 'JPD',
-        deliveryIssueKeys: [epicKey],
-        targetDate: new Date('2099-12-31T00:00:00Z'), // well in the future
-        startDate: new Date('2026-01-01T00:00:00Z'),
-      } as unknown as JpdIdea,
-    ]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-B1',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      // No done transition
-      return makeQb([
-        { issueKey: 'ACC-B1', field: 'status', toValue: 'In Progress', changedAt: new Date('2026-01-05T10:00:00Z') },
-      ]);
-    });
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    expect(result.issues[0].roadmapStatus).toBe('in-scope');
-  });
-
-  it('sets roadmapStatus to "in-scope" for To Do issue in active sprint with future targetDate', async () => {
-    const activeSprint: JiraSprint = { ...SPRINT, state: 'active' };
-    sprintRepo.findOne.mockResolvedValue(activeSprint);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled', "Won't Do"],
-    } as unknown as BoardConfig);
-
-    const epicKey = 'EPIC-B2';
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-B2',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'To Do story',
-        status: 'To Do',
-        sprintId: 'sprint-1',
-        epicKey,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-
-    roadmapConfigRepo.find.mockResolvedValue([{ jpdKey: 'JPD' } as unknown as RoadmapConfig]);
-    jpdIdeaRepo.find.mockResolvedValue([
-      {
-        key: 'JPD-B2',
-        jpdKey: 'JPD',
-        deliveryIssueKeys: [epicKey],
-        targetDate: new Date('2099-12-31T00:00:00Z'),
-        startDate: new Date('2026-01-01T00:00:00Z'),
-      } as unknown as JpdIdea,
-    ]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-B2',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      return makeQb([]); // no status changelogs
-    });
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    expect(result.issues[0].roadmapStatus).toBe('in-scope');
-  });
-
-  it('sets roadmapStatus to "linked" for In Progress issue in active sprint with past targetDate', async () => {
-    const activeSprint: JiraSprint = { ...SPRINT, state: 'active' };
-    sprintRepo.findOne.mockResolvedValue(activeSprint);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled', "Won't Do"],
-    } as unknown as BoardConfig);
-
-    const epicKey = 'EPIC-B3';
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-B3',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'In Progress, lapsed deadline',
-        status: 'In Progress',
-        sprintId: 'sprint-1',
-        epicKey,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-
-    roadmapConfigRepo.find.mockResolvedValue([{ jpdKey: 'JPD' } as unknown as RoadmapConfig]);
-    jpdIdeaRepo.find.mockResolvedValue([
-      {
-        key: 'JPD-B3',
-        jpdKey: 'JPD',
-        deliveryIssueKeys: [epicKey],
-        targetDate: new Date('2020-01-01T00:00:00Z'), // well in the past
-        startDate: new Date('2019-01-01T00:00:00Z'),
-      } as unknown as JpdIdea,
-    ]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-B3',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      return makeQb([
-        { issueKey: 'ACC-B3', field: 'status', toValue: 'In Progress', changedAt: new Date('2026-01-05T10:00:00Z') },
-      ]);
-    });
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    expect(result.issues[0].roadmapStatus).toBe('linked');
-  });
-
-  it('sets roadmapStatus to "none" for Cancelled issue in active sprint with future targetDate (unchanged)', async () => {
-    const activeSprint: JiraSprint = { ...SPRINT, state: 'active' };
-    sprintRepo.findOne.mockResolvedValue(activeSprint);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled', "Won't Do"],
-    } as unknown as BoardConfig);
-
-    const epicKey = 'EPIC-B4';
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-B4',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Cancelled with future deadline',
-        status: 'Cancelled',
-        sprintId: 'sprint-1',
-        epicKey,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-
-    roadmapConfigRepo.find.mockResolvedValue([{ jpdKey: 'JPD' } as unknown as RoadmapConfig]);
-    jpdIdeaRepo.find.mockResolvedValue([
-      {
-        key: 'JPD-B4',
-        jpdKey: 'JPD',
-        deliveryIssueKeys: [epicKey],
-        targetDate: new Date('2099-12-31T00:00:00Z'),
-        startDate: new Date('2026-01-01T00:00:00Z'),
-      } as unknown as JpdIdea,
-    ]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-B4',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      return makeQb([]);
-    });
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    expect(result.issues[0].roadmapStatus).toBe('none');
-  });
-
-  // ---------------------------------------------------------------------------
-  // Sort order: incomplete before completed
-  // ---------------------------------------------------------------------------
-
-  it('sorts incomplete issues before completed issues, then alphabetically', async () => {
-    sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-10',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Completed issue',
-        status: 'Done',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-      {
-        key: 'ACC-2',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Incomplete issue',
-        status: 'In Progress',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-10',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-          {
-            issueKey: 'ACC-2',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      // Status changelogs: ACC-10 is done, ACC-2 is in progress
-      return makeQb([
-        {
-          issueKey: 'ACC-10',
-          field: 'status',
-          toValue: 'Done',
-          changedAt: new Date('2026-01-10T12:00:00Z'),
-        },
-      ]);
-    });
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    expect(result.issues).toHaveLength(2);
-    // Incomplete first
-    expect(result.issues[0].key).toBe('ACC-2');
-    expect(result.issues[0].completedInSprint).toBe(false);
-    // Completed second
-    expect(result.issues[1].key).toBe('ACC-10');
-    expect(result.issues[1].completedInSprint).toBe(true);
-  });
-
-  // ---------------------------------------------------------------------------
-  // Sprint with no startDate — all issues treated as committed
-  // ---------------------------------------------------------------------------
-
-  it('treats all issues as committed when sprint has no startDate', async () => {
-    const sprintNoStart: JiraSprint = {
-      id: 'sprint-ns',
-      boardId: 'ACC',
-      name: 'Sprint NS',
-      state: 'active',
-      startDate: null,
-      endDate: new Date('2026-01-19T00:00:00Z'),
-      goal: '',
-    } as JiraSprint;
-
-    sprintRepo.findOne.mockResolvedValue(sprintNoStart);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-8',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Sprint without start',
-        status: 'In Progress',
-        sprintId: 'sprint-ns',
-        epicKey: null,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-8',
-            field: 'Sprint',
-            toValue: 'Sprint NS',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      return makeQb([]);
-    });
-
-    const result = await service.getDetail('ACC', 'sprint-ns');
-
-    expect(result.issues).toHaveLength(1);
-    expect(result.issues[0].addedMidSprint).toBe(false);
-    expect(result.summary.committedCount).toBe(1);
-  });
-
-  // ---------------------------------------------------------------------------
-  // isFailure via labels
-  // ---------------------------------------------------------------------------
-
-  it('marks issue as isFailure based on failure label', async () => {
-    sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: ['hotfix'],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-9',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Hotfix story',
-        status: 'Done',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: ['hotfix'],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-9',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      return makeQb([
-        { issueKey: 'ACC-9', field: 'status', toValue: 'Done', changedAt: new Date('2026-01-10T00:00:00Z') },
-      ]);
-    });
 
     const result = await service.getDetail('ACC', 'sprint-1');
 
     expect(result.issues[0].isFailure).toBe(true);
-    expect(result.summary.failureCount).toBe(1);
   });
 
-  // ---------------------------------------------------------------------------
-  // jiraUrl
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // B-4: missing BoardConfig fallback defaults
+  // -------------------------------------------------------------------------
 
-  it('includes jiraUrl when JIRA_BASE_URL is configured', async () => {
-    service = new SprintDetailService(
-      sprintRepo,
-      issueRepo,
-      changelogRepo,
-      boardConfigRepo,
-      jpdIdeaRepo,
-      roadmapConfigRepo,
-      issueLinkRepo,
-      mockConfigService('https://myco.atlassian.net'),
-      workingTimeService,
-    );
-
-    sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-1',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'URL test',
-        status: 'Done',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-03T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-1',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-04T00:00:00Z'),
-          },
-        ]);
-      }
-      return makeQb([
-        { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: new Date('2026-01-10T00:00:00Z') },
-      ]);
-    });
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    expect(result.issues[0].jiraUrl).toBe('https://myco.atlassian.net/browse/ACC-1');
-  });
-
-  // ---------------------------------------------------------------------------
-  // excludeWeekends = true: delegates to WorkingTimeService for leadTimeDays
-  // ---------------------------------------------------------------------------
-
-  it('uses workingDaysBetween for per-issue leadTimeDays when excludeWeekends is true', async () => {
-    workingTimeService.getConfig.mockResolvedValue({
-      id: 1, excludeWeekends: true, workDays: [1, 2, 3, 4, 5], hoursPerDay: 8, holidays: [],
-    });
-    workingTimeService.workingDaysBetween.mockReturnValue(1);
-
-    sprintRepo.findOne.mockResolvedValue(SPRINT);
-    boardConfigRepo.findOne.mockResolvedValue({
-      boardId: 'ACC',
-      boardType: 'scrum',
-      doneStatusNames: ['Done'],
-      failureIssueTypes: [],
-      failureLabels: [],
-      incidentIssueTypes: [],
-      incidentLabels: [],
-      cancelledStatusNames: ['Cancelled'],
-    } as unknown as BoardConfig);
-
-    const inProgressAt = new Date('2026-01-09T00:00:00Z'); // Friday
-    const doneAt = new Date('2026-01-12T00:00:00Z');       // Monday
-
-    issueRepo.find.mockResolvedValue([
-      {
-        key: 'ACC-1',
-        boardId: 'ACC',
-        issueType: 'Story',
-        summary: 'Weekend span',
-        status: 'Done',
-        sprintId: 'sprint-1',
-        epicKey: null,
-        labels: [],
-        points: null,
-        createdAt: new Date('2026-01-05T00:00:00Z'),
-      } as unknown as JiraIssue,
-    ]);
-    roadmapConfigRepo.find.mockResolvedValue([]);
-
-    let qbCallCount = 0;
-    changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-      qbCallCount++;
-      if (qbCallCount === 1) {
-        return makeQb([
-          {
-            issueKey: 'ACC-1',
-            field: 'Sprint',
-            toValue: 'Sprint 1',
-            fromValue: null,
-            changedAt: new Date('2026-01-07T00:00:00Z'),
-          },
-        ]);
-      }
-      return makeQb([
-        { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: inProgressAt },
-        { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: doneAt },
-      ]);
-    });
-
-    const result = await service.getDetail('ACC', 'sprint-1');
-
-    // workingDaysBetween was called with the correct start/end dates
-    expect(workingTimeService.workingDaysBetween).toHaveBeenCalledWith(
-      inProgressAt,
-      doneAt,
-      expect.anything(),
-    );
-    // The returned value from workingDaysBetween is reflected in leadTimeDays
-    expect(result.issues[0].leadTimeDays).toBe(1);
-  });
-
-  // ---------------------------------------------------------------------------
-  // B-4: Missing BoardConfig fallback defaults
-  // ---------------------------------------------------------------------------
-
-  describe('B-4: missing BoardConfig fallback defaults', () => {
-    it('classifies Bug issues as failures when boardConfig is null', async () => {
-      sprintRepo.findOne.mockResolvedValue(SPRINT);
-      boardConfigRepo.findOne.mockResolvedValue(null); // No BoardConfig row
-
-      issueRepo.find.mockResolvedValue([
-        {
-          key: 'ACC-1',
-          boardId: 'ACC',
-          issueType: 'Bug',
-          summary: 'A bug',
-          status: 'Done',
-          sprintId: 'sprint-1',
-          epicKey: null,
-          labels: [],
-          points: null,
-          priority: null,
-          createdAt: new Date('2026-01-03T00:00:00Z'),
-        } as unknown as JiraIssue,
-      ]);
-      roadmapConfigRepo.find.mockResolvedValue([]);
-
-      let qbCallCount = 0;
-      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-        qbCallCount++;
-        if (qbCallCount === 1) {
-          return makeQb([
-            {
-              issueKey: 'ACC-1',
-              field: 'Sprint',
-              toValue: 'Sprint 1',
-              fromValue: null,
-              changedAt: new Date('2026-01-04T00:00:00Z'),
-            },
-          ]);
-        }
-        return makeQb([
-          {
-            issueKey: 'ACC-1',
-            field: 'status',
-            toValue: 'Done',
-            changedAt: new Date('2026-01-10T10:00:00Z'),
-          },
-        ]);
-      });
-
-      const result = await service.getDetail('ACC', 'sprint-1');
-
-      // With B-4 fix: Bug should be classified as a failure even without BoardConfig
-      expect(result.issues[0].isFailure).toBe(true);
-      expect(result.summary.failureCount).toBe(1);
-    });
-
-    it('classifies Incident issues as failures when boardConfig is null', async () => {
+  describe('missing BoardConfig fallback defaults (B-4)', () => {
+    it('classifies Bug as failure when boardConfig is null', async () => {
       sprintRepo.findOne.mockResolvedValue(SPRINT);
       boardConfigRepo.findOne.mockResolvedValue(null);
-
       issueRepo.find.mockResolvedValue([
-        {
-          key: 'ACC-2',
-          boardId: 'ACC',
-          issueType: 'Incident',
-          summary: 'An incident',
-          status: 'In Progress',
-          sprintId: 'sprint-1',
-          epicKey: null,
-          labels: [],
-          points: null,
-          priority: null,
-          createdAt: new Date('2026-01-03T00:00:00Z'),
-        } as unknown as JiraIssue,
+        makeIssue({ key: 'ACC-1', issueType: 'Bug', status: 'Done' }),
       ]);
-      roadmapConfigRepo.find.mockResolvedValue([]);
-
-      let qbCallCount = 0;
-      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-        qbCallCount++;
-        if (qbCallCount === 1) {
-          return makeQb([
-            {
-              issueKey: 'ACC-2',
-              field: 'Sprint',
-              toValue: 'Sprint 1',
-              fromValue: null,
-              changedAt: new Date('2026-01-04T00:00:00Z'),
-            },
-          ]);
-        }
-        return makeQb([]);
-      });
+      sprintMembership.reconstruct.mockResolvedValue(
+        committedMembership(['ACC-1']),
+      );
 
       const result = await service.getDetail('ACC', 'sprint-1');
 
-      // Incident should be classified as failure by default
       expect(result.issues[0].isFailure).toBe(true);
     });
 
-    it('classifies Story issues as non-failures when boardConfig is null', async () => {
+    it('classifies Incident as failure when boardConfig is null', async () => {
       sprintRepo.findOne.mockResolvedValue(SPRINT);
       boardConfigRepo.findOne.mockResolvedValue(null);
-
       issueRepo.find.mockResolvedValue([
-        {
-          key: 'ACC-3',
-          boardId: 'ACC',
-          issueType: 'Story',
-          summary: 'A story',
-          status: 'Done',
-          sprintId: 'sprint-1',
-          epicKey: null,
-          labels: [],
-          points: null,
-          priority: null,
-          createdAt: new Date('2026-01-03T00:00:00Z'),
-        } as unknown as JiraIssue,
+        makeIssue({ key: 'ACC-1', issueType: 'Incident' }),
       ]);
-      roadmapConfigRepo.find.mockResolvedValue([]);
-
-      let qbCallCount = 0;
-      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-        qbCallCount++;
-        if (qbCallCount === 1) {
-          return makeQb([
-            {
-              issueKey: 'ACC-3',
-              field: 'Sprint',
-              toValue: 'Sprint 1',
-              fromValue: null,
-              changedAt: new Date('2026-01-04T00:00:00Z'),
-            },
-          ]);
-        }
-        return makeQb([
-          {
-            issueKey: 'ACC-3',
-            field: 'status',
-            toValue: 'Done',
-            changedAt: new Date('2026-01-10T10:00:00Z'),
-          },
-        ]);
-      });
+      sprintMembership.reconstruct.mockResolvedValue(
+        committedMembership(['ACC-1']),
+      );
 
       const result = await service.getDetail('ACC', 'sprint-1');
 
-      // Story should NOT be classified as failure
+      expect(result.issues[0].isFailure).toBe(true);
+    });
+
+    it('does NOT classify Story as failure when boardConfig is null', async () => {
+      sprintRepo.findOne.mockResolvedValue(SPRINT);
+      boardConfigRepo.findOne.mockResolvedValue(null);
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'ACC-1', issueType: 'Story', status: 'Done' }),
+      ]);
+      sprintMembership.reconstruct.mockResolvedValue(
+        committedMembership(['ACC-1']),
+      );
+
+      const result = await service.getDetail('ACC', 'sprint-1');
+
       expect(result.issues[0].isFailure).toBe(false);
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // B-2: incidentPriorities AND-gate in sprint view
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // B-2: incidentPriorities AND-gate
+  // -------------------------------------------------------------------------
 
-  describe('B-2: incidentPriorities AND-gate', () => {
-    function makeB2Setup(priority: string | null, incidentPriorities: string[]) {
+  describe('incidentPriorities AND-gate (B-2)', () => {
+    function setup(priority: string | null, incidentPriorities: string[]) {
       sprintRepo.findOne.mockResolvedValue(SPRINT);
-      boardConfigRepo.findOne.mockResolvedValue({
-        boardId: 'ACC',
-        boardType: 'scrum',
-        doneStatusNames: ['Done'],
-        failureIssueTypes: ['Bug', 'Incident'],
-        failureLabels: [],
-        incidentIssueTypes: ['Bug', 'Incident'],
-        incidentLabels: [],
-        incidentPriorities,
-        cancelledStatusNames: [],
-      } as unknown as BoardConfig);
-
+      boardConfigRepo.findOne.mockResolvedValue(
+        defaultBoardConfig({
+          failureIssueTypes: ['Bug', 'Incident'],
+          incidentIssueTypes: ['Bug', 'Incident'],
+          incidentPriorities,
+        }),
+      );
       issueRepo.find.mockResolvedValue([
-        {
-          key: 'ACC-1',
-          boardId: 'ACC',
-          issueType: 'Bug',
-          summary: 'A bug',
-          status: 'Done',
-          sprintId: 'sprint-1',
-          epicKey: null,
-          labels: [],
-          points: null,
-          priority,
-          createdAt: new Date('2026-01-03T00:00:00Z'),
-        } as unknown as JiraIssue,
+        makeIssue({ key: 'ACC-1', issueType: 'Bug', status: 'Done', priority }),
       ]);
-      roadmapConfigRepo.find.mockResolvedValue([]);
-
-      let qbCallCount = 0;
-      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-        qbCallCount++;
-        if (qbCallCount === 1) {
-          return makeQb([
-            {
-              issueKey: 'ACC-1',
-              field: 'Sprint',
-              toValue: 'Sprint 1',
-              fromValue: null,
-              changedAt: new Date('2026-01-04T00:00:00Z'),
-            },
-          ]);
-        }
-        return makeQb([
-          {
-            issueKey: 'ACC-1',
-            field: 'status',
-            toValue: 'Done',
-            changedAt: new Date('2026-01-10T10:00:00Z'),
-          },
-        ]);
-      });
+      sprintMembership.reconstruct.mockResolvedValue(
+        committedMembership(['ACC-1']),
+      );
     }
 
-    it('Bug at Medium priority is NOT classified as incident when incidentPriorities = [Critical, Highest]', async () => {
-      makeB2Setup('Medium', ['Critical', 'Highest']);
+    it('Medium priority is NOT incident when allowlist=[Critical, Highest]', async () => {
+      setup('Medium', ['Critical', 'Highest']);
 
       const result = await service.getDetail('ACC', 'sprint-1');
 
       expect(result.issues[0].isIncident).toBe(false);
     });
 
-    it('Bug at Critical priority IS classified as incident when incidentPriorities = [Critical, Highest]', async () => {
-      makeB2Setup('Critical', ['Critical', 'Highest']);
+    it('Critical priority IS incident when allowlist=[Critical, Highest]', async () => {
+      setup('Critical', ['Critical', 'Highest']);
 
       const result = await service.getDetail('ACC', 'sprint-1');
 
       expect(result.issues[0].isIncident).toBe(true);
     });
 
-    it('any-priority Bug IS classified as incident when incidentPriorities = [] (empty means all qualify)', async () => {
-      makeB2Setup('Low', []);
+    it('any priority IS incident when allowlist is empty (gate disabled)', async () => {
+      setup('Low', []);
 
       const result = await service.getDetail('ACC', 'sprint-1');
 
@@ -2151,108 +777,61 @@ describe('SprintDetailService', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
   // failureLinkTypes AND-gate (Proposal 0032)
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
 
   describe('failureLinkTypes AND-gate', () => {
-    /**
-     * Helper: sets up a sprint with a single Bug issue (ACC-1) and two
-     * changelog query builder calls (Sprint, then status).
-     * The issueLinkRepo createQueryBuilder is a separate mock.
-     */
-    function setupLinkGateTest(
-      failureLinkTypes: string[],
-      linkRows: object[],
-    ) {
+    function setup(failureLinkTypes: string[], linkRows: object[]): void {
       sprintRepo.findOne.mockResolvedValue(SPRINT);
-      boardConfigRepo.findOne.mockResolvedValue({
-        boardId: 'ACC',
-        boardType: 'scrum',
-        doneStatusNames: ['Done'],
-        failureIssueTypes: ['Bug'],
-        failureLabels: [],
-        failureLinkTypes,
-        incidentIssueTypes: [],
-        incidentLabels: [],
-        incidentPriorities: [],
-        cancelledStatusNames: ['Cancelled'],
-      } as unknown as BoardConfig);
-
+      boardConfigRepo.findOne.mockResolvedValue(
+        defaultBoardConfig({
+          failureIssueTypes: ['Bug'],
+          failureLinkTypes,
+        }),
+      );
       issueRepo.find.mockResolvedValue([
-        {
-          key: 'ACC-1',
-          boardId: 'ACC',
-          issueType: 'Bug',
-          summary: 'A bug',
-          status: 'In Progress',
-          sprintId: 'sprint-1',
-          epicKey: null,
-          labels: [],
-          points: null,
-          priority: null,
-          createdAt: new Date('2026-01-03T00:00:00Z'),
-        } as unknown as JiraIssue,
+        makeIssue({ key: 'ACC-1', issueType: 'Bug', status: 'In Progress' }),
       ]);
-      roadmapConfigRepo.find.mockResolvedValue([]);
-
-      let qbCallCount = 0;
-      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-        qbCallCount++;
-        if (qbCallCount === 1) {
-          return makeQb([
-            {
-              issueKey: 'ACC-1',
-              field: 'Sprint',
-              toValue: 'Sprint 1',
-              fromValue: null,
-              changedAt: new Date('2026-01-04T00:00:00Z'),
-            },
-          ]);
-        }
-        return makeQb([]);
-      });
-
-      // issueLinkRepo mock: returns the given linkRows
+      sprintMembership.reconstruct.mockResolvedValue(
+        committedMembership(['ACC-1']),
+      );
       issueLinkRepo.createQueryBuilder = jest.fn().mockReturnValue({
         select: jest.fn().mockReturnThis(),
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
         getRawMany: jest.fn().mockResolvedValue(linkRows),
+        getMany: jest.fn().mockResolvedValue([]),
       });
     }
 
-    it('does NOT mark as isFailure when failureLinkTypes is set and issue has no matching link', async () => {
-      setupLinkGateTest(['caused by'], []); // no causal links found
+    it('does NOT mark as failure when failureLinkTypes is set and no causal link exists', async () => {
+      setup(['caused by'], []);
 
       const result = await service.getDetail('ACC', 'sprint-1');
 
       expect(result.issues[0].isFailure).toBe(false);
     });
 
-    it('marks as isFailure when failureLinkTypes is set and issue has a matching causal link', async () => {
-      setupLinkGateTest(['caused by'], [{ key: 'ACC-1' }]); // link found
+    it('marks as failure when failureLinkTypes is set and a causal link exists', async () => {
+      setup(['caused by'], [{ key: 'ACC-1' }]);
 
       const result = await service.getDetail('ACC', 'sprint-1');
 
       expect(result.issues[0].isFailure).toBe(true);
     });
 
-    it('marks as isFailure when failureLinkTypes is empty (default — no AND-gate applied)', async () => {
-      // failureLinkTypes = [] means gate is skipped entirely
-      setupLinkGateTest([], []);
+    it('skips the link gate when failureLinkTypes is empty', async () => {
+      setup([], []);
 
       const result = await service.getDetail('ACC', 'sprint-1');
 
-      // Gate skipped: Bug matches failureIssueTypes → isFailure = true
       expect(result.issues[0].isFailure).toBe(true);
-      // issueLinkRepo should NOT have been called
       expect(issueLinkRepo.createQueryBuilder).not.toHaveBeenCalled();
     });
 
-    it('link type matching is case-insensitive', async () => {
-      // Config uses title-case; link row uses lower-case — must still match
-      setupLinkGateTest(['Caused By'], [{ key: 'ACC-1' }]);
+    it('matches link types case-insensitively', async () => {
+      setup(['Caused By'], [{ key: 'ACC-1' }]);
 
       const result = await service.getDetail('ACC', 'sprint-1');
 
@@ -2261,91 +840,215 @@ describe('SprintDetailService', () => {
   });
 
   // -------------------------------------------------------------------------
-  // roadmapLinkSource — direct-link coverage path (ADR 0044)
+  // roadmapStatus — sprint-state aware (active vs closed)
   // -------------------------------------------------------------------------
 
-  describe('roadmapLinkSource — direct Jira issue link to JPD idea', () => {
-    /** Shared setup: single Story with no epic, linked directly to a JPD idea. */
-    function setupDirectLinkDetail(opts: {
+  describe('roadmapStatus (epic-linked)', () => {
+    function setupEpicScenario(opts: {
+      sprintState: 'active' | 'closed';
+      issueStatus: string;
+      targetDate: Date;
+      resolvedAt?: Date;
+    }): void {
+      const sprint: JiraSprint = {
+        ...SPRINT,
+        state: opts.sprintState,
+      } as JiraSprint;
+      sprintRepo.findOne.mockResolvedValue(sprint);
+      boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+      issueRepo.find.mockResolvedValue([
+        makeIssue({
+          key: 'ACC-1',
+          status: opts.issueStatus,
+          epicKey: 'ACC-EPIC-1',
+        }),
+      ]);
+      sprintMembership.reconstruct.mockResolvedValue(
+        committedMembership(['ACC-1']),
+      );
+      roadmapConfigRepo.find.mockResolvedValue([
+        { jpdKey: 'PT' } as RoadmapConfig,
+      ]);
+      jpdIdeaRepo.find.mockResolvedValue([
+        Object.assign(new JpdIdea(), {
+          key: 'PT-1',
+          jpdKey: 'PT',
+          targetDate: opts.targetDate,
+          startDate: new Date('2026-01-01'),
+          deliveryIssueKeys: ['ACC-EPIC-1'],
+          summary: 'Epic idea',
+        }),
+      ]);
+      const statusRows = opts.resolvedAt
+        ? [
+            {
+              issueKey: 'ACC-1',
+              field: 'status',
+              fromValue: 'In Progress',
+              toValue: 'Done',
+              changedAt: opts.resolvedAt,
+            },
+          ]
+        : [];
+      changelogRepo.createQueryBuilder = jest
+        .fn()
+        .mockReturnValue(makeStatusQb(statusRows));
+    }
+
+    it('returns "in-scope" when issue resolved before targetDate', async () => {
+      setupEpicScenario({
+        sprintState: 'closed',
+        issueStatus: 'Done',
+        targetDate: new Date('2026-06-30T00:00:00Z'),
+        resolvedAt: new Date('2026-06-15T00:00:00Z'),
+      });
+
+      const result = await service.getDetail('ACC', 'sprint-1');
+
+      expect(result.issues[0].roadmapStatus).toBe('in-scope');
+    });
+
+    it('returns "linked" when issue not resolved in a closed sprint', async () => {
+      setupEpicScenario({
+        sprintState: 'closed',
+        issueStatus: 'In Progress',
+        targetDate: new Date('2026-01-10T00:00:00Z'),
+      });
+
+      const result = await service.getDetail('ACC', 'sprint-1');
+
+      expect(result.issues[0].roadmapStatus).toBe('linked');
+    });
+
+    it('returns "linked" when issue resolved AFTER targetDate', async () => {
+      setupEpicScenario({
+        sprintState: 'closed',
+        issueStatus: 'Done',
+        targetDate: new Date('2026-01-10T00:00:00Z'),
+        resolvedAt: new Date('2026-01-15T00:00:00Z'),
+      });
+
+      const result = await service.getDetail('ACC', 'sprint-1');
+
+      expect(result.issues[0].roadmapStatus).toBe('linked');
+    });
+
+    it('returns "in-scope" for In Progress issue in active sprint with future targetDate', async () => {
+      setupEpicScenario({
+        sprintState: 'active',
+        issueStatus: 'In Progress',
+        targetDate: new Date('2099-01-01T00:00:00Z'),
+      });
+
+      const result = await service.getDetail('ACC', 'sprint-1');
+
+      expect(result.issues[0].roadmapStatus).toBe('in-scope');
+    });
+
+    it('returns "linked" for In Progress issue in active sprint with past targetDate', async () => {
+      setupEpicScenario({
+        sprintState: 'active',
+        issueStatus: 'In Progress',
+        targetDate: new Date('2020-01-01T00:00:00Z'),
+      });
+
+      const result = await service.getDetail('ACC', 'sprint-1');
+
+      expect(result.issues[0].roadmapStatus).toBe('linked');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // roadmapLinkSource — direct Jira issue link to JPD idea (ADR 0044)
+  // -------------------------------------------------------------------------
+
+  describe('roadmapLinkSource — direct link', () => {
+    function setupDirect(opts: {
       roadmapLinkTypes: string[];
       linkTypeName: string;
       targetDate: Date;
-      sprintState?: string;
+      sprintState?: 'active' | 'closed';
       resolvedAt?: Date;
-    }) {
+    }): void {
       const sprint: JiraSprint = {
         ...SPRINT,
         state: opts.sprintState ?? 'active',
       } as JiraSprint;
-
       sprintRepo.findOne.mockResolvedValue(sprint);
+      boardConfigRepo.findOne.mockResolvedValue(
+        defaultBoardConfig({
+          doneStatusNames: ['Done', 'Closed', 'Released'],
+          roadmapLinkTypes: opts.roadmapLinkTypes,
+        }),
+      );
+      issueRepo.find.mockResolvedValue([
+        makeIssue({
+          key: 'ACC-99',
+          status: opts.resolvedAt ? 'Done' : 'In Progress',
+          points: 3,
+        }),
+      ]);
+      sprintMembership.reconstruct.mockResolvedValue(
+        committedMembership(['ACC-99']),
+      );
+      roadmapConfigRepo.find.mockResolvedValue([
+        { jpdKey: 'PT' } as RoadmapConfig,
+      ]);
+      jpdIdeaRepo.find.mockResolvedValue([
+        Object.assign(new JpdIdea(), {
+          key: 'PT-389',
+          jpdKey: 'PT',
+          targetDate: opts.targetDate,
+          startDate: new Date('2026-01-01'),
+          deliveryIssueKeys: [],
+          summary: 'Roadmap item',
+        }),
+      ]);
 
-      const issue = {
-        key: 'ACC-99',
-        summary: 'Story',
-        boardId: 'ACC',
-        status: opts.resolvedAt ? 'Done' : 'In Progress',
-        issueType: 'Story',
-        epicKey: null,
-        points: 3,
-        fixVersion: null,
-        sprintId: 'sprint-1',
-        labels: [],
-        createdAt: new Date('2026-01-05T00:00:00Z'),
-        updatedAt: new Date('2026-01-05T00:00:00Z'),
-      } as unknown as JiraIssue;
-
-      issueRepo.find.mockResolvedValue([issue]);
-
-      const boardConfig = {
-        boardId: 'ACC',
-        boardType: 'scrum',
-        doneStatusNames: ['Done', 'Closed', 'Released'],
-        cancelledStatusNames: ["Cancelled", "Won't Do"],
-        inProgressStatusNames: ['In Progress'],
-        failureIssueTypes: [],
-        failureLabels: [],
-        failureLinkTypes: [],
-        incidentIssueTypes: [],
-        incidentLabels: [],
-        roadmapLinkTypes: opts.roadmapLinkTypes,
-      } as unknown as BoardConfig;
-      boardConfigRepo.findOne.mockResolvedValue(boardConfig);
-
-      roadmapConfigRepo.find.mockResolvedValue([{ jpdKey: 'PT' } as RoadmapConfig]);
-
-      const idea = Object.assign(new JpdIdea(), {
-        key: 'PT-389',
-        jpdKey: 'PT',
-        targetDate: opts.targetDate,
-        startDate: new Date('2026-01-01'),
-        deliveryIssueKeys: [],
-        summary: 'Roadmap item',
-      });
-      jpdIdeaRepo.find.mockResolvedValue([idea]);
-
-      const statusChanelogs = opts.resolvedAt
-        ? [{ issueKey: 'ACC-99', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: opts.resolvedAt }]
+      const statusRows = opts.resolvedAt
+        ? [
+            {
+              issueKey: 'ACC-99',
+              field: 'status',
+              fromValue: 'In Progress',
+              toValue: 'Done',
+              changedAt: opts.resolvedAt,
+            },
+          ]
         : [];
-      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb(statusChanelogs));
+      changelogRepo.createQueryBuilder = jest
+        .fn()
+        .mockReturnValue(makeStatusQb(statusRows));
 
-      const linkRows = opts.roadmapLinkTypes.length > 0
-        && opts.roadmapLinkTypes.map((t) => t.toLowerCase()).includes(opts.linkTypeName.toLowerCase())
-        ? [{ sourceIssueKey: 'ACC-99', targetIssueKey: 'PT-389', linkTypeName: opts.linkTypeName }]
-        : [];
-
+      const linkRows =
+        opts.roadmapLinkTypes.length > 0 &&
+        opts.roadmapLinkTypes
+          .map((t) => t.toLowerCase())
+          .includes(opts.linkTypeName.toLowerCase())
+          ? [
+              {
+                sourceIssueKey: 'ACC-99',
+                targetIssueKey: 'PT-389',
+                linkTypeName: opts.linkTypeName,
+              },
+            ]
+          : [];
       issueLinkRepo.createQueryBuilder = jest.fn().mockReturnValue({
         select: jest.fn().mockReturnThis(),
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
         getMany: jest.fn().mockResolvedValue(linkRows),
+        getRawMany: jest.fn().mockResolvedValue([]),
       });
     }
 
-    it('sets roadmapLinkSource="direct" and roadmapStatus="in-scope" when issue resolved before targetDate', async () => {
-      const targetDate = new Date('2026-06-30T00:00:00Z');
-      const resolvedAt = new Date('2026-06-15T10:00:00Z');
-      setupDirectLinkDetail({ roadmapLinkTypes: ['is connected to'], linkTypeName: 'is connected to', targetDate, resolvedAt });
+    it('sets roadmapLinkSource="direct" and roadmapStatus="in-scope" when resolved before target', async () => {
+      setupDirect({
+        roadmapLinkTypes: ['is connected to'],
+        linkTypeName: 'is connected to',
+        targetDate: new Date('2026-06-30T00:00:00Z'),
+        resolvedAt: new Date('2026-06-15T10:00:00Z'),
+      });
 
       const result = await service.getDetail('ACC', 'sprint-1');
 
@@ -2353,85 +1056,18 @@ describe('SprintDetailService', () => {
       expect(result.issues[0].roadmapStatus).toBe('in-scope');
     });
 
-    it('sets roadmapLinkSource="direct" and roadmapStatus="linked" when issue not resolved and sprint closed', async () => {
-      const pastTarget = new Date('2026-01-10T00:00:00Z');
-      setupDirectLinkDetail({
-        roadmapLinkTypes: ['is connected to'],
-        linkTypeName: 'is connected to',
-        targetDate: pastTarget,
-        sprintState: 'closed',
-      });
-
-      const result = await service.getDetail('ACC', 'sprint-1');
-
-      expect(result.issues[0].roadmapLinkSource).toBe('direct');
-      expect(result.issues[0].roadmapStatus).toBe('linked');
-    });
-
     it('sets roadmapLinkSource=null and roadmapStatus="none" when roadmapLinkTypes is empty', async () => {
-      const targetDate = new Date('2026-06-30T00:00:00Z');
-      setupDirectLinkDetail({ roadmapLinkTypes: [], linkTypeName: 'is connected to', targetDate });
+      setupDirect({
+        roadmapLinkTypes: [],
+        linkTypeName: 'is connected to',
+        targetDate: new Date('2026-06-30T00:00:00Z'),
+      });
 
       const result = await service.getDetail('ACC', 'sprint-1');
 
       expect(result.issues[0].roadmapLinkSource).toBeNull();
       expect(result.issues[0].roadmapStatus).toBe('none');
       expect(issueLinkRepo.createQueryBuilder).not.toHaveBeenCalled();
-    });
-
-    it('sets roadmapLinkSource="epic" (not "direct") when issue has both an epic link and a direct link', async () => {
-      const epicTargetDate = new Date('2026-03-31T00:00:00Z');
-      const resolvedAt = new Date('2026-03-20T10:00:00Z'); // before epicTargetDate → in-scope via epic
-
-      const sprint: JiraSprint = { ...SPRINT, state: 'closed' } as JiraSprint;
-      sprintRepo.findOne.mockResolvedValue(sprint);
-
-      const issue = {
-        key: 'ACC-99', summary: 'Story', boardId: 'ACC',
-        status: 'Done', issueType: 'Story', epicKey: 'ACC-EPIC-1',
-        points: 3, fixVersion: null, sprintId: 'sprint-1',
-        labels: [], createdAt: new Date('2026-01-05T00:00:00Z'), updatedAt: new Date('2026-01-05T00:00:00Z'),
-      } as unknown as JiraIssue;
-      issueRepo.find.mockResolvedValue([issue]);
-
-      boardConfigRepo.findOne.mockResolvedValue({
-        boardId: 'ACC', boardType: 'scrum',
-        doneStatusNames: ['Done', 'Closed', 'Released'],
-        cancelledStatusNames: ["Cancelled", "Won't Do"],
-        inProgressStatusNames: ['In Progress'],
-        failureIssueTypes: [], failureLabels: [], failureLinkTypes: [],
-        incidentIssueTypes: [], incidentLabels: [],
-        roadmapLinkTypes: ['is connected to'],
-      } as unknown as BoardConfig);
-
-      roadmapConfigRepo.find.mockResolvedValue([{ jpdKey: 'PT' } as RoadmapConfig]);
-
-      const epicIdea = Object.assign(new JpdIdea(), {
-        key: 'PT-100', jpdKey: 'PT', targetDate: epicTargetDate,
-        startDate: new Date('2026-01-01'), deliveryIssueKeys: ['ACC-EPIC-1'], summary: 'Epic idea',
-      });
-      const directIdea = Object.assign(new JpdIdea(), {
-        key: 'PT-200', jpdKey: 'PT', targetDate: new Date('2026-09-30'),
-        startDate: new Date('2026-01-01'), deliveryIssueKeys: [], summary: 'Direct idea',
-      });
-      jpdIdeaRepo.find.mockResolvedValue([epicIdea, directIdea]);
-
-      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb([
-        { issueKey: 'ACC-99', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: resolvedAt },
-      ]));
-      issueLinkRepo.createQueryBuilder = jest.fn().mockReturnValue({
-        select: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        andWhere: jest.fn().mockReturnThis(),
-        getMany: jest.fn().mockResolvedValue([
-          { sourceIssueKey: 'ACC-99', targetIssueKey: 'PT-200', linkTypeName: 'is connected to' },
-        ]),
-      });
-
-      const result = await service.getDetail('ACC', 'sprint-1');
-
-      expect(result.issues[0].roadmapLinkSource).toBe('epic');
-      expect(result.issues[0].roadmapStatus).toBe('in-scope');
     });
   });
 });

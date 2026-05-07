@@ -28,6 +28,7 @@ import { DataTable, type Column } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { NoBoardsConfigured } from '@/components/ui/no-boards-configured'
 import { MetricHelp, type MetricDefinition } from '@/components/ui/metric-help'
+import { EpicDetailPanel } from '@/components/ui/epic-detail-panel'
 
 // ---------------------------------------------------------------------------
 // Metric help definitions
@@ -245,6 +246,7 @@ function RoadmapPageInner() {
   const [hasConfigs, setHasConfigs] = useState<boolean | null>(null)
   const [timezone, setTimezone] = useState('UTC')
   const [retryKey, setRetryKey] = useState(0)
+  const [openEpicSprintId, setOpenEpicSprintId] = useState<string | null>(null)
 
   const isKanban = kanbanBoardIds.has(selectedBoard)
 
@@ -469,8 +471,26 @@ function RoadmapPageInner() {
         sortable: true,
         render: (value) => `${Number(value).toFixed(1)}%`,
       },
+      {
+        key: 'epicDetail',
+        label: 'Detail',
+        render: (_value, row) => (
+          <button
+            type="button"
+            onClick={() =>
+              setOpenEpicSprintId((cur) =>
+                cur === row.sprintId ? null : row.sprintId,
+              )
+            }
+            className="text-xs text-blue-600 hover:underline"
+            aria-label={`Show epic detail for ${row.sprintName}`}
+          >
+            {openEpicSprintId === row.sprintId ? 'Hide epics' : 'Show epics'}
+          </button>
+        ),
+      },
     ],
-    [selectedBoard],
+    [selectedBoard, openEpicSprintId],
   );
 
   // Quarter-mode table columns
@@ -800,6 +820,23 @@ function RoadmapPageInner() {
                   rowClassName={sprintRowColor}
                 />
               )}
+
+              {/* Per-epic detail panel — proposal 0053 step 3.
+                  Only mounted in scrum-sprint mode when the user has clicked
+                  "Show epics" on a row. Not yet wired for quarter or kanban. */}
+              {!isKanban && periodType === 'sprint' && openEpicSprintId && (() => {
+                const sprint = rawData.find((r) => r.sprintId === openEpicSprintId);
+                if (!sprint) return null;
+                return (
+                  <div className="mt-4">
+                    <EpicDetailPanel
+                      boardId={selectedBoard}
+                      sprintId={sprint.sprintId}
+                      sprintName={sprint.sprintName}
+                    />
+                  </div>
+                );
+              })()}
             </>
           )}
 

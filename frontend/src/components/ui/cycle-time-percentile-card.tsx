@@ -5,9 +5,9 @@ import { CycleTimeBandBadge } from './cycle-time-band-badge'
 
 interface CycleTimePercentileCardProps {
   percentile: 'p50' | 'p75' | 'p85' | 'p95'
-  days: number
+  days: number | null
   sampleSize: number
-  band: CycleTimeBand
+  band: CycleTimeBand | null
   /** When true the days label reads "working days"; otherwise "calendar days". */
   excludeWeekends?: boolean
 }
@@ -19,12 +19,13 @@ const PERCENTILE_LABELS: Record<string, string> = {
   p95: 'p95',
 }
 
-function bandLeftBorder(band: CycleTimeBand): string {
+function bandLeftBorder(band: CycleTimeBand | null): string {
   switch (band) {
     case 'excellent': return 'border-l-green-400'
     case 'good':      return 'border-l-blue-400'
     case 'fair':      return 'border-l-amber-400'
     case 'poor':      return 'border-l-red-400'
+    case null:        return 'border-l-slate-200'
   }
 }
 
@@ -49,9 +50,11 @@ export function CycleTimePercentileCard({
       </div>
       <div className="mt-3 flex items-end gap-2">
         <span className="text-3xl font-bold tracking-tight">
-          {days.toFixed(1)}
+          {days === null ? '—' : days.toFixed(1)}
         </span>
-        <span className="mb-1 text-sm text-muted">{daysLabel}</span>
+        {days !== null && (
+          <span className="mb-1 text-sm text-muted">{daysLabel}</span>
+        )}
       </div>
       <div className="mt-3 text-xs text-muted">
         n={sampleSize}

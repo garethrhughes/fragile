@@ -30,6 +30,10 @@ export interface BoardConfig {
   inProgressStatusNames: string[];
   cancelledStatusNames: string[];
   roadmapLinkTypes: string[];
+  supportLabels: string[];
+  supportLinkType: string | null;
+  triageBoardKey: string | null;
+  supportEpics: string[];
 }
 
 export interface SprintAccuracy {
@@ -371,6 +375,8 @@ export interface WeekDetailIssue {
   labels: string[]
   boardEntryDate: string
   cycleTimeDays: number | null
+  /** True when the representative cycle is a reopen (proposal 0054 AC C). */
+  isReopen: boolean
   jiraUrl: string
 }
 
@@ -384,6 +390,8 @@ export interface WeekDetailSummary {
   totalPoints: number
   completedPoints: number
   medianCycleTimeDays: number | null
+  /** Issues whose representative cycle is a reopen (proposal 0054 AC C). */
+  reopenedIssueCount: number
 }
 
 export interface WeekDetailBoardConfig {
@@ -453,6 +461,56 @@ export function getRoadmapAccuracy(params: {
   )
 }
 
+// Per-epic coverage detail — proposal 0053.
+
+export interface EpicCoveragePrimaryIdea {
+  ideaKey: string
+  ideaSummary: string | null
+  targetDate: string
+  startDate: string | null
+}
+
+export interface EpicCoverageConflictingIdea {
+  ideaKey: string
+  ideaSummary: string | null
+  targetDate: string
+  daysFromPrimary: number
+}
+
+export type EpicCoverageResolvedSource = 'deliveryIssueKeys' | 'directLink' | 'none'
+
+export type EpicCoverageState = 'green' | 'amber' | 'red' | 'unlinked'
+
+export interface EpicCoverageDetail {
+  epicKey: string
+  epicSummary: string | null
+  primaryIdea: EpicCoveragePrimaryIdea | null
+  conflictingIdeas: EpicCoverageConflictingIdea[]
+  resolvedSource: EpicCoverageResolvedSource
+  coverageState: EpicCoverageState
+}
+
+export interface RoadmapEpicsResponse {
+  epics: EpicCoverageDetail[]
+  conflictCount: number
+}
+
+export function getRoadmapEpics(params: {
+  boardId: string
+  sprintId?: string
+  quarter?: string
+  week?: string
+}): Promise<RoadmapEpicsResponse> {
+  return apiFetch(
+    `/api/roadmap/epics${toQueryString({
+      boardId: params.boardId,
+      sprintId: params.sprintId,
+      quarter: params.quarter,
+      week: params.week,
+    })}`,
+  )
+}
+
 export function getRoadmapConfigs(): Promise<RoadmapConfig[]> {
   return apiFetch('/api/roadmap/configs');
 }
@@ -509,6 +567,10 @@ export interface SprintDetailIssue {
   isFailure: boolean
   completedInSprint: boolean
   resolvedAt: string | null
+  /** Reopen-aware representative-cycle duration (proposal 0054). Null when no completed cycle. */
+  cycleTimeDays: number | null
+  /** True when the representative cycle is a reopen (proposal 0054). */
+  isReopen: boolean
   jiraUrl: string
 }
 
@@ -732,21 +794,29 @@ export interface CycleTimeObservation {
   startedAt: string
   periodKey: string
   jiraUrl: string
+  /** True when this observation comes from a reopen cycle (proposal 0054). */
+  isReopen: boolean
 }
 
 /**
  * Issue 1: anomalyCount is present in this definition as required.
+ *
+ * Per proposal 0054, percentile fields and band are nullable: when no
+ * completed cycles are present in the window, the backend returns nulls
+ * rather than zeros (which would mis-band as 'excellent').
  */
 export interface CycleTimeResult {
   boardId: string
-  p50Days: number
-  p75Days: number
-  p85Days: number
-  p95Days: number
+  p50Days: number | null
+  p75Days: number | null
+  p85Days: number | null
+  p95Days: number | null
   count: number
   anomalyCount: number
+  /** Count of observations that came from reopen cycles (proposal 0054). */
+  reopenedIssueCount: number
   observations: CycleTimeObservation[]
-  band: CycleTimeBand
+  band: CycleTimeBand | null
 }
 
 export type CycleTimeResponse = CycleTimeResult[]
@@ -755,10 +825,13 @@ export interface CycleTimeTrendPoint {
   label: string
   start: string
   end: string
-  medianCycleTimeDays: number
-  p85CycleTimeDays: number
+  /** Null when the period had no completed cycles (proposal 0054 AC5). */
+  medianCycleTimeDays: number | null
+  /** Null when the period had no completed cycles (proposal 0054 AC5). */
+  p85CycleTimeDays: number | null
   sampleSize: number
-  band: CycleTimeBand
+  /** Null when the period had no completed cycles — chart renders a gap. */
+  band: CycleTimeBand | null
 }
 
 export type CycleTimeTrendResponse = CycleTimeTrendPoint[]
@@ -896,8 +969,21 @@ export function getAppConfig(): Promise<AppConfig> {
 
 export type SprintReportBand = 'strong' | 'good' | 'fair' | 'needs-attention'
 
+/** Canonical, ordered list of all scoreable sprint-report dimensions. */
+// ⚠️  Must match backend/src/sprint-report/scoring.service.ts ScoreDimension.
+//     Order is the canonical display order.
+export type ScoreDimension =
+  | 'deliveryRate'
+  | 'scopeStability'
+  | 'roadmapCoverage'
+  | 'leadTime'
+  | 'deploymentFrequency'
+  | 'changeFailureRate'
+  | 'mttr'
+
 export interface SprintDimensionScore {
-  score: number
+  /** null = insufficient data; the dimension was excluded from the composite. */
+  score: number | null
   band?: DoraBand
   rawValue: number | null
   rawUnit: string
@@ -923,7 +1009,8 @@ export interface SprintRecommendation {
 export interface SprintReportTrendPoint {
   sprintId: string
   sprintName: string
-  compositeScore: number
+  /** null when that historical report had no data in any dimension. */
+  compositeScore: number | null
   scores: SprintDimensionScores
 }
 
@@ -933,9 +1020,17 @@ export interface SprintReportResponse {
   sprintName: string
   startDate: string | null
   endDate: string | null
-  compositeScore: number
-  compositeBand: SprintReportBand
+  /** null = no dimension had data; UI shows "Insufficient data". */
+  compositeScore: number | null
+  /** null when compositeScore is null. */
+  compositeBand: SprintReportBand | null
   scores: SprintDimensionScores
+  /** Dimensions that contributed to the composite (had a non-null score). */
+  contributingDimensions: ScoreDimension[]
+  /** Dimensions excluded as N/A. UI uses this for the `~` modifier tooltip. */
+  excludedDimensions: ScoreDimension[]
+  /** Sum of contributing weights, in [0, 1]. UI shows `~` when < 1. */
+  totalWeightApplied: number
   recommendations: SprintRecommendation[]
   trend: SprintReportTrendPoint[]
   generatedAt: string
@@ -956,8 +1051,8 @@ export interface SprintReportSummary {
   sprintName: string
   startDate: string | null
   endDate: string | null
-  compositeScore: number
-  compositeBand: SprintReportBand
+  compositeScore: number | null
+  compositeBand: SprintReportBand | null
   generatedAt: string
 }
 
@@ -979,5 +1074,94 @@ export function deleteSprintReport(boardId: string, sprintId: string): Promise<v
   return apiFetch(
     `/api/sprint-report/${encodeURIComponent(boardId)}/${encodeURIComponent(sprintId)}`,
     { method: 'DELETE' },
+  )
+}
+
+// ---- Support Report types and endpoints ----------------------------------
+
+export type SupportMatchReason =
+  | 'epic'
+  | 'label'
+  | 'link'
+  | 'epic+label'
+  | 'epic+link'
+  | 'label+link'
+  | 'epic+label+link'
+
+export interface SupportTicket {
+  issueKey: string
+  summary: string
+  issueType: string
+  boardId: string
+  cycleTimeDays: number | null
+  completedAt: string | null
+  startedAt: string | null
+  band: CycleTimeBand | null
+  jiraUrl: string
+  matchReason: SupportMatchReason
+  /** True when the representative cycle is a reopen (proposal 0054 AC C). */
+  isReopen: boolean
+}
+
+export interface SupportResult {
+  boardId: string
+  totalIssues: number
+  supportIssues: number
+  supportPercentage: number
+  p50Days: number
+  p95Days: number
+  /** Tickets whose representative cycle is a reopen (proposal 0054 AC C). */
+  reopenedIssueCount: number
+  tickets: SupportTicket[]
+}
+
+export interface SupportBoardBreakdown {
+  boardId: string
+  supportIssues: number
+  totalIssues: number
+  percentage: number
+}
+
+export interface SupportSummary {
+  totalIssues: number
+  supportIssues: number
+  supportPercentage: number
+  p50Days: number
+  p95Days: number
+  /** Tickets whose representative cycle is a reopen, summed across boards. */
+  reopenedIssueCount: number
+  byBoard: SupportBoardBreakdown[]
+}
+
+export interface SupportQueryParams {
+  boardId?: string
+  quarter?: string
+  sprintId?: string
+  period?: string
+}
+
+export function getSupportTickets(
+  params: SupportQueryParams,
+): Promise<SupportResult[]> {
+  return apiFetch(
+    `/api/support${toQueryString({
+      boardId: params.boardId,
+      quarter: params.quarter,
+      sprintId: params.sprintId,
+      period: params.period,
+    })}`,
+  )
+}
+
+export function getSupportSummary(
+  params: SupportQueryParams,
+): Promise<SupportSummary> {
+  return apiFetch(
+    `/api/support/summary${toQueryString({
+      boardId: params.boardId,
+      quarter: params.quarter,
+      sprintId: params.sprintId,
+      period: params.period,
+    })}`,
   )
 }

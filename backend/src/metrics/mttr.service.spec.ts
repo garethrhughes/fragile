@@ -400,7 +400,7 @@ describe('MttrService', () => {
             inProgressStatusNames: ['In Progress'],
           } as never,
           issues: [
-            { key: 'ACC-1', issueType: 'Bug', labels: [], priority: null, createdAt: created } as JiraIssue,
+            { key: 'ACC-1', issueType: 'Bug', labels: [], priority: null, createdAt: created } as unknown as JiraIssue,
           ],
           changelogs: [
             { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: inProgress } as JiraChangelog,
@@ -417,7 +417,7 @@ describe('MttrService', () => {
         const slice = makeSlice({
           boardConfig: { boardId: 'ACC', incidentIssueTypes: ['Incident'], recoveryStatusNames: ['Done'], incidentLabels: [], incidentPriorities: [], inProgressStatusNames: ['In Progress'] } as never,
           issues: [
-            { key: 'ACC-1', issueType: 'Incident', labels: [], priority: null, createdAt: new Date('2025-02-01') } as JiraIssue,
+            { key: 'ACC-1', issueType: 'Incident', labels: [], priority: null, createdAt: new Date('2025-02-01') } as unknown as JiraIssue,
           ],
           changelogs: [], // no recovery
         });
@@ -434,7 +434,7 @@ describe('MttrService', () => {
         const slice = makeSlice({
           boardConfig: { boardId: 'ACC', incidentIssueTypes: ['Bug'], recoveryStatusNames: ['Done'], incidentLabels: [], incidentPriorities: [], inProgressStatusNames: ['In Progress'] } as never,
           issues: [
-            { key: 'ACC-1', issueType: 'Bug', labels: [], priority: null, createdAt: created } as JiraIssue,
+            { key: 'ACC-1', issueType: 'Bug', labels: [], priority: null, createdAt: created } as unknown as JiraIssue,
           ],
           changelogs: [
             { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: done } as JiraChangelog,

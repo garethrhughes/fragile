@@ -56,10 +56,11 @@ describe('DeploymentFrequencyService', () => {
   });
 
   // -------------------------------------------------------------------------
-  // C-4: count distinct release DAYS not distinct issues
+  // ADR 0051 (proposal 0049): count deployment EVENTS, not distinct days.
+  // Supersedes proposal 0030 fix C-4 day-counting semantics.
   // -------------------------------------------------------------------------
 
-  describe('C-4: version-based deployments count distinct release days', () => {
+  describe('ADR 0051: version-based deployments count one event per release', () => {
     it('returns 2 for two versions with different release dates', async () => {
       const start = new Date('2025-01-01');
       const end = new Date('2025-03-31');
@@ -74,16 +75,17 @@ describe('DeploymentFrequencyService', () => {
 
       const result = await service.calculate('ACC', start, end);
 
-      // 2 versions on 2 different days → 2 distinct deployment events
+      // 2 versions → 2 deployment events
       expect(result.totalDeployments).toBe(2);
       expect(result.deploymentsPerDay).toBeGreaterThan(0);
     });
 
-    it('returns 1 when multiple versions share the same release date', async () => {
+    it('returns N for N versions sharing the same release date (one event each)', async () => {
       const start = new Date('2025-01-01');
       const end = new Date('2025-03-31');
 
-      // Three versions all released on 2025-02-01 → 1 distinct release day
+      // Three versions all released on 2025-02-01 → 3 distinct deployment events
+      // (ADR 0051: each release is one event regardless of date overlap.)
       versionRepo.find.mockResolvedValue([
         { id: 'v1', name: '1.0.0', releaseDate: new Date('2025-02-01T09:00:00Z'), projectKey: 'ACC', released: true },
         { id: 'v2', name: '1.0.1', releaseDate: new Date('2025-02-01T14:00:00Z'), projectKey: 'ACC', released: true },
@@ -94,10 +96,10 @@ describe('DeploymentFrequencyService', () => {
 
       const result = await service.calculate('ACC', start, end);
 
-      expect(result.totalDeployments).toBe(1);
+      expect(result.totalDeployments).toBe(3);
     });
 
-    it('returns 1 for one version containing 20 issues (C-4 acceptance criterion)', async () => {
+    it('returns 1 for one version regardless of how many issues it contains', async () => {
       const start = new Date('2025-01-01');
       const end = new Date('2025-03-31');
 
@@ -130,11 +132,12 @@ describe('DeploymentFrequencyService', () => {
   });
 
   // -------------------------------------------------------------------------
-  // C-4: fallback path counts distinct transition DAYS not distinct issues
+  // ADR 0051: fallback path counts one event per first done-transition per
+  // issue (no day-bucketing).  Supersedes proposal 0030 fix C-4.
   // -------------------------------------------------------------------------
 
-  describe('C-4: fallback counts distinct transition days', () => {
-    it('returns 2 for issues completing on 2 distinct days (not 5 issues)', async () => {
+  describe('ADR 0051: fallback counts one event per issue done-transition', () => {
+    it('returns 5 for 5 issues completing on 2 distinct days (one event per issue)', async () => {
 
       boardConfigRepo.findOne.mockResolvedValue({
         boardId: 'ACC',
@@ -155,26 +158,19 @@ describe('DeploymentFrequencyService', () => {
         { key: 'ACC-5', issueType: 'Story', fixVersion: null },
       ] as JiraIssue[]);
 
-      const qb = {
-        select: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        andWhere: jest.fn().mockReturnThis(),
-        groupBy: jest.fn().mockReturnThis(),
-        // 5 issues but only 2 distinct days
-        getRawMany: jest.fn().mockResolvedValue([
-          { transitionDay: '2025-02-01' },
-          { transitionDay: '2025-02-08' },
-        ]),
-      };
-      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(qb);
+      // Changelog returns one row per issue done-transition (5 rows, 2 days)
+      changelogRepo.find.mockResolvedValue([
+        { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: new Date('2025-02-01T09:00:00Z') },
+        { issueKey: 'ACC-2', field: 'status', toValue: 'Done', changedAt: new Date('2025-02-01T10:00:00Z') },
+        { issueKey: 'ACC-3', field: 'status', toValue: 'Done', changedAt: new Date('2025-02-01T11:00:00Z') },
+        { issueKey: 'ACC-4', field: 'status', toValue: 'Done', changedAt: new Date('2025-02-08T09:00:00Z') },
+        { issueKey: 'ACC-5', field: 'status', toValue: 'Done', changedAt: new Date('2025-02-08T10:00:00Z') },
+      ] as JiraChangelog[]);
 
       const result = await service.calculate('ACC', start, end);
 
-      expect(result.totalDeployments).toBe(2);
-      expect(qb.andWhere).toHaveBeenCalledWith(
-        'cl.toValue IN (:...statuses)',
-        { statuses: ['Done'] },
-      );
+      // ADR 0051: 5 done-transition events (was 2 days under C-4)
+      expect(result.totalDeployments).toBe(5);
     });
   });
 
@@ -205,7 +201,7 @@ describe('DeploymentFrequencyService', () => {
       expect(result.totalDeployments).toBe(0);
     });
 
-    it('counts distinct release days from versions filtered to period', () => {
+    it('counts one event per released version filtered to period', () => {
       const slice = makeSlice({
         versions: [
           { name: 'v1', releaseDate: new Date('2025-02-01'), projectKey: 'ACC', released: true } as JiraVersion,
@@ -219,7 +215,7 @@ describe('DeploymentFrequencyService', () => {
       expect(result.totalDeployments).toBe(2);
     });
 
-    it('collapses multiple versions on the same day to 1 deployment', () => {
+    it('counts each version separately when multiple ship the same day (ADR 0051)', () => {
       const slice = makeSlice({
         versions: [
           { name: 'v1', releaseDate: new Date('2025-02-01T09:00:00Z'), projectKey: 'ACC', released: true } as JiraVersion,
@@ -228,10 +224,10 @@ describe('DeploymentFrequencyService', () => {
       });
 
       const result = service.calculateFromData(slice, start, end);
-      expect(result.totalDeployments).toBe(1);
+      expect(result.totalDeployments).toBe(2);
     });
 
-    it('uses fallback path for issues without fixVersion', () => {
+    it('counts one event per first done-transition for issues without fixVersion', () => {
       const doneAt = new Date('2025-02-10T10:00:00Z');
       const slice = makeSlice({
         boardConfig: { doneStatusNames: ['Done'] } as never,
@@ -240,7 +236,7 @@ describe('DeploymentFrequencyService', () => {
           { key: 'ACC-2', issueType: 'Story', fixVersion: null } as JiraIssue,
         ],
         changelogs: [
-          // Both issues done on the same day → 1 fallback deployment day
+          // Both issues done on the same day → 2 events under ADR 0051
           { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: new Date('2025-02-10T09:00:00Z') } as JiraChangelog,
           { issueKey: 'ACC-2', field: 'status', toValue: 'Done', changedAt: doneAt } as JiraChangelog,
         ],
@@ -248,7 +244,7 @@ describe('DeploymentFrequencyService', () => {
       });
 
       const result = service.calculateFromData(slice, start, end);
-      expect(result.totalDeployments).toBe(1);
+      expect(result.totalDeployments).toBe(2);
     });
 
     it('does not include fallback transitions outside the period', () => {

@@ -10,6 +10,7 @@ import {
 } from '../database/entities/index.js';
 import { QuarterController } from './quarter.controller.js';
 import { QuarterDetailService } from './quarter-detail.service.js';
+import { SprintMembershipModule } from '../sprint-membership/sprint-membership.module.js';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { QuarterDetailService } from './quarter-detail.service.js';
       JpdIdea,
       JiraIssueLink,
     ]),
+    SprintMembershipModule,
   ],
   controllers: [QuarterController],
   providers: [QuarterDetailService],

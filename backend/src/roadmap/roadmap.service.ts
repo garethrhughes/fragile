@@ -21,9 +21,16 @@ import {
   BoardConfig,
 } from '../database/entities/index.js';
 import { SyncService } from '../sync/sync.service.js';
+import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { dateParts, midnightInTz } from '../metrics/tz-utils.js';
+import { dateToIsoWeekKey } from '../lib/iso-week.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
+import {
+  resolveEpicIdeas,
+  type EpicConflictResolution,
+  type ResolveIdeaInput,
+} from './resolve-epic-ideas.js';
 
 export interface RoadmapSprintAccuracy {
   sprintId: string;
@@ -53,6 +60,34 @@ interface RoadmapItemWindow {
   targetDate: Date;
 }
 
+// ---------------------------------------------------------------------------
+// Per-epic detail (proposal 0053 — GET /api/roadmap/epics)
+// ---------------------------------------------------------------------------
+
+export interface EpicCoverageDetail {
+  epicKey: string;
+  epicSummary: string | null;
+  primaryIdea: {
+    ideaKey: string;
+    ideaSummary: string | null;
+    targetDate: string; // ISO
+    startDate: string | null;
+  } | null;
+  conflictingIdeas: Array<{
+    ideaKey: string;
+    ideaSummary: string | null;
+    targetDate: string; // ISO
+    daysFromPrimary: number;
+  }>;
+  resolvedSource: 'deliveryIssueKeys' | 'directLink' | 'none';
+  coverageState: 'green' | 'amber' | 'red' | 'unlinked';
+}
+
+export interface RoadmapEpicsResponse {
+  epics: EpicCoverageDetail[];
+  conflictCount: number;
+}
+
 @Injectable()
 export class RoadmapService {
   private readonly logger = new Logger(RoadmapService.name);
@@ -75,6 +110,7 @@ export class RoadmapService {
     @Inject(forwardRef(() => SyncService))
     private readonly syncService: SyncService,
     private readonly configService: ConfigService,
+    private readonly sprintMembership: SprintMembershipService,
   ) {}
 
   async getAccuracy(
@@ -158,142 +194,37 @@ export class RoadmapService {
       return this.emptyAccuracyForSprints(sprints);
     }
 
-    const allBoardKeys = allBoardIssues.map((i) => i.key);
     const issueByKey = new Map<string, JiraIssue>(allBoardIssues.map((i) => [i.key, i]));
 
-    // Bulk-load all Sprint-field changelogs for all board issues in one query
-    const allSprintChangelogs = await this.changelogRepo
-      .createQueryBuilder('cl')
-      .where('cl.issueKey IN (:...keys)', { keys: allBoardKeys })
-      .andWhere('cl.field = :field', { field: 'Sprint' })
-      .orderBy('cl.changedAt', 'ASC')
-      .getMany();
+    // Reconstruct membership for all target sprints in one pass via the
+    // canonical SprintMembershipService (ADR 0049). Roadmap semantics:
+    // an issue belongs to a sprint if it was a member at *any point* during
+    // the sprint window — i.e. committed (in at start, including carry-overs)
+    // OR added mid-sprint. Removed-mid-sprint issues are still included
+    // because they consumed sprint capacity.
+    const membershipBySprint = await this.sprintMembership.reconstructMany({
+      sprints,
+      boardId,
+      boardIssues: allBoardIssues,
+    });
 
-    // Build per-sprint issue sets by replaying Sprint-field changelogs,
-    // using the same algorithm as sprint-detail.service.ts.
-    const sprintSet = new Set(sprints.map((s) => s.id));
-    const sprintByName = new Map<string, JiraSprint>(sprints.map((s) => [s.name, s]));
-    const issuesBySprint = new Map<string, Set<string>>();
-    for (const s of sprints) {
-      issuesBySprint.set(s.id, new Set<string>());
-    }
-
-    // Group changelogs by issue key for efficient per-issue replay
-    const changelogsByIssue = new Map<string, typeof allSprintChangelogs>();
-    for (const cl of allSprintChangelogs) {
-      const list = changelogsByIssue.get(cl.issueKey) ?? [];
-      list.push(cl);
-      changelogsByIssue.set(cl.issueKey, list);
-    }
-
-    // For each board issue, figure out which target sprints it belongs to
-    for (const issue of allBoardIssues) {
-      const logs = changelogsByIssue.get(issue.key) ?? [];
-
-      // Collect names of all target sprints this issue ever appeared in
-      // via changelogs — also handle issues with no changelogs (assigned at creation)
-      const sprintNamesToCheck = new Set<string>();
-
-      // Issues currently assigned to a target sprint but with no sprint changelog
-      // were created directly into that sprint
-      if (
-        issue.sprintId !== null &&
-        sprintSet.has(issue.sprintId) &&
-        logs.length === 0
-      ) {
-        const sprint = sprints.find((s) => s.id === issue.sprintId);
-        if (sprint) {
-          issuesBySprint.get(sprint.id)!.add(issue.key);
-        }
-        continue;
-      }
-
-      // Collect sprint names referenced in changelogs that correspond to our target sprints
-      for (const cl of logs) {
-        for (const sprint of sprints) {
-          if (
-            sprintValueContainsName(cl.fromValue, sprint.name) ||
-            sprintValueContainsName(cl.toValue, sprint.name)
-          ) {
-            sprintNamesToCheck.add(sprint.name);
-          }
-        }
-      }
-
-      // Fallback: if the issue's current sprintId points to a target sprint but
-      // no changelog mentions that sprint by name (e.g. Jira carried the issue
-      // forward when the sprint was started without emitting a Sprint-field
-      // changelog entry), include it directly.  This mirrors the pattern in
-      // sprint-detail.service.ts lines 294-298.
-      if (issue.sprintId !== null && sprintSet.has(issue.sprintId)) {
-        const targetSprint = sprints.find((s) => s.id === issue.sprintId);
-        if (targetSprint && !sprintNamesToCheck.has(targetSprint.name)) {
-          issuesBySprint.get(targetSprint.id)!.add(issue.key);
-          // Still replay changelogs for other target sprints this issue may
-          // have appeared in — do NOT continue; fall through.
-        }
-      }
-
-      // For each referenced target sprint, replay the changelog to determine
-      // whether the issue was a member at any point during that sprint window
-      for (const sprintName of sprintNamesToCheck) {
-        const sprint = sprintByName.get(sprintName);
-        if (!sprint) continue;
-
-        const sprintStart = sprint.startDate;
-        const sprintEnd = sprint.endDate ?? new Date();
-
-        if (!sprintStart) {
-          // No start date: include if any changelog mentions this sprint
-          issuesBySprint.get(sprint.id)!.add(issue.key);
-          continue;
-        }
-
-        const effectiveStart = new Date(sprintStart.getTime() + ROADMAP_GRACE_PERIOD_MS);
-
-        // Determine state at sprint start
-        const inSprintAtStart = wasInSprintByName(logs, sprintName, sprintStart);
-        let inSprintAtEnd = inSprintAtStart;
-
-        for (const cl of logs) {
-          if (cl.changedAt <= sprintStart) continue;
-          if (cl.changedAt > sprintEnd) break;
-
-          if (sprintValueContainsName(cl.toValue, sprintName)) {
-            inSprintAtEnd = true;
-          }
-          if (
-            sprintValueContainsName(cl.fromValue, sprintName) &&
-            !sprintValueContainsName(cl.toValue, sprintName)
-          ) {
-            inSprintAtEnd = false;
-          }
-        }
-
-        // Also handle issues created directly into the sprint after grace period
-        const createdMidSprint =
-          logs.length > 0 &&
-          issue.createdAt > effectiveStart &&
-          issue.createdAt <= sprintEnd &&
-          !inSprintAtStart;
-
-        if (inSprintAtStart || inSprintAtEnd || createdMidSprint) {
-          issuesBySprint.get(sprint.id)!.add(issue.key);
-        }
-      }
-    }
-
-    // Materialise issue lists per sprint
+    // Materialise issue lists per sprint as the union of committed + added.
     const issueListBySprint = new Map<string, JiraIssue[]>();
-    for (const [sid, keySet] of issuesBySprint) {
+    for (const sprint of sprints) {
+      const m = membershipBySprint.get(sprint.id);
+      const keys = new Set<string>();
+      if (m) {
+        for (const k of m.committedKeys) keys.add(k);
+        for (const k of m.addedKeys) keys.add(k);
+      }
       issueListBySprint.set(
-        sid,
-        [...keySet].map((k) => issueByKey.get(k)!).filter(Boolean),
+        sprint.id,
+        [...keys].map((k) => issueByKey.get(k)!).filter(Boolean),
       );
     }
 
     // Load all roadmap ideas once — filter per-sprint in memory
-    const allIdeasForSprints = await this.loadAllIdeas();
+    const { ideas: allIdeasForSprints, ruleByJpdKey } = await this.loadAllIdeas();
 
     const results: RoadmapSprintAccuracy[] = [];
     for (const sprint of sprints) {
@@ -309,6 +240,7 @@ export class RoadmapService {
         allIdeasForSprints,
         inProgressStatusNames,
         roadmapLinkTypes,
+        ruleByJpdKey,
       );
       results.push(accuracy);
     }
@@ -317,10 +249,249 @@ export class RoadmapService {
   }
 
   /**
-   * For Kanban boards: group issues by the quarter in which they were first
-   * moved off "To Do" (i.e. pulled onto the board). Falls back to createdAt
-   * for issues that have no such changelog entry.
+   * Per-epic detail for a roadmap window (proposal 0053).
+   *
+   * Computes the same idea↔epic mapping as `getAccuracy` but emits the
+   * per-epic shape rather than aggregate counts. Re-uses `resolveEpicIdeas`
+   * so the conflict resolution policy is identical to the accuracy view —
+   * AC6: identical inputs ⟹ identical primary idea selection.
+   *
+   * Initial scope: scrum boards with `sprintId` only. Quarter, week, and
+   * Kanban paths are accepted by the controller but currently throw
+   * BadRequestException — to be added in a follow-up.
    */
+  async getEpicCoverage(
+    boardId: string,
+    sprintId?: string,
+  ): Promise<RoadmapEpicsResponse> {
+    const boardConfig = await this.boardConfigRepo.findOne({ where: { boardId } });
+    const isKanban = boardConfig?.boardType === 'kanban';
+    if (isKanban) {
+      throw new BadRequestException(
+        'Per-epic coverage detail is not yet available for Kanban boards.',
+      );
+    }
+    if (!sprintId) {
+      throw new BadRequestException(
+        'sprintId is required for /api/roadmap/epics in this release.',
+      );
+    }
+
+    const sprint = await this.sprintRepo.findOne({ where: { id: sprintId, boardId } });
+    if (!sprint) {
+      this.logger.log(
+        `roadmap_coverage_computed boardId=${boardId} sprintId=${sprintId} epicCount=0 conflictCount=0 resolutionRule=earliest`,
+      );
+      return { epics: [], conflictCount: 0 };
+    }
+
+    const allBoardIssues = (
+      await this.issueRepo.find({ where: { boardId } })
+    ).filter((i) => isWorkItem(i.issueType));
+
+    // Reconstruct sprint membership (committed + added) — same semantics as
+    // getAccuracy.
+    const membershipBySprint = await this.sprintMembership.reconstructMany({
+      sprints: [sprint],
+      boardId,
+      boardIssues: allBoardIssues,
+    });
+    const m = membershipBySprint.get(sprint.id);
+    const issueByKey = new Map(allBoardIssues.map((i) => [i.key, i]));
+    const sprintIssueKeys = new Set<string>();
+    if (m) {
+      for (const k of m.committedKeys) sprintIssueKeys.add(k);
+      for (const k of m.addedKeys) sprintIssueKeys.add(k);
+    }
+    const sprintIssues = [...sprintIssueKeys]
+      .map((k) => issueByKey.get(k))
+      .filter((i): i is JiraIssue => i !== undefined);
+
+    const { ideas: allIdeas, ruleByJpdKey } = await this.loadAllIdeas();
+
+    const sprintStart = sprint.startDate ?? new Date();
+    const sprintEnd = sprint.endDate ?? new Date();
+
+    // In-window idea filter (same logic as filterIdeasForWindow but we keep
+    // the full conflict graph here).
+    const inWindow: ResolveIdeaInput[] = [];
+    for (const idea of allIdeas) {
+      if (idea.startDate === null || idea.targetDate === null) continue;
+      const ideaTargetEndOfDay = new Date(idea.targetDate.getTime());
+      ideaTargetEndOfDay.setUTCHours(23, 59, 59, 999);
+      if (ideaTargetEndOfDay < sprintStart || idea.startDate > sprintEnd) continue;
+      inWindow.push(idea);
+    }
+
+    const resolved = resolveEpicIdeas(
+      inWindow,
+      (idea) => ruleByJpdKey.get((idea as JpdIdea).jpdKey) ?? 'earliest',
+    );
+
+    // Direct-link map for issues without an epic-level idea (Condition C).
+    const roadmapLinkTypes = boardConfig?.roadmapLinkTypes ?? [];
+    const directLinkIdeaMap = await buildDirectLinkIdeaMap(
+      this.issueLinkRepo,
+      sprintIssues.map((i) => i.key),
+      allIdeas,
+      roadmapLinkTypes,
+      ruleByJpdKey,
+    );
+
+    // Pull all done-status changelogs once to derive coverageState.
+    const doneStatusNames: string[] =
+      boardConfig?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
+    const allKeys = sprintIssues.map((i) => i.key);
+    const completionDates = new Map<string, Date>();
+    if (allKeys.length > 0) {
+      const changelogs = await this.changelogRepo
+        .createQueryBuilder('cl')
+        .where('cl.issueKey IN (:...keys)', { keys: allKeys })
+        .andWhere('cl.field = :field', { field: 'status' })
+        .orderBy('cl.changedAt', 'ASC')
+        .getMany();
+      for (const cl of changelogs) {
+        if (cl.toValue !== null && doneStatusNames.includes(cl.toValue)) {
+          if (!completionDates.has(cl.issueKey)) {
+            completionDates.set(cl.issueKey, cl.changedAt);
+          }
+        }
+      }
+    }
+
+    // Group sprint issues by epicKey.
+    const issuesByEpic = new Map<string, JiraIssue[]>();
+    const unlinkedIssues: JiraIssue[] = [];
+    for (const issue of sprintIssues) {
+      if (!issue.epicKey) {
+        unlinkedIssues.push(issue);
+      } else {
+        const list = issuesByEpic.get(issue.epicKey);
+        if (list) list.push(issue);
+        else issuesByEpic.set(issue.epicKey, [issue]);
+      }
+    }
+
+    // Look up epic summaries in one query.
+    const epicSummaryByKey = new Map<string, string | null>();
+    const epicKeys = [...issuesByEpic.keys()];
+    if (epicKeys.length > 0) {
+      const epicRows = await this.issueRepo.find({
+        where: { key: In(epicKeys) },
+        select: ['key', 'summary'],
+      });
+      for (const r of epicRows) {
+        epicSummaryByKey.set(r.key, r.summary ?? null);
+      }
+    }
+
+    const now = new Date();
+    const epics: EpicCoverageDetail[] = [];
+    let conflictCount = 0;
+
+    for (const [epicKey, issues] of issuesByEpic) {
+      const resolvedEntry = resolved.get(epicKey);
+      let resolvedSource: EpicCoverageDetail['resolvedSource'] = 'none';
+      let primaryIdea: EpicCoverageDetail['primaryIdea'] = null;
+      let conflictingIdeas: EpicCoverageDetail['conflictingIdeas'] = [];
+      let coverageTargetDate: Date | null = null;
+
+      if (resolvedEntry) {
+        resolvedSource = 'deliveryIssueKeys';
+        coverageTargetDate = resolvedEntry.primaryIdea.targetDate;
+        primaryIdea = {
+          ideaKey: resolvedEntry.primaryIdea.ideaKey,
+          ideaSummary: resolvedEntry.primaryIdea.ideaSummary,
+          targetDate: resolvedEntry.primaryIdea.targetDate.toISOString(),
+          startDate:
+            resolvedEntry.primaryIdea.startDate?.toISOString() ?? null,
+        };
+        conflictingIdeas = resolvedEntry.conflictingIdeas.map((c) => ({
+          ideaKey: c.ideaKey,
+          ideaSummary: c.ideaSummary,
+          targetDate: c.targetDate.toISOString(),
+          daysFromPrimary: c.daysFromPrimary,
+        }));
+        conflictCount += resolvedEntry.conflictingIdeas.length;
+      } else {
+        // Fall back to direct-link path: if any issue under this epic has
+        // a direct-link target date, expose that as the coverage anchor.
+        // Choose the issue with the earliest direct-link targetDate to
+        // match the default 'earliest' policy.
+        let bestDirect: { issueKey: string; targetDate: Date } | null = null;
+        for (const issue of issues) {
+          const direct = directLinkIdeaMap.get(issue.key);
+          if (!direct) continue;
+          if (!bestDirect || direct.targetDate < bestDirect.targetDate) {
+            bestDirect = { issueKey: issue.key, targetDate: direct.targetDate };
+          }
+        }
+        if (bestDirect) {
+          resolvedSource = 'directLink';
+          coverageTargetDate = bestDirect.targetDate;
+        }
+      }
+
+      // Coverage state per epic:
+      //   unlinked — no idea linked at all
+      //   green    — at least one issue done on/before targetDate, OR all in-flight before targetDate
+      //   amber    — linked but past target with no completed issue on time
+      //   red      — should not occur for this code path (epics with issues but no link → unlinked)
+      let coverageState: EpicCoverageDetail['coverageState'];
+      if (resolvedSource === 'none') {
+        coverageState = 'unlinked';
+      } else if (coverageTargetDate === null) {
+        coverageState = 'unlinked';
+      } else {
+        const anyDoneOnTime = issues.some((i) => {
+          const done = completionDates.get(i.key);
+          return done !== undefined && done <= coverageTargetDate!;
+        });
+        const anyInFlight = issues.some((i) => !completionDates.has(i.key));
+        if (anyDoneOnTime) {
+          coverageState = 'green';
+        } else if (anyInFlight && now <= coverageTargetDate) {
+          coverageState = 'green';
+        } else {
+          coverageState = 'amber';
+        }
+      }
+
+      epics.push({
+        epicKey,
+        epicSummary: epicSummaryByKey.get(epicKey) ?? null,
+        primaryIdea,
+        conflictingIdeas,
+        resolvedSource,
+        coverageState,
+      });
+    }
+
+    // Surface unlinked-issue epics as a synthetic "no-epic" bucket only
+    // when there are issues without any epicKey. Skip if zero.
+    if (unlinkedIssues.length > 0) {
+      epics.push({
+        epicKey: '(no epic)',
+        epicSummary: null,
+        primaryIdea: null,
+        conflictingIdeas: [],
+        resolvedSource: 'none',
+        coverageState: 'red',
+      });
+    }
+
+    // Determine which rule was effectively used (most-common across configs).
+    const ruleSummary = ruleByJpdKey.size > 0
+      ? [...ruleByJpdKey.values()][0]
+      : 'earliest';
+
+    this.logger.log(
+      `roadmap_coverage_computed boardId=${boardId} sprintId=${sprintId} epicCount=${epics.length} conflictCount=${conflictCount} resolutionRule=${ruleSummary}`,
+    );
+
+    return { epics, conflictCount };
+  }
+
   private async getKanbanAccuracy(
     boardId: string,
     boardConfig: BoardConfig | null,
@@ -452,7 +623,7 @@ export class RoadmapService {
     const currentQuarterKey = this.issueToQuarterKey(now);
 
     // Load all ideas once — filter per-quarter in memory (avoids N×2 DB queries)
-    const allIdeas = await this.loadAllIdeas();
+    const { ideas: allIdeas, ruleByJpdKey } = await this.loadAllIdeas();
 
     const results: RoadmapSprintAccuracy[] = [];
     for (const qKey of filteredKeys) {
@@ -460,7 +631,7 @@ export class RoadmapService {
       const { startDate, endDate } = this.quarterToDates(qKey);
       const state = qKey === currentQuarterKey ? 'active' : 'closed';
 
-      const activeIdeas = this.filterIdeasForWindow(allIdeas, startDate, endDate);
+      const activeIdeas = this.filterIdeasForWindow(allIdeas, startDate, endDate, ruleByJpdKey);
 
       const eligibleCoveredIssues = issues.filter((i) => {
         if (i.epicKey === null || !activeIdeas.has(i.epicKey)) return false;
@@ -508,20 +679,37 @@ export class RoadmapService {
    * Load all JPD ideas from configured projects in a single pair of DB
    * queries. Returned ideas retain their raw date fields; use
    * filterIdeasForWindow() to apply a date-window filter in memory.
+   *
+   * Also returns `ruleByJpdKey` — the per-roadmap conflict resolution
+   * policy (proposal 0053). Default 'earliest' is applied when a config
+   * row predates the column or has it set to NULL via a hand-edit.
    */
-  private async loadAllIdeas(): Promise<JpdIdea[]> {
+  private async loadAllIdeas(): Promise<{
+    ideas: JpdIdea[];
+    ruleByJpdKey: Map<string, EpicConflictResolution>;
+  }> {
     const configs = await this.roadmapConfigRepo.find();
-    if (configs.length === 0) return [];
+    if (configs.length === 0) {
+      return { ideas: [], ruleByJpdKey: new Map() };
+    }
     const jpdKeys = configs.map((c) => c.jpdKey);
-    return this.jpdIdeaRepo.find({ where: { jpdKey: In(jpdKeys) } });
+    const ruleByJpdKey = new Map<string, EpicConflictResolution>();
+    for (const c of configs) {
+      ruleByJpdKey.set(c.jpdKey, c.epicConflictResolution ?? 'earliest');
+    }
+    const ideas = await this.jpdIdeaRepo.find({ where: { jpdKey: In(jpdKeys) } });
+    return { ideas, ruleByJpdKey };
   }
 
   /**
    * Filter a pre-loaded idea list to those whose delivery window overlaps
    * [windowStart, windowEnd], returning a Map keyed by epic key.
    * Ideas without both startDate and targetDate are excluded (decision 2).
-   * Conflict resolution: if multiple ideas link the same epic key, keep
-   * the one with the later targetDate.
+   *
+   * Conflict resolution (proposal 0053): when multiple ideas link the same
+   * epic key, defer to the shared `resolveEpicIdeas` helper which honours
+   * each roadmap's `epicConflictResolution` policy ('earliest' default,
+   * 'latest' legacy override).
    *
    * This is pure in-memory arithmetic — no DB access.
    */
@@ -529,18 +717,13 @@ export class RoadmapService {
     ideas: JpdIdea[],
     windowStart: Date,
     windowEnd: Date,
+    ruleByJpdKey: Map<string, EpicConflictResolution>,
   ): Map<string, RoadmapItemWindow> {
-    const result = new Map<string, RoadmapItemWindow>();
-
+    // First, apply the date-window overlap filter in-memory. The helper
+    // handles null start/target exclusion and conflict resolution.
+    const inWindow: ResolveIdeaInput[] = [];
     for (const idea of ideas) {
-      if (!idea.deliveryIssueKeys) continue;
-
-      // Decision 2: ideas without BOTH dates are excluded entirely.
       if (idea.startDate === null || idea.targetDate === null) continue;
-
-      // Date-window overlap filter:
-      //   idea.targetDate >= windowStart  AND  idea.startDate <= windowEnd
-      //
       // Polaris interval fields store dates as date-only values (midnight UTC).
       // A sprint starting at e.g. 03:30 UTC on the same calendar day as an idea's
       // targetDate would incorrectly miss the overlap check because midnight < 03:30.
@@ -549,28 +732,22 @@ export class RoadmapService {
       const ideaTargetEndOfDay = new Date(idea.targetDate.getTime());
       ideaTargetEndOfDay.setUTCHours(23, 59, 59, 999);
       if (ideaTargetEndOfDay < windowStart || idea.startDate > windowEnd) continue;
-
-      for (const epicKey of idea.deliveryIssueKeys.filter(Boolean)) {
-        const existing = result.get(epicKey);
-        if (!existing) {
-          result.set(epicKey, {
-            ideaKey: idea.key,
-            startDate: idea.startDate,
-            targetDate: idea.targetDate,
-          });
-        } else {
-          // Prefer the window with the later targetDate (most recent delivery commitment)
-          if (idea.targetDate.getTime() > existing.targetDate.getTime()) {
-            result.set(epicKey, {
-              ideaKey: idea.key,
-              startDate: idea.startDate,
-              targetDate: idea.targetDate,
-            });
-          }
-        }
-      }
+      inWindow.push(idea);
     }
 
+    const resolved = resolveEpicIdeas(
+      inWindow,
+      (idea) => ruleByJpdKey.get((idea as JpdIdea).jpdKey) ?? 'earliest',
+    );
+
+    const result = new Map<string, RoadmapItemWindow>();
+    for (const [epicKey, entry] of resolved) {
+      result.set(epicKey, {
+        ideaKey: entry.primaryIdea.ideaKey,
+        startDate: entry.primaryIdea.startDate!,
+        targetDate: entry.primaryIdea.targetDate,
+      });
+    }
     return result;
   }
 
@@ -611,34 +788,7 @@ export class RoadmapService {
 
   private dateToWeekKey(date: Date): string {
     const tz = this.configService.get<string>('TIMEZONE', 'UTC');
-    const { year, month, day } = dateParts(date, tz);
-    // Build a local-date proxy in the given timezone to compute ISO week
-    const localDate = new Date(Date.UTC(year, month, day));
-    // ISO 8601: find the Thursday of the same week to determine the ISO year.
-    // Jan 4 is always in ISO week 1 of its year.
-    const dow = localDate.getUTCDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-    const daysToThursday = dow === 0 ? 4 : 4 - dow;
-    const thursday = new Date(localDate);
-    thursday.setUTCDate(localDate.getUTCDate() + daysToThursday);
-
-    const isoYear = thursday.getUTCFullYear();
-
-    // Monday of ISO week 1: Jan 4 of isoYear minus (its weekday - 1)
-    const jan4 = new Date(Date.UTC(isoYear, 0, 4));
-    const jan4Day = jan4.getUTCDay();
-    const daysToMonday = jan4Day === 0 ? -6 : 1 - jan4Day;
-    const week1Monday = new Date(jan4);
-    week1Monday.setUTCDate(jan4.getUTCDate() + daysToMonday);
-
-    // Monday of this week (the week containing `date` in `tz`)
-    const thisMonday = new Date(localDate);
-    const daysToMon = dow === 0 ? -6 : 1 - dow;
-    thisMonday.setUTCDate(localDate.getUTCDate() + daysToMon);
-
-    const diffMs = thisMonday.getTime() - week1Monday.getTime();
-    const weekNumber = Math.round(diffMs / (7 * 24 * 60 * 60 * 1000)) + 1;
-
-    return `${isoYear}-W${String(weekNumber).padStart(2, '0')}`;
+    return dateToIsoWeekKey(date, tz);
   }
 
   private weekKeyToDates(week: string): { weekStart: Date; weekEnd: Date } {
@@ -807,7 +957,7 @@ export class RoadmapService {
     const currentWeekKey = this.dateToWeekKey(now);
 
     // Load all ideas once — filter per-week in memory (avoids N×2 DB queries)
-    const allIdeasWeekly = await this.loadAllIdeas();
+    const { ideas: allIdeasWeekly, ruleByJpdKey: ruleByJpdKeyWeekly } = await this.loadAllIdeas();
 
     const results: RoadmapSprintAccuracy[] = [];
     for (const wKey of filteredKeys) {
@@ -815,7 +965,7 @@ export class RoadmapService {
       const { weekStart, weekEnd } = this.weekKeyToDates(wKey);
       const state = wKey === currentWeekKey ? 'active' : 'closed';
 
-      const activeIdeas = this.filterIdeasForWindow(allIdeasWeekly, weekStart, weekEnd);
+      const activeIdeas = this.filterIdeasForWindow(allIdeasWeekly, weekStart, weekEnd, ruleByJpdKeyWeekly);
 
       const eligibleCoveredIssues = issues.filter((i) => {
         if (i.epicKey === null || !activeIdeas.has(i.epicKey)) return false;
@@ -867,13 +1017,15 @@ export class RoadmapService {
     allIdeas: JpdIdea[],
     _inProgressStatusNames: string[], // accepted for API clarity; not used in core predicate
     roadmapLinkTypes: string[] = [],
+    ruleByJpdKey: Map<string, EpicConflictResolution> = new Map(),
   ): Promise<RoadmapSprintAccuracy> {
-    // Exclude Epics, Sub-tasks, and cancelled issues from all coverage metrics.
-    // Cancelled issues are removed from both numerator and denominator so they
-    // do not inflate the amber count or drag down the coverage percentage.
-    const filteredIssues = sprintIssues.filter(
-      (i) => isWorkItem(i.issueType) && !cancelledStatusNames.includes(i.status),
-    );
+    // Exclude Epics and Sub-tasks (per ADR 0018). Cancelled issues remain in
+    // the total so the overview matches the sprint-detail issue count — users
+    // were confused by the silent exclusion. Cancelled issues with a roadmap
+    // link are skipped from the amber/green classification below so they do
+    // not unfairly drag `roadmapOnTimeRate`; they always land in
+    // `uncoveredIssues`.
+    const filteredIssues = sprintIssues.filter((i) => isWorkItem(i.issueType));
 
     if (filteredIssues.length === 0) {
       return this.emptyAccuracy(sprint);
@@ -881,11 +1033,11 @@ export class RoadmapService {
 
     // Build epicKey → targetDate map scoped to the sprint window.
     // filterIdeasForWindow excludes ideas without both dates (decision 2)
-    // and applies the date-window overlap filter. Conflict resolution: keep
-    // the idea with the later targetDate.
+    // and applies the date-window overlap filter. Conflict resolution
+    // follows each roadmap's epicConflictResolution policy (proposal 0053).
     const sprintStart = sprint.startDate ?? new Date();
     const sprintEnd = sprint.endDate ?? new Date();
-    const epicIdeaMap = this.filterIdeasForWindow(allIdeas, sprintStart, sprintEnd);
+    const epicIdeaMap = this.filterIdeasForWindow(allIdeas, sprintStart, sprintEnd, ruleByJpdKey);
 
     // Query ALL done-status transitions for sprint issues — no date restriction
     // and no needsChangelogCheck split.  This ensures issues that were already
@@ -916,6 +1068,7 @@ export class RoadmapService {
       allFilteredKeys,
       allIdeas,
       roadmapLinkTypes,
+      ruleByJpdKey,
     );
 
     // Per-issue delivery classification:
@@ -931,6 +1084,10 @@ export class RoadmapService {
     today.setUTCHours(0, 0, 0, 0); // start of today UTC
 
     for (const issue of filteredIssues) {
+      // Cancelled issues stay in the total but never count as covered or
+      // amber — they have no meaningful delivery signal.
+      if (cancelledStatusNames.includes(issue.status)) continue;
+
       // Epic link takes priority; fall back to direct link (ADR 0044)
       const epicIdea = issue.epicKey ? epicIdeaMap.get(issue.epicKey) : undefined;
       const directIdea = directLinkIdeaMap.get(issue.key);
@@ -1082,57 +1239,4 @@ export class RoadmapService {
   private emptyAccuracyForSprints(sprints: JiraSprint[]): RoadmapSprintAccuracy[] {
     return sprints.map((s) => this.emptyAccuracy(s));
   }
-}
-
-// ---------------------------------------------------------------------------
-// Module-level constants
-// ---------------------------------------------------------------------------
-
-/** Grace period matching PlanningService — absorbs Jira's bulk-add delay */
-const ROADMAP_GRACE_PERIOD_MS = 5 * 60 * 1000;
-
-// ---------------------------------------------------------------------------
-// Pure helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Returns true if `sprintName` appears as an exact token in a comma-separated
- * Sprint field value (prevents "Sprint 1" matching "Sprint 10").
- */
-function sprintValueContainsName(
-  value: string | null,
-  sprintName: string,
-): boolean {
-  if (!value) return false;
-  return value.split(',').some((s) => s.trim() === sprintName);
-}
-
-/**
- * Replay Sprint-field changelogs to determine whether an issue was in
- * `sprintName` at or just after `date` (using a 5-minute grace period).
- * Returns true for issues with no changelogs (assigned at creation).
- */
-function wasInSprintByName(
-  sprintChangelogs: { changedAt: Date; fromValue: string | null; toValue: string | null }[],
-  sprintName: string,
-  date: Date,
-): boolean {
-  const effectiveDate = new Date(date.getTime() + ROADMAP_GRACE_PERIOD_MS);
-  let inSprint = false;
-
-  for (const cl of sprintChangelogs) {
-    if (cl.changedAt > effectiveDate) break;
-    if (sprintValueContainsName(cl.toValue, sprintName)) {
-      inSprint = true;
-    }
-    if (
-      sprintValueContainsName(cl.fromValue, sprintName) &&
-      !sprintValueContainsName(cl.toValue, sprintName)
-    ) {
-      inSprint = false;
-    }
-  }
-
-  if (sprintChangelogs.length === 0) return true;
-  return inSprint;
 }

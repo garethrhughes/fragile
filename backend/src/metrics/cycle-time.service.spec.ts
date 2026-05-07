@@ -88,8 +88,11 @@ describe('CycleTimeService', () => {
     expect(result.boardId).toBe('ACC');
     expect(result.count).toBe(0);
     expect(result.anomalyCount).toBe(0);
-    expect(result.p50Days).toBe(0);
-    expect(result.band).toBe('excellent');
+    // Proposal 0054 AC5: empty data returns null percentiles + null band
+    // (no longer misclassified as 'excellent').
+    expect(result.p50Days).toBeNull();
+    expect(result.band).toBeNull();
+    expect(result.reopenedIssueCount).toBe(0);
   });
 
   // ---------------------------------------------------------------------------
@@ -162,7 +165,8 @@ describe('CycleTimeService', () => {
 
     expect(result.count).toBe(0);
     expect(result.anomalyCount).toBe(1);
-    expect(result.p50Days).toBe(0);
+    // Proposal 0054 AC5: zero observations → null percentiles
+    expect(result.p50Days).toBeNull();
   });
 
   // ---------------------------------------------------------------------------
@@ -193,11 +197,15 @@ describe('CycleTimeService', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Negative cycle time clamped to 0
+  // Done before In Progress: no completed cycle (proposal 0054)
   // ---------------------------------------------------------------------------
 
-  it('clamps negative cycle time to 0 (not counted as anomaly)', async () => {
-    // doneAt is BEFORE inProgressAt (data anomaly)
+  it('skips issue with Done-before-InProgress as no completed cycle exists (proposal 0054)', async () => {
+    // doneAt is BEFORE inProgressAt (data anomaly).
+    // Under canonical sorted-ASC cycle semantics (proposal 0054 / extractCycles),
+    // the leading Done is ignored, the IP opens an unterminated cycle, and no
+    // completed cycle is emitted. The previous "clamp negative duration to 0"
+    // shortcut is gone because it concealed the underlying data issue.
     const inProgressAt = new Date('2026-01-15T00:00:00Z');
     const doneAt = new Date('2026-01-10T00:00:00Z'); // earlier than In Progress
 
@@ -214,10 +222,11 @@ describe('CycleTimeService', () => {
 
     const result = await service.calculate('ACC', start, end, '2026-Q1');
 
-    // Counts as 0-day observation, not an anomaly
-    expect(result.count).toBe(1);
+    // No completed cycle: not counted, and not a window-scoped anomaly because
+    // an In Progress transition exists for this issue.
+    expect(result.count).toBe(0);
     expect(result.anomalyCount).toBe(0);
-    expect(result.p50Days).toBe(0);
+    expect(result.p50Days).toBeNull();
   });
 
   // ---------------------------------------------------------------------------
@@ -431,10 +440,15 @@ describe('CycleTimeService', () => {
     const result = await service.calculate('ACC', start, end, '2026-Q1');
 
     expect(result.count).toBe(5);
-    expect(result.p50Days).toBeGreaterThan(0);
-    expect(result.p95Days).toBeGreaterThanOrEqual(result.p85Days);
-    expect(result.p85Days).toBeGreaterThanOrEqual(result.p75Days);
-    expect(result.p75Days).toBeGreaterThanOrEqual(result.p50Days);
+    // count > 0 → percentile fields are non-null (proposal 0054 AC5).
+    expect(result.p50Days).not.toBeNull();
+    expect(result.p75Days).not.toBeNull();
+    expect(result.p85Days).not.toBeNull();
+    expect(result.p95Days).not.toBeNull();
+    expect(result.p50Days!).toBeGreaterThan(0);
+    expect(result.p95Days!).toBeGreaterThanOrEqual(result.p85Days!);
+    expect(result.p85Days!).toBeGreaterThanOrEqual(result.p75Days!);
+    expect(result.p75Days!).toBeGreaterThanOrEqual(result.p50Days!);
   });
 
   // ---------------------------------------------------------------------------
@@ -498,12 +512,13 @@ describe('CycleTimeService', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Use last done-transition in period (re-opened issues)
+  // Reopened issue: representative cycle is the LATEST cycle (proposal 0054 AC1)
   // ---------------------------------------------------------------------------
 
-  it('uses the LAST done-transition in period for re-opened issues', async () => {
+  it('uses the latest cycle (reopen → second Done) and marks it as a reopen', async () => {
     const inProgressAt = new Date('2026-01-02T00:00:00Z');
     const firstDoneAt = new Date('2026-01-05T00:00:00Z');
+    const resetAt = new Date('2026-01-08T00:00:00Z');
     const reopenAt = new Date('2026-01-10T00:00:00Z');
     const secondDoneAt = new Date('2026-01-14T00:00:00Z');
     issueRepo.find.mockResolvedValue([
@@ -514,12 +529,14 @@ describe('CycleTimeService', () => {
       buildQb([
         { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: inProgressAt },
         { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: firstDoneAt },
+        // Reset transition between cycles (per proposal 0054 reset semantics)
+        { issueKey: 'ACC-1', field: 'status', toValue: 'To Do', changedAt: resetAt },
         { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: reopenAt },
         { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: secondDoneAt },
       ]),
     );
 
-    const { observations } = await service.getCycleTimeObservations(
+    const { observations, reopenedIssueCount } = await service.getCycleTimeObservations(
       'ACC',
       start,
       end,
@@ -527,10 +544,13 @@ describe('CycleTimeService', () => {
     );
 
     expect(observations).toHaveLength(1);
+    // Representative cycle = LATEST cycle: reopenAt → secondDoneAt (proposal 0054 AC1)
     expect(observations[0].completedAt).toBe(secondDoneAt.toISOString());
-    // cycleStart = first In Progress; cycleEnd = last Done in period
-    const expectedDays = (secondDoneAt.getTime() - inProgressAt.getTime()) / (1000 * 60 * 60 * 24);
+    expect(observations[0].startedAt).toBe(reopenAt.toISOString());
+    expect(observations[0].isReopen).toBe(true);
+    const expectedDays = (secondDoneAt.getTime() - reopenAt.getTime()) / (1000 * 60 * 60 * 24);
     expect(observations[0].cycleTimeDays).toBeCloseTo(expectedDays, 1);
+    expect(reopenedIssueCount).toBe(1);
   });
 
   // ---------------------------------------------------------------------------
@@ -568,5 +588,62 @@ describe('CycleTimeService', () => {
     );
     // The returned value from workingDaysBetween is used as cycleTimeDays
     expect(result.p50Days).toBe(2.5);
+  });
+
+  // ---------------------------------------------------------------------------
+  // reopenedIssueCount aggregation across multiple issues (proposal 0054 AC C)
+  // ---------------------------------------------------------------------------
+
+  it('aggregates reopenedIssueCount across multiple issues', async () => {
+    // 3 issues: ACC-1 (no reopen), ACC-2 and ACC-3 (each reopened once).
+    // Expect reopenedIssueCount = 2.
+    issueRepo.find.mockResolvedValue([
+      { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', summary: 'Single', fixVersion: null },
+      { key: 'ACC-2', boardId: 'ACC', issueType: 'Story', summary: 'Reopen-1', fixVersion: null },
+      { key: 'ACC-3', boardId: 'ACC', issueType: 'Story', summary: 'Reopen-2', fixVersion: null },
+    ] as unknown as JiraIssue[]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const ip1 = new Date('2026-01-02T00:00:00Z');
+    const done1 = new Date('2026-01-05T00:00:00Z');
+
+    const ip2a = new Date('2026-01-02T00:00:00Z');
+    const done2a = new Date('2026-01-04T00:00:00Z');
+    const reset2 = new Date('2026-01-06T00:00:00Z');
+    const ip2b = new Date('2026-01-08T00:00:00Z');
+    const done2b = new Date('2026-01-10T00:00:00Z');
+
+    const ip3a = new Date('2026-01-03T00:00:00Z');
+    const done3a = new Date('2026-01-05T00:00:00Z');
+    const reset3 = new Date('2026-01-07T00:00:00Z');
+    const ip3b = new Date('2026-01-09T00:00:00Z');
+    const done3b = new Date('2026-01-12T00:00:00Z');
+
+    changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(
+      buildQb([
+        { issueKey: 'ACC-1', field: 'status', toValue: 'In Progress', changedAt: ip1 },
+        { issueKey: 'ACC-1', field: 'status', toValue: 'Done', changedAt: done1 },
+
+        { issueKey: 'ACC-2', field: 'status', toValue: 'In Progress', changedAt: ip2a },
+        { issueKey: 'ACC-2', field: 'status', toValue: 'Done', changedAt: done2a },
+        { issueKey: 'ACC-2', field: 'status', toValue: 'To Do', changedAt: reset2 },
+        { issueKey: 'ACC-2', field: 'status', toValue: 'In Progress', changedAt: ip2b },
+        { issueKey: 'ACC-2', field: 'status', toValue: 'Done', changedAt: done2b },
+
+        { issueKey: 'ACC-3', field: 'status', toValue: 'In Progress', changedAt: ip3a },
+        { issueKey: 'ACC-3', field: 'status', toValue: 'Done', changedAt: done3a },
+        { issueKey: 'ACC-3', field: 'status', toValue: 'To Do', changedAt: reset3 },
+        { issueKey: 'ACC-3', field: 'status', toValue: 'In Progress', changedAt: ip3b },
+        { issueKey: 'ACC-3', field: 'status', toValue: 'Done', changedAt: done3b },
+      ]),
+    );
+
+    const result = await service.calculate('ACC', start, end, '2026-Q1');
+
+    expect(result.count).toBe(3);
+    expect(result.reopenedIssueCount).toBe(2);
+    // Representative cycles for ACC-2 and ACC-3 should be marked as reopens
+    const reopenObs = result.observations.filter((o) => o.isReopen);
+    expect(reopenObs.map((o) => o.issueKey).sort()).toEqual(['ACC-2', 'ACC-3']);
   });
 });

@@ -12,6 +12,7 @@ import { classifyCycleTime, type CycleTimeBand } from './cycle-time-bands.js';
 import { percentile, round2 } from './statistics.js';
 import { isWorkItem } from './issue-type-filters.js';
 import { WorkingTimeService } from './working-time.service.js';
+import { extractCycles, resolveResetNames } from './cycle.js';
 
 // ---------------------------------------------------------------------------
 // Authoritative type definitions (single source of truth)
@@ -27,28 +28,37 @@ export interface CycleTimeObservation {
   startedAt: string;     // ISO — in-progress transition
   periodKey: string;     // e.g. "2026-Q1" or sprint name
   jiraUrl: string;       // deep-link into Jira
+  /** True when this observation is the second-or-later cycle for the issue. */
+  isReopen: boolean;
 }
 
 export interface CycleTimeResult {
   boardId: string;
-  p50Days: number;
-  p75Days: number;
-  p85Days: number;
-  p95Days: number;
+  /** Percentile fields are null when observations.length === 0 (proposal 0054 AC5). */
+  p50Days: number | null;
+  p75Days: number | null;
+  p85Days: number | null;
+  p95Days: number | null;
   count: number;
   anomalyCount: number;
+  /** Number of issues whose representative cycle is a reopen (proposal 0054 AC C). */
+  reopenedIssueCount: number;
   observations: CycleTimeObservation[];
-  band: CycleTimeBand;
+  /** Null when count === 0 — frontend renders "No data" rather than an "elite" band. */
+  band: CycleTimeBand | null;
 }
 
 export interface CycleTimeTrendPoint {
   label: string;
   start: string;
   end: string;
-  medianCycleTimeDays: number;
-  p85CycleTimeDays: number;
+  /** Null when the period had no completed cycles (proposal 0054 AC5). */
+  medianCycleTimeDays: number | null;
+  /** Null when the period had no completed cycles (proposal 0054 AC5). */
+  p85CycleTimeDays: number | null;
   sampleSize: number;
-  band: CycleTimeBand;
+  /** Null when the period had no completed cycles — UI renders a gap. */
+  band: CycleTimeBand | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,7 +103,11 @@ export class CycleTimeService {
     endDate: Date,
     periodKey: string,
     issueTypeFilter?: string,
-  ): Promise<{ observations: CycleTimeObservation[]; anomalyCount: number }> {
+  ): Promise<{
+    observations: CycleTimeObservation[];
+    anomalyCount: number;
+    reopenedIssueCount: number;
+  }> {
     // 1. Load board config
     const config = await this.boardConfigRepo.findOne({ where: { boardId } });
     const inProgressNames = config?.inProgressStatusNames ?? [
@@ -125,12 +139,16 @@ export class CycleTimeService {
       'READY',
     ];
     const doneStatuses = config?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
+    const resetNames = resolveResetNames(config?.boardEntryStatuses ?? null);
+    const inProgressSet = new Set(inProgressNames);
+    const doneSet = new Set(doneStatuses);
+    const resetSet = new Set(resetNames);
 
     // 2. Load all issues for this board (filtered by type if provided).
     // Epics and Sub-tasks are always excluded as non-deliverable issue types.
     // If issueTypeFilter is itself an excluded type, return empty immediately.
     if (issueTypeFilter && !isWorkItem(issueTypeFilter)) {
-      return { observations: [], anomalyCount: 0 };
+      return { observations: [], anomalyCount: 0, reopenedIssueCount: 0 };
     }
     const issueWhere: { boardId: string; issueType?: string } = { boardId };
     if (issueTypeFilter) {
@@ -140,7 +158,7 @@ export class CycleTimeService {
       .filter((i) => isWorkItem(i.issueType));
 
     if (issues.length === 0) {
-      return { observations: [], anomalyCount: 0 };
+      return { observations: [], anomalyCount: 0, reopenedIssueCount: 0 };
     }
 
     const issueKeys = issues.map((i) => i.key);
@@ -181,6 +199,7 @@ export class CycleTimeService {
 
     const observations: CycleTimeObservation[] = [];
     let anomalyCount = 0;
+    let reopenedIssueCount = 0;
 
     // Load working-time config once for the whole batch.
     const wtEntity = await this.workingTimeService.getConfig();
@@ -189,61 +208,94 @@ export class CycleTimeService {
     for (const issue of issues) {
       const issueLogs = changelogsByIssue.get(issue.key) ?? [];
 
-      // Step (a): cycleStart = FIRST changelog where toValue ∈ inProgressStatusNames.
-      // Resolved up front so the fixVersion fallback can guard against release
-      // dates that pre-date the work start (e.g. version released before the
-      // issue moved to In Progress).
-      const inProgressTransition = issueLogs.find(
-        (cl) => inProgressNames.includes(cl.toValue ?? ''),
+      // Use the shared cycle helper (proposal 0054). Returns null when no
+      // completed cycle exists in the issue's changelog.
+      const issueCycles = extractCycles(
+        issueLogs,
+        inProgressSet,
+        doneSet,
+        resetSet,
       );
 
-      // Step (b): cycleEnd = LAST done transition in period.
-      // An issue may be re-opened and re-resolved; we want the most recent
-      // resolution within the period, not the first.
-      const doneTransition = issueLogs
-        .filter(
-          (cl) =>
-            doneStatuses.includes(cl.toValue ?? '') &&
-            cl.changedAt >= startDate &&
-            cl.changedAt <= endDate,
-        )
-        .at(-1);
+      // Accumulate per-issue anomalies (e.g. dangling open IP at end of changelog).
+      if (issueCycles) {
+        anomalyCount += issueCycles.anomalyCount;
+      }
 
+      // Determine cycleStart and cycleEnd for THIS analysis window.
+      let cycleStart: Date | null = null;
       let cycleEnd: Date | null = null;
+      let isReopen = false;
 
-      if (doneTransition) {
-        cycleEnd = doneTransition.changedAt;
-      } else if (issue.fixVersion) {
-        // Fallback: fixVersion releaseDate in period, but only if it is not
-        // earlier than the in-progress transition — a release date that precedes
-        // work starting produces a nonsensical negative duration.
+      if (issueCycles) {
+        // Pick the latest representative cycle whose end falls inside the
+        // analysis window. This preserves the original "completed in window"
+        // semantics while consuming the canonical cycle definition.
+        const inWindow = issueCycles.cycles.filter(
+          (c) => c.end >= startDate && c.end <= endDate,
+        );
+        const repForWindow =
+          inWindow.length > 0 ? inWindow[inWindow.length - 1] : null;
+
+        if (repForWindow) {
+          cycleStart = repForWindow.start;
+          cycleEnd = repForWindow.end;
+          isReopen = repForWindow.isReopen;
+        }
+      }
+
+      // FixVersion fallback: only when no in-window completed cycle exists.
+      // The cycle start in this case is the FIRST in-progress transition
+      // (matches the previous behaviour for un-completed issues released
+      // via fixVersion).
+      if (cycleEnd === null && issue.fixVersion) {
         const releaseDate = versionDateMap.get(issue.fixVersion);
+        const firstInProgress = issueLogs.find(
+          (cl) => inProgressSet.has(cl.toValue ?? ''),
+        );
         if (
           releaseDate &&
           releaseDate >= startDate &&
           releaseDate <= endDate &&
-          (inProgressTransition === undefined ||
-            releaseDate >= inProgressTransition.changedAt)
+          (firstInProgress === undefined ||
+            releaseDate >= firstInProgress.changedAt)
         ) {
           cycleEnd = releaseDate;
+          if (firstInProgress) {
+            cycleStart = firstInProgress.changedAt;
+          }
         }
       }
 
       if (!cycleEnd) {
-        // Issue not completed in this period — not relevant, skip entirely
+        // No completed cycle in window and no fixVersion fallback applies.
+        //
+        // Window-scoped anomaly preservation: if the issue has a Done
+        // transition inside the window but no In Progress at all, the
+        // helper returns null but the previous service treated this as a
+        // window-scoped anomaly. Preserve that signal.
+        const hasDoneInWindow = issueLogs.some(
+          (cl) =>
+            doneSet.has(cl.toValue ?? '') &&
+            cl.changedAt >= startDate &&
+            cl.changedAt <= endDate,
+        );
+        const hasAnyInProgress = issueLogs.some(
+          (cl) => inProgressSet.has(cl.toValue ?? ''),
+        );
+        if (hasDoneInWindow && !hasAnyInProgress) {
+          anomalyCount += 1;
+        }
         continue;
       }
 
-      if (!inProgressTransition) {
-        // Issue completed in this period but has no in-progress transition —
-        // window-scoped anomaly: count it and exclude from percentile calculation.
-        anomalyCount++;
+      if (!cycleStart) {
+        // FixVersion released but no in-progress transition exists at all.
+        anomalyCount += 1;
         continue;
       }
 
-      const cycleStart = inProgressTransition.changedAt;
-
-      // Step (c): compute cycle time, clamp negative values (data anomaly)
+      // Compute cycle time, clamp negative values (data anomaly)
       const rawDays = wtEntity.excludeWeekends
         ? this.workingTimeService.workingDaysBetween(cycleStart, cycleEnd, wtConfig)
         : (cycleEnd.getTime() - cycleStart.getTime()) / 86_400_000;
@@ -256,6 +308,10 @@ export class CycleTimeService {
 
       const cycleTimeDays = Math.max(0, rawDays);
 
+      if (isReopen) {
+        reopenedIssueCount += 1;
+      }
+
       observations.push({
         issueKey: issue.key,
         issueType: issue.issueType ?? 'Unknown',
@@ -267,18 +323,20 @@ export class CycleTimeService {
         jiraUrl: this.jiraBaseUrl
           ? `${this.jiraBaseUrl}/browse/${issue.key}`
           : '',
+        isReopen,
       });
     }
 
     // Sort by cycleTimeDays ASC (required for percentile calculation)
     observations.sort((a, b) => a.cycleTimeDays - b.cycleTimeDays);
 
-    return { observations, anomalyCount };
+    return { observations, anomalyCount, reopenedIssueCount };
   }
 
   /**
    * Main public method — aggregates observations into CycleTimeResult.
-   * Explicit zero-observations fallback (mirrors LeadTimeService pattern).
+   * Returns null percentiles + null band when observations is empty
+   * (proposal 0054 AC5 — no longer misclassifies empty data as 'excellent').
    */
   async calculate(
     boardId: string,
@@ -287,26 +345,33 @@ export class CycleTimeService {
     periodKey: string,
     issueTypeFilter?: string,
   ): Promise<CycleTimeResult> {
-    const { observations, anomalyCount } = await this.getCycleTimeObservations(
-      boardId,
-      startDate,
-      endDate,
-      periodKey,
-      issueTypeFilter,
+    const { observations, anomalyCount, reopenedIssueCount } =
+      await this.getCycleTimeObservations(
+        boardId,
+        startDate,
+        endDate,
+        periodKey,
+        issueTypeFilter,
+      );
+
+    // Per-board structured log (proposal 0054 AC G)
+    this.logger.log(
+      `cycle_aggregate_computed boardId=${boardId} period=${periodKey} observations=${observations.length} reopenedIssueCount=${reopenedIssueCount} anomalyCount=${anomalyCount}`,
     );
 
-    // Explicit zero-observations guard (same as LeadTimeService)
+    // Empty: null band + null percentiles (was previously 'excellent' / 0).
     if (observations.length === 0) {
       return {
         boardId,
-        p50Days: 0,
-        p75Days: 0,
-        p85Days: 0,
-        p95Days: 0,
+        p50Days: null,
+        p75Days: null,
+        p85Days: null,
+        p95Days: null,
         count: 0,
         anomalyCount,
+        reopenedIssueCount,
         observations: [],
-        band: classifyCycleTime(0),
+        band: null,
       };
     }
 
@@ -325,6 +390,7 @@ export class CycleTimeService {
       p95Days: round2(p95),
       count: observations.length,
       anomalyCount,
+      reopenedIssueCount,
       observations,
       band: classifyCycleTime(p50),
     };

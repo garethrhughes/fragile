@@ -21,6 +21,7 @@ import { ToggleChip } from '@/components/ui/toggle-chip'
 import { EmptyState } from '@/components/ui/empty-state'
 import { NoBoardsConfigured } from '@/components/ui/no-boards-configured'
 import { CycleTimePercentileCard } from '@/components/ui/cycle-time-percentile-card'
+import { ReopenBanner } from '@/components/ui/reopen-banner'
 import { CycleTimeTrendChart } from '@/components/ui/cycle-time-trend-chart'
 import { CycleTimeScatter } from '@/components/ui/cycle-time-scatter'
 import { CycleTimeBandBadge } from '@/components/ui/cycle-time-band-badge'
@@ -75,8 +76,23 @@ type PageState =
 
 function pooledPercentiles(results: CycleTimeResult[]) {
   const allObs = results.flatMap((r) => r.observations)
+  const reopenedIssueCount = results.reduce(
+    (s, r) => s + r.reopenedIssueCount,
+    0,
+  )
+  const anomalyCount = results.reduce((s, r) => s + r.anomalyCount, 0)
   if (allObs.length === 0) {
-    return { p50: 0, p75: 0, p85: 0, p95: 0, count: 0, anomalyCount: 0 }
+    // Proposal 0054 AC E: no completed cycles → null percentiles, not zero
+    // (zero would mis-band as 'excellent').
+    return {
+      p50: null,
+      p75: null,
+      p85: null,
+      p95: null,
+      count: 0,
+      anomalyCount,
+      reopenedIssueCount,
+    }
   }
   const sorted = allObs.map((o) => o.cycleTimeDays).sort((a, b) => a - b)
   const pct = (p: number): number => {
@@ -86,7 +102,6 @@ function pooledPercentiles(results: CycleTimeResult[]) {
     if (lo === hi) return sorted[lo]
     return sorted[lo] + (idx - lo) * ((sorted[hi] ?? 0) - (sorted[lo] ?? 0))
   }
-  const anomalyCount = results.reduce((s, r) => s + r.anomalyCount, 0)
   return {
     p50: Math.round(pct(50) * 10) / 10,
     p75: Math.round(pct(75) * 10) / 10,
@@ -94,6 +109,7 @@ function pooledPercentiles(results: CycleTimeResult[]) {
     p95: Math.round(pct(95) * 10) / 10,
     count: sorted.length,
     anomalyCount,
+    reopenedIssueCount,
   }
 }
 
@@ -366,6 +382,9 @@ function CycleTimePageInner() {
               </p>
             </div>
           )}
+
+          {/* Reopen banner (proposal 0054 AC F) */}
+          <ReopenBanner count={pooled.reopenedIssueCount} />
 
           {/* No data state for period */}
           {pooled.count === 0 && (

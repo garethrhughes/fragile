@@ -1245,6 +1245,53 @@ describe('WeekDetailService', () => {
       const result = await service.getDetail('PLAT', WEEK);
       expect(result.summary.medianCycleTimeDays).toBeNull();
     });
+
+    it('surfaces isReopen=true when latest cycle follows a Done→In Progress reset (proposal 0054 AC4)', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig({ inProgressStatusNames: ['In Progress'] }));
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', status: 'Done', createdAt: new Date('2026-01-05T09:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeChangelog({ issueKey: 'PLAT-1', field: 'status', fromValue: 'To Do', toValue: 'In Progress', changedAt: new Date('2026-01-05T10:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-1', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-01-06T17:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-1', field: 'status', fromValue: 'Done', toValue: 'In Progress', changedAt: new Date('2026-01-07T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-1', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-01-08T17:00:00Z') }),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+
+      const result = await service.getDetail('PLAT', WEEK);
+
+      expect(result.issues[0].isReopen).toBe(true);
+      expect(result.issues[0].cycleTimeDays).not.toBeNull();
+      expect(result.summary.reopenedIssueCount).toBe(1);
+    });
+
+    it('returns isReopen=false on a single non-reopened cycle', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig({ inProgressStatusNames: ['In Progress'] }));
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', status: 'Done', createdAt: new Date('2026-01-05T09:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeChangelog({ issueKey: 'PLAT-1', field: 'status', fromValue: 'To Do', toValue: 'In Progress', changedAt: new Date('2026-01-05T10:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-1', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-01-08T17:00:00Z') }),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+
+      const result = await service.getDetail('PLAT', WEEK);
+
+      expect(result.issues[0].isReopen).toBe(false);
+      expect(result.summary.reopenedIssueCount).toBe(0);
+    });
   });
 
   // -------------------------------------------------------------------------

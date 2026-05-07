@@ -80,6 +80,70 @@ Wait for confirmation before moving to Step 1.
 
 ---
 
+## Feature Document
+
+Once the brief is confirmed, write a feature document to `docs/features/` **before**
+invoking the architect skill. This document is the canonical record of what was requested
+and why, and it persists independently of the proposal (which describes *how* to implement it).
+
+### File naming
+
+```
+docs/features/NNNN-short-kebab-case-title.md
+```
+
+Increment NNNN sequentially from the highest existing number in `docs/features/`. Start
+at 0001 if no files exist yet.
+
+### Feature document format
+
+```markdown
+# NNNN — Feature Title
+
+**Date:** YYYY-MM-DD
+**Status:** Draft | In Progress | Implemented | Cancelled
+**Source:** Manual | Jira:{KEY} | GitHub:{issue-url}
+**Related proposal:** docs/proposals/NNNN-short-title.md *(populated after Step 1)*
+
+## Summary
+
+One or two sentences describing what this feature does from the user's or system's
+perspective.
+
+## Background / Motivation
+
+Why is this feature needed? What problem does it solve or what opportunity does it
+capture? Reference any relevant context (user feedback, error rates, product requirement,
+linked ticket, etc.).
+
+## Scope
+
+**In scope**
+- Bullet list of what this feature covers.
+
+**Out of scope**
+- Anything explicitly excluded, to prevent scope creep.
+
+## Acceptance Criteria
+
+- Given {context}, when {action}, then {outcome}
+- *(one bullet per criterion — specific and testable)*
+
+## Open Questions
+
+List anything that needs answering before or during design. If none, write "None."
+
+## Notes
+
+Any additional context, constraints, or decisions that should inform the architect.
+```
+
+After writing the file, confirm to the user:
+
+> "Feature document written to `docs/features/NNNN-short-title.md`. Proceeding to design."
+
+---
+
 ## The Full Feature Development Cycle
 
 ### Step 1 — Design (Architect skill)
@@ -116,7 +180,8 @@ Use the **architect** skill to:
    Do not proceed until the user explicitly accepts. If the user provides feedback, incorporate
    it, update the proposal, update the summary table, and ask again. Repeat until the user accepts.
 4. Once accepted: update the proposal status to `Accepted`
-5. Create any ADR(s) that the proposal produces in `docs/decisions/`
+5. Update the feature document's **Related proposal** field with the proposal file path
+6. Create any ADR(s) that the proposal produces in `docs/decisions/`
 
 **Skip this step only for:** trivial bug fixes, copy changes, or configuration tweaks that
 do not affect architecture, module boundaries, schema, infra, or security posture.
@@ -233,6 +298,7 @@ to `Accepted`, linking the ADR numbers.
 2. Open a PR targeting `main` (or the project's default branch)
 3. In the PR description, include:
    - A summary of what changed and why
+   - Link to the feature document (`docs/features/NNNN-short-title.md`)
    - Link to the accepted proposal (if one exists)
    - Link to any new ADRs created
    - Test coverage summary (new tests added, all passing)
@@ -251,7 +317,7 @@ section summarises where each is most relevant:
 |---|---|---|
 | **context7** | Step 1, Step 2 | Look up live framework/provider docs before designing or coding |
 | **github** | Step 2, Step 3, Step 6 | Branch/PR operations, CI status checks, diff access for review |
-| **filesystem** | Step 1, Step 2, Step 5 | Read/write proposals, ADRs, and source files |
+| **filesystem** | Intake, Step 1, Step 2, Step 5 | Read/write feature docs, proposals, ADRs, and source files |
 | **semgrep** | Step 2, Step 3, Step 4 | Static analysis — run before handoff at each gate |
 
 Each skill in the cycle is responsible for using these tools appropriately — the guidance
@@ -276,10 +342,11 @@ step-specific instructions.
 ## Quick Reference
 
 ```
-Step 1 → architect skill     (propose; include Infra Addendum if relevant)
+Feature doc → docs/features/NNNN-short-title.md (written before Step 1)
+Step 1 → architect skill     (propose; include Infra Addendum if relevant; back-link feature doc)
 Step 2 → developer skill     (implement with TDD; capture plan output for infra)
 Step 3 → reviewer skill      (code review; loop back to Step 2 if blocked)
 Step 4 → infosec skill       (security/compliance sign-off; conditional — see Step 4)
 Step 5 → decision-log skill  (log ADRs, update proposal statuses, log any exceptions)
-Step 6 → open PR             (include proposal link, ADRs, plan output, infosec verdict)
+Step 6 → open PR             (include feature doc link, proposal link, ADRs, plan output, infosec verdict)
 ```

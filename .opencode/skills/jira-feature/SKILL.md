@@ -132,16 +132,78 @@ Then ask:
 
 ---
 
-## Step 6 — Hand Off to create-feature
+## Step 6 — Write the Feature Document
 
-With the confirmed brief in hand, invoke the **create-feature** skill, skipping its
-Feature Intake step (the brief has already been collected).
+Before handing off to create-feature, write a feature document to `docs/features/`.
+
+### File naming
+
+```
+docs/features/NNNN-{JIRA-KEY}-short-kebab-case-title.md
+```
+
+Increment NNNN sequentially from the highest existing number in `docs/features/`. Start
+at 0001 if no files exist yet. Derive the short title from the Jira issue summary.
+
+Populate the document using the confirmed brief and the Jira ticket data:
+
+```markdown
+# NNNN — Feature Title
+
+**Date:** YYYY-MM-DD
+**Status:** Draft
+**Source:** Jira:{KEY} — {full Jira issue URL}
+**Related proposal:** *(populated after architect step)*
+
+## Summary
+
+{One or two sentences from the confirmed feature description.}
+
+## Background / Motivation
+
+{Derived from the Jira description — why this feature is needed, what problem it solves.
+Include the Jira issue key and link as the authoritative source.}
+
+## Scope
+
+**In scope**
+- {Derived from the ticket description or confirmed brief.}
+
+**Out of scope**
+- {Anything explicitly excluded in the ticket, or "Not specified in ticket."}
+
+## Acceptance Criteria
+
+{The confirmed acceptance criteria, one bullet per criterion.}
+
+## Open Questions
+
+{Any unresolved items noted during the brief mapping step. If none, write "None."}
+
+## Notes
+
+{Any additional context from the Jira ticket — linked issues, labels, priority, or
+fields not captured above.}
+```
+
+After writing the file, confirm to the user:
+
+> "Feature document written to `docs/features/NNNN-{JIRA-KEY}-short-title.md`. Proceeding to design."
+
+---
+
+## Step 7 — Hand Off to create-feature
+
+With the confirmed brief and feature document in hand, invoke the **create-feature** skill,
+skipping its Feature Intake step and its Feature Document step (both have already been
+completed).
 
 Pass the confirmed brief directly as the feature description and acceptance criteria.
 
 From this point, follow the create-feature workflow exactly:
 
-- Step 1 — Design (architect skill)
+- Step 1 — Design (architect skill) — back-link the feature document in the proposal's
+  **Related feature** field
 - Step 2 — Implementation (developer skill)
 - Step 3 — Code Review (reviewer skill)
 - Step 4 — Infosec Sign-Off (infosec skill, if applicable)
@@ -149,10 +211,11 @@ From this point, follow the create-feature workflow exactly:
 - Step 6 — Pull Request
 
 Include the Jira issue key in all artifacts:
+- Feature document: `docs/features/NNNN-{JIRA-KEY}-short-title.md` *(already written)*
 - Proposal filename: `docs/proposals/NNNN-{JIRA-KEY}-short-title.md`
 - Branch name: `feature/{JIRA-KEY}-short-title`
 - PR title: `[{JIRA-KEY}] Short title`
-- PR description: link back to the Jira issue
+- PR description: link to the feature document and back to the Jira issue
 
 ---
 
@@ -163,9 +226,11 @@ Use the Jira MCP server in Step 3 to:
 - Fetch the full issue detail by key (summary, description, custom fields, status, issue type)
 - Look up any linked issues if the description references them and context would be useful
 
-### filesystem — Config Management
-Use the Filesystem MCP server in Step 1 to:
+### filesystem — Config & Feature Doc
+Use the Filesystem MCP server to:
 - Read `opencode.json` to check whether the Jira MCP server is already configured
+- Read `docs/features/` to determine the next sequential NNNN before writing the feature document
+- Write the feature document to `docs/features/NNNN-{JIRA-KEY}-short-title.md`
 
 ---
 
@@ -175,6 +240,9 @@ Use the Filesystem MCP server in Step 1 to:
   fetch tickets via WebFetch or any other workaround — the MCP server is required.
 - Never invent acceptance criteria. If none can be found or inferred with reasonable
   confidence, tell the user and ask them to supply ACs manually before continuing.
-- Always include the Jira issue key in the branch name, proposal filename, and PR title.
-- The Feature Intake step of create-feature is **skipped** — this skill replaces it.
-  Do not ask the user for a feature description and ACs a second time.
+- Always include the Jira issue key in the feature document filename, branch name,
+  proposal filename, and PR title.
+- The Feature Intake step and Feature Document step of create-feature are **skipped** —
+  this skill replaces both. Do not ask the user for a feature description and ACs a
+  second time, and do not write a second feature document.
+- Always write the feature document (Step 6) before invoking create-feature (Step 7).

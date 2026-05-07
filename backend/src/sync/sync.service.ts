@@ -6,6 +6,7 @@ import { JiraClientService } from '../jira/jira-client.service.js';
 import {
   JiraSprint,
   JiraIssue,
+  JiraIssueSprint,
   JiraChangelog,
   JiraVersion,
   SyncLog,
@@ -70,6 +71,8 @@ export class SyncService {
     private readonly sprintRepo: Repository<JiraSprint>,
     @InjectRepository(JiraIssue)
     private readonly issueRepo: Repository<JiraIssue>,
+    @InjectRepository(JiraIssueSprint)
+    private readonly issueSprintRepo: Repository<JiraIssueSprint>,
     @InjectRepository(JiraChangelog)
     private readonly changelogRepo: Repository<JiraChangelog>,
     @InjectRepository(JiraVersion)
@@ -277,23 +280,19 @@ export class SyncService {
           `Synced ${totalIssues} Kanban issues for board ${boardId}`,
         );
       } else {
-        // Scrum boards — sync via sprints
+        // Scrum boards — sync sprint metadata first, then fetch all issues via JQL
+        // (including resolved/cancelled issues that the agile per-sprint endpoint excludes).
         const sprints = await this.syncSprints(boardId, numericBoardId);
         this.logger.log(
           `Synced ${sprints.length} sprints for board ${boardId}`,
         );
 
-        for (const sprint of sprints) {
-          const issues = await this.syncSprintIssues(
-            boardId,
-            numericBoardId,
-            sprint.id,
-            extraFields,
-            resolvedFieldConfig,
-          );
-          totalIssues += issues.length;
-          allIssueKeys.push(...issues.map((i) => i.key));
-        }
+        totalIssues = await this.syncScrumIssuesByJql(
+          boardId,
+          extraFields,
+          resolvedFieldConfig,
+          allIssueKeys,
+        );
       }
 
       // Sync changelogs in bulk for all issues
@@ -382,7 +381,7 @@ export class SyncService {
       const response = await this.jiraClient.searchIssues(jql, 0, 100, nextPageToken, extraFields);
 
       const issues = response.issues.map((i) =>
-        this.mapJiraIssue(i, boardId, null, fieldConfig),
+        this.mapJiraIssue(i, boardId, fieldConfig),
       );
       allIssues.push(...issues);
       allRawIssues.push(...response.issues);
@@ -396,6 +395,98 @@ export class SyncService {
     }
 
     return allIssues;
+  }
+
+  /**
+   * Fetch all scrum board issues via JQL (project = X AND sprint is not EMPTY),
+   * including resolved/cancelled issues that the agile per-sprint endpoint excludes.
+   *
+   * Streams results page-by-page per the memory budget rule in ADR 0048:
+   * each page is upserted into JiraIssue + JiraIssueSprint immediately and only
+   * the issue key strings are retained across pages for the changelog phase.
+   *
+   * @param boardId - project key (e.g. "ACC")
+   * @param extraFields - additional Jira field IDs to request
+   * @param fieldConfig - resolved field config for this sync run
+   * @param allIssueKeys - accumulator populated in-place (keys only, not objects)
+   * @returns total count of issues synced
+   */
+  private async syncScrumIssuesByJql(
+    boardId: string,
+    extraFields: string[],
+    fieldConfig: FieldConfig,
+    allIssueKeys: string[],
+  ): Promise<number> {
+    const jql = `project = "${boardId}" AND sprint is not EMPTY ORDER BY updated DESC`;
+    let nextPageToken: string | undefined;
+    let totalIssues = 0;
+
+    do {
+      const response = await this.jiraClient.searchIssues(
+        jql,
+        0,
+        100,
+        nextPageToken,
+        extraFields,
+      );
+
+      if (response.issues.length === 0) break;
+
+      // Map to entities — no sprintId scalar any more
+      const issues = response.issues.map((i) =>
+        this.mapJiraIssue(i, boardId, fieldConfig),
+      );
+
+      // Upsert issues for this page immediately (do not accumulate across pages)
+      await this.issueRepo.upsert(issues, ['key']);
+      await this.persistIssueLinks(response.issues);
+
+      // Persist multi-sprint membership for each issue on this page
+      for (const raw of response.issues) {
+        await this.persistIssueSprintMembership(raw.key, raw.fields);
+      }
+
+      // Retain only keys for the changelog phase (not the full issue objects)
+      for (const issue of issues) {
+        allIssueKeys.push(issue.key);
+      }
+      totalIssues += issues.length;
+
+      nextPageToken = response.nextPageToken;
+    } while (nextPageToken);
+
+    return totalIssues;
+  }
+
+  /**
+   * Replaces the JiraIssueSprint rows for one issue key.
+   * Delete-then-upsert pattern: ensures the table always reflects the current
+   * sprint array from Jira, removing any memberships that no longer exist.
+   */
+  private async persistIssueSprintMembership(
+    issueKey: string,
+    fields: JiraIssueValue['fields'],
+  ): Promise<void> {
+    // Always delete existing rows — even if the issue now has no sprints
+    await this.issueSprintRepo.delete({ issueKey });
+
+    const sprintField = fields['customfield_10020'];
+    if (!Array.isArray(sprintField) || sprintField.length === 0) return;
+
+    const rows: JiraIssueSprint[] = (
+      sprintField as { id: number | string }[]
+    )
+      .filter((s) => s?.id != null)
+      .map((s) => {
+        const row = new JiraIssueSprint();
+        row.issueKey = issueKey;
+        row.sprintId = String(s.id);
+        return row;
+      });
+
+    if (rows.length > 0) {
+      await this.issueSprintRepo.upsert(rows, ['issueKey', 'sprintId']);
+    }
   }
 
   private async syncSprints(boardId: string, numericBoardId: string): Promise<JiraSprint[]> {
@@ -440,7 +531,7 @@ export class SyncService {
       total = response.total;
 
       const issues = response.issues.map((i) =>
-        this.mapJiraIssue(i, boardId, sprintId, fieldConfig),
+        this.mapJiraIssue(i, boardId, fieldConfig),
       );
       allIssues.push(...issues);
       allRawIssues.push(...response.issues);
@@ -458,7 +549,6 @@ export class SyncService {
   private mapJiraIssue(
     raw: JiraIssueValue,
     boardId: string,
-    sprintId: string | null,
     fieldConfig: FieldConfig,
   ): JiraIssue {
     const issue = new JiraIssue();
@@ -475,7 +565,6 @@ export class SyncService {
     issue.priority = raw.fields.priority?.name ?? null;
     issue.assignee = raw.fields.assignee?.displayName ?? null;
     issue.boardId = boardId;
-    issue.sprintId = sprintId;
     issue.createdAt = new Date(raw.fields.created);
 
     // Extract story points by iterating the configured field ID list.
@@ -595,6 +684,16 @@ export class SyncService {
         changelog.field = item.field;
         changelog.fromValue = item.fromString;
         changelog.toValue = item.toString;
+        // Persist raw sprint IDs (from/to) for Sprint field entries so that
+        // planning reconstruction can match by ID rather than display name.
+        // Jira returns a comma-separated string of numeric sprint IDs here.
+        if (item.field === 'Sprint') {
+          changelog.fromId = item.from ?? null;
+          changelog.toId = item.to ?? null;
+        } else {
+          changelog.fromId = null;
+          changelog.toId = null;
+        }
         changelog.changedAt = new Date(entry.created);
         changelogs.push(changelog);
       }
