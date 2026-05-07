@@ -178,6 +178,75 @@ describe('PlanningService', () => {
       expect(result[0].completionRate).toBe(50);
     });
 
+    // ── D-2 regression (proposal 0055) ────────────────────────────────────
+    // Carry-over scenario: an issue completed in a *previous* sprint must
+    // NOT be counted as completed in this sprint, even when it is added
+    // back to this sprint for follow-up work. Before the fix, the
+    // completion check only enforced an upper bound (changedAt <= sprint.endDate),
+    // so any pre-sprint Done transition counted.  After the fix the check
+    // requires changedAt >= sprint.startDate − GRACE.
+    it('does NOT count a Done transition that pre-dates the sprint start (D-2 regression)', async () => {
+      setBoardSprints([sprint]); // 2025-01-01 → 2025-01-14
+
+      issueRepo.find.mockResolvedValue([
+        { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', status: 'Done', points: null, createdAt: new Date('2024-12-01') },
+      ] as unknown as JiraIssue[]);
+
+      membershipReconstruct.mockResolvedValue({
+        committedKeys: new Set(['ACC-1']),
+        addedKeys: new Set<string>(),
+        removedKeys: new Set<string>(),
+        currentMemberKeys: new Set(['ACC-1']),
+        logsByIssue: new Map(),
+      });
+
+      // Done transition occurred the day before sprint start — must be ignored.
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          { issueKey: 'ACC-1', field: 'status', toValue: 'Done',
+            changedAt: new Date('2024-12-31T12:00:00Z') },
+        ] as unknown as JiraChangelog[]),
+      });
+
+      const result = await service.getAccuracy('ACC');
+
+      expect(result[0].commitment).toBe(1);
+      expect(result[0].completed).toBe(0);
+    });
+
+    it('counts a Done transition inside the sprint window (D-2 positive case)', async () => {
+      setBoardSprints([sprint]); // 2025-01-01 → 2025-01-14
+
+      issueRepo.find.mockResolvedValue([
+        { key: 'ACC-1', boardId: 'ACC', issueType: 'Story', status: 'Done', points: null, createdAt: new Date('2024-12-01') },
+      ] as unknown as JiraIssue[]);
+
+      membershipReconstruct.mockResolvedValue({
+        committedKeys: new Set(['ACC-1']),
+        addedKeys: new Set<string>(),
+        removedKeys: new Set<string>(),
+        currentMemberKeys: new Set(['ACC-1']),
+        logsByIssue: new Map(),
+      });
+
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          { issueKey: 'ACC-1', field: 'status', toValue: 'Done',
+            changedAt: new Date('2025-01-10T00:00:00Z') },
+        ] as unknown as JiraChangelog[]),
+      });
+
+      const result = await service.getAccuracy('ACC');
+
+      expect(result[0].completed).toBe(1);
+    });
+
     it('uses current status as completion proxy for active sprints', async () => {
       setBoardSprints([activeSprint]);
 

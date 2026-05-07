@@ -16,6 +16,7 @@ import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { dateParts, midnightInTz } from '../metrics/tz-utils.js';
 import { dateToIsoWeekKey } from '../lib/iso-week.js';
 import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
+import { SPRINT_GRACE_PERIOD_MS } from '../sprint-membership/sprint-membership.service.js';
 
 export interface SprintAccuracy {
   sprintId: string;
@@ -207,11 +208,24 @@ export class PlanningService {
       for (const key of finalKeys) {
         const logs = statusLogsByIssue.get(key) ?? [];
         if (sprint.endDate) {
-          // Closed sprint: check changelog for a Done transition before sprint end.
+          // Closed sprint: check changelog for a Done transition that occurred
+          // INSIDE the sprint window (with the same SPRINT_GRACE_PERIOD_MS
+          // tolerance the SprintMembershipService applies).
+          //
+          // D-2 (proposal 0055): without the lower bound, a carry-over issue
+          // that completed in a *previous* sprint would be wrongly counted as
+          // completed in this sprint whenever it was added back to the sprint
+          // (e.g. for follow-up work) and the original Done transition still
+          // pre-dated the sprint start.
+          const lowerBound = sprint.startDate
+            ? sprint.startDate.getTime() - SPRINT_GRACE_PERIOD_MS
+            : Number.NEGATIVE_INFINITY;
+          const upperBound = sprint.endDate.getTime() + SPRINT_GRACE_PERIOD_MS;
           const hasDoneTransition = logs.some(
             (cl) =>
               doneStatuses.includes(cl.toValue ?? '') &&
-              cl.changedAt <= sprint.endDate!,
+              cl.changedAt.getTime() >= lowerBound &&
+              cl.changedAt.getTime() <= upperBound,
           );
           if (hasDoneTransition) {
             completedKeys.add(key);
