@@ -334,6 +334,49 @@ export class SprintMembershipService {
       logsByIssue: new Map(),
     };
   }
+
+  /**
+   * Compute, per issue, the timestamp at which the issue first entered any
+   * sprint (i.e. the earliest `Sprint`-field changelog entry).
+   *
+   * Returns a `Map<issueKey, Date>` covering only those issues that have at
+   * least one Sprint changelog entry. Callers that need a fallback (e.g.
+   * `issue.createdAt` for issues never assigned to a sprint) should apply
+   * it themselves — this helper deliberately returns no entry when no
+   * Sprint history exists, so the absence is distinguishable from an
+   * issue-creation-time fallback.
+   *
+   * Used by `quarter-detail.service.ts` to derive a "board entry" date for
+   * Scrum boards (proposal 0055, fix C-2). Centralised here so the Sprint
+   * changelog scan lives in one place — see ADR 0049 single-source-of-truth
+   * mandate.
+   */
+  firstSprintEntryDates(input: {
+    issueKeys: readonly string[];
+    changelogsByIssue: ReadonlyMap<string, readonly JiraChangelog[]>;
+  }): Map<string, Date> {
+    const result = new Map<string, Date>();
+
+    for (const key of input.issueKeys) {
+      const logs = input.changelogsByIssue.get(key);
+      if (!logs || logs.length === 0) continue;
+
+      // Find the earliest Sprint-field changelog. We do not assume the input
+      // is pre-sorted: callers commonly hand us a mixed-field changelog list.
+      let earliest: Date | null = null;
+      for (const cl of logs) {
+        if (cl.field !== 'Sprint') continue;
+        if (earliest === null || cl.changedAt < earliest) {
+          earliest = cl.changedAt;
+        }
+      }
+      if (earliest !== null) {
+        result.set(key, earliest);
+      }
+    }
+
+    return result;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -16,6 +16,7 @@ import {
 } from '../database/entities/index.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
+import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
 
 // ---------------------------------------------------------------------------
 // Response interfaces (exported for use by the controller and frontend types)
@@ -131,6 +132,7 @@ export class QuarterDetailService {
     @InjectRepository(JiraIssueLink)
     private readonly issueLinkRepo: Repository<JiraIssueLink>,
     private readonly configService: ConfigService,
+    private readonly sprintMembership: SprintMembershipService,
   ) {
     const baseUrl = this.configService.get<string>('JIRA_BASE_URL', '');
     if (!baseUrl) {
@@ -180,10 +182,15 @@ export class QuarterDetailService {
 
     // -----------------------------------------------------------------------
     // Step 4 — Load all changelogs for those issues
+    //
+    // B-2 (proposal 0055): restrict to status + Sprint fields. We never read
+    // any other field downstream, and unfiltered loads were pulling in
+    // assignee/summary/labels/etc. for huge issue sets.
     // -----------------------------------------------------------------------
     const allChangelogs = await this.changelogRepo
       .createQueryBuilder('cl')
       .where('cl.issueKey IN (:...keys)', { keys: allKeys })
+      .andWhere('cl.field IN (:...fields)', { fields: ['status', 'Sprint'] })
       .orderBy('cl.changedAt', 'ASC')
       .getMany();
 
@@ -203,8 +210,20 @@ export class QuarterDetailService {
 
     // -----------------------------------------------------------------------
     // Step 5 — Compute board-entry date per issue and exclude backlog items
+    //
+    // C-2 (proposal 0055): for Scrum boards the entry date is delegated to
+    // SprintMembershipService.firstSprintEntryDates so the Sprint changelog
+    // scan lives in a single place (ADR 0049 single-source-of-truth).
     // -----------------------------------------------------------------------
     const boardEntryDateByKey = new Map<string, Date>();
+
+    const firstSprintEntryByKey =
+      boardType !== 'kanban'
+        ? this.sprintMembership.firstSprintEntryDates({
+            issueKeys: issues.map((i) => i.key),
+            changelogsByIssue,
+          })
+        : new Map<string, Date>();
 
     for (const issue of issues) {
       const issueChangelogs = changelogsByIssue.get(issue.key) ?? [];
@@ -218,11 +237,10 @@ export class QuarterDetailService {
         );
         entryDate = toDoTransition ? toDoTransition.changedAt : issue.createdAt;
       } else {
-        // Scrum: earliest Sprint changelog
-        const sprintTransition = issueChangelogs.find(
-          (cl) => cl.field === 'Sprint',
-        );
-        entryDate = sprintTransition ? sprintTransition.changedAt : issue.createdAt;
+        // Scrum: earliest Sprint changelog (via SprintMembershipService) →
+        // fall back to issue.createdAt when the issue was never assigned to a
+        // sprint (no Sprint-field history).
+        entryDate = firstSprintEntryByKey.get(issue.key) ?? issue.createdAt;
       }
 
       boardEntryDateByKey.set(issue.key, entryDate);

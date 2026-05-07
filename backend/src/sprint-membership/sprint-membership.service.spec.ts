@@ -576,3 +576,71 @@ describe('SprintMembershipService.reconstructMany', () => {
     expect(result.get('3941')!.committedKeys.has('ACC-1')).toBe(false);
   });
 });
+
+// ─── firstSprintEntryDates (proposal 0055, C-2) ───────────────────────────────
+
+describe('SprintMembershipService.firstSprintEntryDates', () => {
+  let service: SprintMembershipService;
+
+  beforeEach(() => {
+    const sprintRepo = {} as unknown as Repository<JiraSprint>;
+    const issueSprintRepo = {} as unknown as Repository<JiraIssueSprint>;
+    const changelogRepo = {} as unknown as Repository<JiraChangelog>;
+    service = new SprintMembershipService(sprintRepo, issueSprintRepo, changelogRepo);
+  });
+
+  it('returns the earliest Sprint-field changelog timestamp per issue', () => {
+    const logs = new Map<string, JiraChangelog[]>();
+    logs.set('ACC-1', [
+      { field: 'Sprint', changedAt: new Date('2025-02-01') },
+      { field: 'Sprint', changedAt: new Date('2025-01-15') }, // earliest
+      { field: 'Sprint', changedAt: new Date('2025-03-01') },
+    ] as unknown as JiraChangelog[]);
+
+    const result = service.firstSprintEntryDates({
+      issueKeys: ['ACC-1'],
+      changelogsByIssue: logs,
+    });
+
+    expect(result.get('ACC-1')).toEqual(new Date('2025-01-15'));
+  });
+
+  it('ignores non-Sprint-field changelog entries', () => {
+    const logs = new Map<string, JiraChangelog[]>();
+    logs.set('ACC-1', [
+      { field: 'status', changedAt: new Date('2025-01-01') },
+      { field: 'assignee', changedAt: new Date('2025-01-05') },
+      { field: 'Sprint', changedAt: new Date('2025-01-10') },
+    ] as unknown as JiraChangelog[]);
+
+    const result = service.firstSprintEntryDates({
+      issueKeys: ['ACC-1'],
+      changelogsByIssue: logs,
+    });
+
+    expect(result.get('ACC-1')).toEqual(new Date('2025-01-10'));
+  });
+
+  it('omits issues with no Sprint-field changelog (caller applies fallback)', () => {
+    const logs = new Map<string, JiraChangelog[]>();
+    logs.set('ACC-1', [
+      { field: 'status', changedAt: new Date('2025-01-01') },
+    ] as unknown as JiraChangelog[]);
+
+    const result = service.firstSprintEntryDates({
+      issueKeys: ['ACC-1', 'ACC-2'],
+      changelogsByIssue: logs,
+    });
+
+    expect(result.has('ACC-1')).toBe(false);
+    expect(result.has('ACC-2')).toBe(false);
+  });
+
+  it('returns an empty map when given no keys', () => {
+    const result = service.firstSprintEntryDates({
+      issueKeys: [],
+      changelogsByIssue: new Map(),
+    });
+    expect(result.size).toBe(0);
+  });
+});

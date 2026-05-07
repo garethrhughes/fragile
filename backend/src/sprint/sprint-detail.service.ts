@@ -20,6 +20,7 @@ import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
 import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
+import { DEFAULT_IN_PROGRESS_NAMES } from '../metrics/status-defaults.js';
 
 // ---------------------------------------------------------------------------
 // Response interfaces (exported for use by the controller and frontend types)
@@ -249,6 +250,10 @@ export class SprintDetailService {
     const incidentLabels: string[] = boardConfig?.incidentLabels ?? [];
     const cancelledStatusNames: string[] = boardConfig?.cancelledStatusNames ?? ['Cancelled', "Won't Do"];
     const incidentPriorities: string[] = boardConfig?.incidentPriorities ?? ['Critical'];
+    // C-1 (proposal 0055): use the board's configured in-progress status names
+    // (or the shared default list) instead of a hardcoded literal.
+    const inProgressStatusNames: readonly string[] =
+      boardConfig?.inProgressStatusNames ?? DEFAULT_IN_PROGRESS_NAMES;
 
     const boardConfigShape: SprintDetailBoardConfig = {
       doneStatusNames,
@@ -291,9 +296,8 @@ export class SprintDetailService {
       boardIssues,
     });
 
-    const { committedKeys, addedKeys, removedKeys, logsByIssue } = membership;
+    const { committedKeys, addedKeys, removedKeys } = membership;
     const sprintStart = sprint.startDate;
-    const sprintEnd = sprint.endDate ?? new Date();
 
     // Build final issue set: (committed ∪ added) \ removed
     const finalIssueKeys = new Set<string>([...committedKeys, ...addedKeys]);
@@ -448,9 +452,10 @@ export class SprintDetailService {
         (issueLogs.length === 0 && doneStatusNames.includes(issue.status));
 
       // leadTimeDays and resolvedAt
-      // Use In Progress → Done; fall back to createdAt → Done
+      // Use first In Progress (or any configured in-progress status) → Done;
+      // fall back to createdAt → Done. C-1 (proposal 0055).
       const inProgressTransition = issueLogs.find(
-        (cl) => cl.toValue === 'In Progress',
+        (cl) => cl.toValue !== null && inProgressStatusNames.includes(cl.toValue),
       );
       const startTime = inProgressTransition
         ? inProgressTransition.changedAt

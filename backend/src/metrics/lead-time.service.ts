@@ -12,15 +12,9 @@ import { percentile, round2 } from './statistics.js';
 import { isWorkItem } from './issue-type-filters.js';
 import { WorkingTimeService } from './working-time.service.js';
 import type { TrendDataSlice } from './trend-data-loader.service.js';
+import { DEFAULT_IN_PROGRESS_NAMES } from './status-defaults.js';
 
-// Default in-progress status names shared between the DB path and the in-memory path.
-const DEFAULT_IN_PROGRESS_NAMES: string[] = [
-  'In Progress', 'In Review', 'Peer-Review', 'Peer Review', 'PEER REVIEW',
-  'PEER CODE REVIEW', 'Ready for Review', 'In Test', 'IN TEST', 'QA',
-  'QA testing', 'QA Validation', 'IN TESTING', 'Under Test', 'ready to test',
-  'Ready for Testing', 'READY FOR TESTING', 'Ready for Release',
-  'Ready for release', 'READY FOR RELEASE', 'Awaiting Release', 'READY',
-];
+// Default in-progress status names — see metrics/status-defaults.ts (proposal 0055, C-1)
 
 export interface LeadTimeResult {
   boardId: string;
@@ -64,7 +58,7 @@ export class LeadTimeService {
       where: { boardId },
     });
     const doneStatuses = config?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
-    const inProgressNames: string[] = config?.inProgressStatusNames ?? DEFAULT_IN_PROGRESS_NAMES;
+    const inProgressNames: readonly string[] = config?.inProgressStatusNames ?? DEFAULT_IN_PROGRESS_NAMES;
 
     // Step 1: Collect candidate issue keys — only issues that completed in this period.
     // Loading board-scoped issue keys first (key column only) then filtering via
