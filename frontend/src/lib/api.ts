@@ -375,6 +375,8 @@ export interface WeekDetailIssue {
   labels: string[]
   boardEntryDate: string
   cycleTimeDays: number | null
+  /** True when the representative cycle is a reopen (proposal 0054 AC C). */
+  isReopen: boolean
   jiraUrl: string
 }
 
@@ -388,6 +390,8 @@ export interface WeekDetailSummary {
   totalPoints: number
   completedPoints: number
   medianCycleTimeDays: number | null
+  /** Issues whose representative cycle is a reopen (proposal 0054 AC C). */
+  reopenedIssueCount: number
 }
 
 export interface WeekDetailBoardConfig {
@@ -1080,6 +1084,8 @@ export interface SupportTicket {
   band: CycleTimeBand | null
   jiraUrl: string
   matchReason: SupportMatchReason
+  /** True when the representative cycle is a reopen (proposal 0054 AC C). */
+  isReopen: boolean
 }
 
 export interface SupportResult {
@@ -1089,6 +1095,8 @@ export interface SupportResult {
   supportPercentage: number
   p50Days: number
   p95Days: number
+  /** Tickets whose representative cycle is a reopen (proposal 0054 AC C). */
+  reopenedIssueCount: number
   tickets: SupportTicket[]
 }
 
@@ -1105,6 +1113,8 @@ export interface SupportSummary {
   supportPercentage: number
   p50Days: number
   p95Days: number
+  /** Tickets whose representative cycle is a reopen, summed across boards. */
+  reopenedIssueCount: number
   byBoard: SupportBoardBreakdown[]
 }
 

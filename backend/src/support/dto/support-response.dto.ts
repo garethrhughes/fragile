@@ -26,6 +26,8 @@ export interface SupportTicketDto {
   jiraUrl: string;
   /** How this ticket was identified — one or more signals joined by '+' */
   matchReason: SupportMatchReason;
+  /** True when the representative cycle is a reopen (proposal 0054 AC C). */
+  isReopen: boolean;
 }
 
 export interface SupportResult {
@@ -35,6 +37,8 @@ export interface SupportResult {
   supportPercentage: number;
   p50Days: number;
   p95Days: number;
+  /** Tickets whose representative cycle is a reopen (proposal 0054 AC C). */
+  reopenedIssueCount: number;
   tickets: SupportTicketDto[];
 }
 
@@ -51,5 +55,7 @@ export interface SupportSummaryDto {
   supportPercentage: number;
   p50Days: number;
   p95Days: number;
+  /** Tickets whose representative cycle is a reopen, summed across boards. */
+  reopenedIssueCount: number;
   byBoard: SupportBoardBreakdown[];
 }

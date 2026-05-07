@@ -18,6 +18,7 @@ import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
 import { dateParts, startOfDayInTz } from '../metrics/tz-utils.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
+import { extractCycles, resolveResetNames } from '../metrics/cycle.js';
 
 // ---------------------------------------------------------------------------
 // Response interfaces (exported for use by the controller and frontend types)
@@ -78,10 +79,15 @@ export interface WeekDetailIssue {
   boardEntryDate: string;
 
   /**
-   * Cycle time in working days (first inProgress → first done transition),
-   * or null if no inProgress transition exists or issue is not yet done.
+   * Cycle time in working days (latest completed cycle in the week, per
+   * proposal 0054), or null if no representative cycle exists.
    */
   cycleTimeDays: number | null;
+
+  /**
+   * True when the representative cycle is a reopen (proposal 0054 AC C).
+   */
+  isReopen: boolean;
 
   /** Deep link to the issue in Jira Cloud, or empty string if not configured */
   jiraUrl: string;
@@ -97,6 +103,8 @@ export interface WeekDetailSummary {
   totalPoints: number;
   completedPoints: number;
   medianCycleTimeDays: number | null;
+  /** Issues whose representative cycle is a reopen (proposal 0054 AC C). */
+  reopenedIssueCount: number;
 }
 
 export interface WeekDetailBoardConfig {
@@ -342,6 +350,16 @@ export class WeekDetailService {
     const wtEntity = await this.workingTimeService.getConfig();
     const wtConfig = this.workingTimeService.toConfig(wtEntity);
 
+    // Cycle helper inputs (proposal 0054). Lower-cased for tolerant matching
+    // (week-detail historically does case-insensitive comparison on status names).
+    const inProgressSet = new Set(inProgressStatusNames.map((s) => s.toLowerCase()));
+    const doneSet = new Set(doneStatuses.map((s) => s.toLowerCase()));
+    const resetSet = new Set(
+      resolveResetNames(boardConfig?.boardEntryStatuses ?? null).map((s) =>
+        s.toLowerCase(),
+      ),
+    );
+
     // 1-day grace period for addedMidWeek
     const gracePeriodEnd = new Date(weekStart.getTime() + 1 * 24 * 60 * 60 * 1000);
 
@@ -399,29 +417,33 @@ export class WeekDetailService {
         }
       }
 
-      // cycleTimeDays: working days from first inProgress transition → first done transition
+      // cycleTimeDays: latest completed cycle (proposal 0054). Working-days
+      // duration when excludeWeekends is enabled.
       let cycleTimeDays: number | null = null;
-      const firstInProgress = issueChangelogs.find(
-        (cl) =>
-          cl.field === 'status' &&
-          cl.toValue !== null &&
-          inProgressStatusNames.map((s) => s.toLowerCase()).includes(cl.toValue.toLowerCase()),
+      let isReopen = false;
+
+      // Normalise toValue to lowercase so the helper's Set.has matches our
+      // lowercased status sets above.
+      const normalisedLogs = issueChangelogs
+        .filter((cl) => cl.field === 'status' && cl.toValue !== null)
+        .map((cl) => ({ ...cl, toValue: cl.toValue!.toLowerCase() }));
+
+      const issueCycles = extractCycles(
+        normalisedLogs,
+        inProgressSet,
+        doneSet,
+        resetSet,
       );
-      const firstDone = issueChangelogs.find(
-        (cl) =>
-          cl.field === 'status' &&
-          cl.toValue !== null &&
-          doneStatuses.map((s) => s.toLowerCase()).includes(cl.toValue.toLowerCase()),
-      );
-      if (firstInProgress && firstDone && firstDone.changedAt >= firstInProgress.changedAt) {
+      if (issueCycles && issueCycles.cycles.length > 0) {
+        // Representative cycle = latest cycle in the issue's history (matches
+        // CycleTimeService semantics). Week-detail does not gate by window
+        // because the issue is already filtered to the week.
+        const rep = issueCycles.cycles[issueCycles.cycles.length - 1];
         const rawDays = wtEntity.excludeWeekends
-          ? this.workingTimeService.workingDaysBetween(
-              firstInProgress.changedAt,
-              firstDone.changedAt,
-              wtConfig,
-            )
-          : (firstDone.changedAt.getTime() - firstInProgress.changedAt.getTime()) / 86_400_000;
+          ? this.workingTimeService.workingDaysBetween(rep.start, rep.end, wtConfig)
+          : (rep.end.getTime() - rep.start.getTime()) / 86_400_000;
         cycleTimeDays = rawDays >= 0 ? Math.round(rawDays * 100) / 100 : null;
+        isReopen = rep.isReopen;
       }
 
       // isIncident: must match type/label AND pass priority AND-gate
@@ -466,6 +488,7 @@ export class WeekDetailService {
         labels: issue.labels,
         boardEntryDate: boardEntryDate.toISOString(),
         cycleTimeDays,
+        isReopen,
         jiraUrl,
       });
     }
@@ -504,6 +527,7 @@ export class WeekDetailService {
         .filter((r) => r.completedInWeek)
         .reduce((s, r) => s + (r.points ?? 0), 0),
       medianCycleTimeDays,
+      reopenedIssueCount: results.filter((r) => r.isReopen).length,
     };
 
     // -----------------------------------------------------------------------
@@ -599,6 +623,7 @@ export class WeekDetailService {
         totalPoints: 0,
         completedPoints: 0,
         medianCycleTimeDays: null,
+        reopenedIssueCount: 0,
       },
       issues: [],
       boardConfig: {

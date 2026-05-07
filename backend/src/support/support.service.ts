@@ -15,6 +15,7 @@ import { quarterToDates } from '../metrics/period-utils.js';
 import { percentile, round2 } from '../metrics/statistics.js';
 import { classifyCycleTime } from '../metrics/cycle-time-bands.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
+import { extractCycles, resolveResetNames } from '../metrics/cycle.js';
 import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
 import type {
   SupportTicketDto,
@@ -76,6 +77,7 @@ export class SupportService {
 
     const totalIssues = results.reduce((s, r) => s + r.totalIssues, 0);
     const supportIssues = results.reduce((s, r) => s + r.supportIssues, 0);
+    const reopenedIssueCount = results.reduce((s, r) => s + r.reopenedIssueCount, 0);
     const supportPercentage =
       totalIssues > 0 ? round2((supportIssues / totalIssues) * 100) : 0;
 
@@ -96,7 +98,7 @@ export class SupportService {
       percentage: r.supportPercentage,
     }));
 
-    return { totalIssues, supportIssues, supportPercentage, p50Days, p95Days, byBoard };
+    return { totalIssues, supportIssues, supportPercentage, p50Days, p95Days, reopenedIssueCount, byBoard };
   }
 
   // ---------------------------------------------------------------------------
@@ -133,7 +135,7 @@ export class SupportService {
     );
 
     if (issues.length === 0) {
-      return { boardId, totalIssues: 0, supportIssues: 0, supportPercentage: 0, p50Days: 0, p95Days: 0, tickets: [] };
+      return { boardId, totalIssues: 0, supportIssues: 0, supportPercentage: 0, p50Days: 0, p95Days: 0, reopenedIssueCount: 0, tickets: [] };
     }
 
     const issueKeys = issues.map((i) => i.key);
@@ -308,6 +310,13 @@ export class SupportService {
     const wtConfig = this.workingTimeService.toConfig(wtEntity);
     const triagePrefix = triageBoardKey ? `${triageBoardKey}-` : null;
 
+    // Reset status names for the cycle helper (proposal 0054).
+    // Reuses the same boardEntryStatuses already loaded above for kanban-entry detection.
+    const resetNames = resolveResetNames(config?.boardEntryStatuses ?? null);
+    const inProgressSet = new Set(inProgressNames);
+    const doneSet = new Set(doneStatuses);
+    const resetSet = new Set(resetNames);
+
     // Step 6: Classify and compute cycle time
     // Quarter mode: totalIssues = issues that completed within the period.
     // Sprint mode: totalIssues = all sprint-member work items regardless of status.
@@ -329,30 +338,69 @@ export class SupportService {
       }
 
       const issueLogs = changelogsByIssue.get(issue.key) ?? [];
-      const inProgressTransition = issueLogs.find((cl) =>
+
+      // Proposal 0054: extract canonical cycles. Representative cycle is the
+      // latest one whose end falls inside the analysis window.
+      const issueCycles = extractCycles(
+        issueLogs,
+        inProgressSet,
+        doneSet,
+        resetSet,
+      );
+
+      let cycleStartFromCycles: Date | null = null;
+      let cycleEnd: Date | null = null;
+      let isReopen = false;
+
+      if (issueCycles) {
+        const inWindow = issueCycles.cycles.filter(
+          (c) => c.end >= startDate && c.end <= endDate,
+        );
+        const rep = inWindow.length > 0 ? inWindow[inWindow.length - 1] : null;
+        if (rep) {
+          cycleStartFromCycles = rep.start;
+          cycleEnd = rep.end;
+          isReopen = rep.isReopen;
+        }
+      }
+
+      // FixVersion fallback: only when no completed cycle in window.
+      // Preserves original behaviour — release date as cycleEnd, gated by being
+      // within the period and not earlier than the first In Progress.
+      const firstInProgress = issueLogs.find((cl) =>
         inProgressNames.includes(cl.toValue ?? ''),
       );
-      const doneTransition = issueLogs
-        .filter(
-          (cl) =>
-            doneStatuses.includes(cl.toValue ?? '') &&
-            cl.changedAt >= startDate &&
-            cl.changedAt <= endDate,
-        )
-        .at(-1);
-
-      let cycleEnd: Date | null = null;
-      if (doneTransition) {
-        cycleEnd = doneTransition.changedAt;
-      } else if (issue.fixVersion) {
+      if (cycleEnd === null && issue.fixVersion) {
         const releaseDate = versionDateMap.get(issue.fixVersion);
         if (
           releaseDate &&
           releaseDate >= startDate &&
           releaseDate <= endDate &&
-          (!inProgressTransition || releaseDate >= inProgressTransition.changedAt)
+          (!firstInProgress || releaseDate >= firstInProgress.changedAt)
         ) {
           cycleEnd = releaseDate;
+          if (firstInProgress) {
+            cycleStartFromCycles = firstInProgress.changedAt;
+          }
+        }
+      }
+
+      // Done-only fallback: if no completed cycle and no fixVersion match,
+      // but a Done transition exists in window, use the latest Done in window
+      // as cycleEnd. cycleStart stays null → cycleTimeDays stays null but the
+      // ticket is still counted toward the period (preserves pre-0054 support
+      // behaviour for "resolved without an explicit IP transition").
+      if (cycleEnd === null) {
+        const lastDoneInWindow = issueLogs
+          .filter(
+            (cl) =>
+              doneStatuses.includes(cl.toValue ?? '') &&
+              cl.changedAt >= startDate &&
+              cl.changedAt <= endDate,
+          )
+          .at(-1);
+        if (lastDoneInWindow) {
+          cycleEnd = lastDoneInWindow.changedAt;
         }
       }
 
@@ -434,8 +482,8 @@ export class SupportService {
       const completedAt: string | null = cycleEnd ? cycleEnd.toISOString() : null;
       let band = null;
 
-      if (cycleEnd && inProgressTransition) {
-        const cycleStart = inProgressTransition.changedAt;
+      if (cycleEnd && cycleStartFromCycles) {
+        const cycleStart = cycleStartFromCycles;
         const rawDays = wtEntity.excludeWeekends
           ? this.workingTimeService.workingDaysBetween(cycleStart, cycleEnd, wtConfig)
           : (cycleEnd.getTime() - cycleStart.getTime()) / 86_400_000;
@@ -456,6 +504,7 @@ export class SupportService {
         band,
         jiraUrl: this.jiraBaseUrl ? `${this.jiraBaseUrl}/browse/${issue.key}` : '',
         matchReason,
+        isReopen,
       });
     }
 
@@ -466,6 +515,7 @@ export class SupportService {
       .sort((a, b) => a - b);
 
     const supportIssues = tickets.length;
+    const reopenedIssueCount = tickets.filter((t) => t.isReopen).length;
     const supportPercentage =
       totalIssues > 0 ? round2((supportIssues / totalIssues) * 100) : 0;
     const p50Days = round2(percentile(cycleTimes, 50));
@@ -481,7 +531,7 @@ export class SupportService {
       return a.issueKey.localeCompare(b.issueKey);
     });
 
-    return { boardId, totalIssues, supportIssues, supportPercentage, p50Days, p95Days, tickets };
+    return { boardId, totalIssues, supportIssues, supportPercentage, p50Days, p95Days, reopenedIssueCount, tickets };
   }
 
   // ---------------------------------------------------------------------------
