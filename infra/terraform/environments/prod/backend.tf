@@ -17,13 +17,14 @@
 #     --server-side-encryption-configuration \
 #       '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
 
+
 terraform {
   backend "s3" {
     # TODO: Replace with your S3 bucket name (created manually during bootstrap)
-    bucket = "mypassglobal-ops-acct-terraform"
+    bucket = "fragile-terraform-state-TODO"
 
     # State file path within the bucket
-    key = "fragile/prod/terraform.tfstate"
+    key = "prod/terraform.tfstate"
 
     # Must match the region where the bucket was created
     region = "ap-southeast-2"
