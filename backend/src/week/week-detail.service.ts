@@ -196,10 +196,15 @@ export class WeekDetailService {
 
     // -----------------------------------------------------------------------
     // Step 4 — Load all changelogs for those issues
+    //
+    // B-2 (proposal 0055): restrict to status + Sprint fields. We never read
+    // any other field downstream, and unfiltered loads were pulling in
+    // assignee/summary/labels/etc. for huge issue sets.
     // -----------------------------------------------------------------------
     const allChangelogs = await this.changelogRepo
       .createQueryBuilder('cl')
       .where('cl.issueKey IN (:...keys)', { keys: allKeys })
+      .andWhere('cl.field IN (:...fields)', { fields: ['status', 'Sprint'] })
       .orderBy('cl.changedAt', 'ASC')
       .getMany();
 

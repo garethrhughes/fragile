@@ -122,13 +122,13 @@ export class TrendDataLoader {
         .createQueryBuilder('cl')
         .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
         .andWhere('cl.field = :field', { field: 'status' })
-        // Bound changelogs to the trend span to avoid loading transitions that
-        // pre-date the earliest period (lower bound) or post-date the latest
-        // period (upper bound).  Lead Time and MTTR in-memory paths need
-        // pre-period in-progress transitions only within the full span, not
-        // from unbounded history.
-        .andWhere('cl.changedAt >= :from', { from: rangeStart })
-        .andWhere('cl.changedAt <= :to', { to: rangeEnd })
+        // Load ALL status changelogs for the in-window issue set, unbounded
+        // by changedAt.  Bug B-1 (proposal 0055): a previous date filter
+        // (changedAt BETWEEN rangeStart AND rangeEnd) silently dropped the
+        // first In Progress transition for any long-running issue whose work
+        // started before rangeStart, causing Lead Time to fall back to
+        // createdAt → done and inflate arbitrarily.  Per-period in-memory
+        // calculations apply their own date logic against the full history.
         .orderBy('cl.changedAt', 'ASC')
         .getMany(),
       this.versionRepo.find({
