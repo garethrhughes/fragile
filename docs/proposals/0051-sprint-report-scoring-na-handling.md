@@ -1,7 +1,7 @@
 # 0051 — Sprint Report Scoring: N/A Handling and Weight Renormalisation
 
 **Date:** 2026-05-06
-**Status:** Draft
+**Status:** Accepted
 **Author:** Architect Agent
 **Related ADRs:** —
 **Related Proposals:** [0022](0022-sprint-report.md)
@@ -164,6 +164,26 @@ See Proposed Solution.
 - **Sprint Report API stability:** the `composite: number → number | null`
   change is breaking for the MCP server and any external consumer.
   Coordinate the release with the MCP package's next minor version.
+
+## Resolutions (2026-05-07)
+
+- **Q1 — Trend chart with null composite:** render as a gap in the line
+  (no point), with the period still on the X-axis. Achieved via
+  `connectNulls={false}` on the Recharts `Line`.
+- **Q2 — MCP breaking change:** ship the MCP package update in lockstep
+  with the backend change. The MCP server passes the response through as
+  raw JSON (no typed schema beyond a tool description string), so the
+  only adjustment is a minor-version bump documenting the nullable
+  `compositeScore`.
+- **Phase 3:** ship the full response surface — `excludedDimensions`,
+  `contributingDimensions`, `totalWeightApplied` — as proposed.
+- **ADR number:** AC mentions "ADR 0052" but slot 0052 is taken by the
+  disjoint-removed-set decision (proposal 0050). The N/A handling
+  decision will land as **ADR 0053**.
+- **Field name correction:** the response field is `compositeScore`
+  (verified across `backend/src/sprint-report/sprint-report.service.ts`,
+  `frontend/src/lib/api.ts`, and the page component) — not `composite`.
+  The implementation uses `compositeScore: number | null` end-to-end.
 
 ## Acceptance Criteria
 
