@@ -20,16 +20,15 @@ import type {
 import {
   getSprintReport,
   type SprintReportResponse,
-  type SprintReportBand,
   type SprintDimensionScore,
   type SprintRecommendation,
-  type ScoreDimension,
   type DoraBand,
   type UnplannedDoneIssue,
 } from '@/lib/api'
 import { BandBadge } from '@/components/ui/band-badge'
 import { DataTable, type Column } from '@/components/ui/data-table'
 import { MetricHelp, type MetricDefinition } from '@/components/ui/metric-help'
+import { CompositeScoreDisplay } from '@/components/sprint-report/CompositeScoreDisplay'
 
 // ---------------------------------------------------------------------------
 // Metric help definitions
@@ -107,35 +106,6 @@ function formatDateTime(iso: string): string {
     hour: '2-digit',
     minute: '2-digit',
   })
-}
-
-/** Tailwind color classes for sprint report band */
-function reportBandColor(band: SprintReportBand | null): string {
-  if (band === null) return 'text-muted'
-  switch (band) {
-    case 'strong':
-      return 'text-green-600'
-    case 'good':
-      return 'text-blue-600'
-    case 'fair':
-      return 'text-amber-600'
-    case 'needs-attention':
-      return 'text-red-600'
-  }
-}
-
-function reportBandLabel(band: SprintReportBand | null): string {
-  if (band === null) return 'Insufficient data'
-  switch (band) {
-    case 'strong':
-      return 'Strong'
-    case 'good':
-      return 'Good'
-    case 'fair':
-      return 'Fair'
-    case 'needs-attention':
-      return 'Needs Attention'
-  }
 }
 
 /** Tailwind color class for a 0-100 dimension score (or null = neutral). */
@@ -637,12 +607,6 @@ export default function SprintReportPage() {
     value: p.compositeScore,
   }))
 
-  // Excluded-dimension labels for the `~` modifier tooltip
-  const excludedLabels = data.excludedDimensions
-    .map((d) => DIMENSION_LABELS[d] ?? d)
-    .join(', ')
-  const showApproximate = data.totalWeightApplied < 1 && data.compositeScore !== null
-
   // ── Main view ─────────────────────────────────────────────────────────────
   return (
     <div className="space-y-8">
@@ -682,36 +646,12 @@ export default function SprintReportPage() {
       </div>
 
       {/* ── Composite score ────────────────────────────────────────────── */}
-      <div className="flex flex-col items-center rounded-xl border border-border bg-card py-8 shadow-sm">
-        <p className="text-sm font-medium text-muted">Composite Score</p>
-        {data.compositeScore === null ? (
-          <>
-            <p className="mt-2 text-3xl font-semibold text-muted">Insufficient data</p>
-            <p className="mt-3 text-sm text-muted">
-              No dimension produced a usable score for this sprint.
-            </p>
-          </>
-        ) : (
-          <>
-            <p
-              className={`mt-2 text-6xl font-bold tabular-nums leading-none ${reportBandColor(data.compositeBand)}`}
-              title={showApproximate ? `Approximate — excludes: ${excludedLabels}` : undefined}
-            >
-              {showApproximate ? '~' : ''}
-              {data.compositeScore.toFixed(1)}
-            </p>
-            <p className={`mt-3 text-lg font-semibold ${reportBandColor(data.compositeBand)}`}>
-              {reportBandLabel(data.compositeBand)}
-            </p>
-            {showApproximate && (
-              <p className="mt-2 text-xs text-muted" title={excludedLabels}>
-                Computed from {(data.totalWeightApplied * 100).toFixed(0)}% of weights
-                {' — '}excludes: {excludedLabels}
-              </p>
-            )}
-          </>
-        )}
-      </div>
+      <CompositeScoreDisplay
+        compositeScore={data.compositeScore}
+        compositeBand={data.compositeBand}
+        totalWeightApplied={data.totalWeightApplied}
+        excludedDimensions={data.excludedDimensions}
+      />
 
       {/* ── Dimension scores grid ──────────────────────────────────────── */}
       <section>
