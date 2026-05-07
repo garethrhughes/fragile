@@ -1,7 +1,7 @@
 # 0052 — DORA Band Boundary Canonicalisation: `<` vs `<=`
 
 **Date:** 2026-05-06
-**Status:** Draft
+**Status:** Accepted
 **Author:** Architect Agent
 **Related ADRs:** —
 **Related Proposals:** [0006](0006-dora-metrics-redesign.md), [0021](0021-dora-metrics-calculation-reference.md)
@@ -158,5 +158,5 @@ See Proposed Solution.
   `backend/src/sprint-report/recommendation.service.ts` is audited
   against the classifier. Rules that previously used `<=` where the
   classifier uses `<` (e.g. LT-004) are corrected.
-- ADR 0053 (to be created on acceptance) documents the operator
+- ADR 0054 (to be created on acceptance) documents the operator
   convention and the cross-suite fixture pattern.
