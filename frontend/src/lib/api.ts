@@ -794,21 +794,29 @@ export interface CycleTimeObservation {
   startedAt: string
   periodKey: string
   jiraUrl: string
+  /** True when this observation comes from a reopen cycle (proposal 0054). */
+  isReopen: boolean
 }
 
 /**
  * Issue 1: anomalyCount is present in this definition as required.
+ *
+ * Per proposal 0054, percentile fields and band are nullable: when no
+ * completed cycles are present in the window, the backend returns nulls
+ * rather than zeros (which would mis-band as 'excellent').
  */
 export interface CycleTimeResult {
   boardId: string
-  p50Days: number
-  p75Days: number
-  p85Days: number
-  p95Days: number
+  p50Days: number | null
+  p75Days: number | null
+  p85Days: number | null
+  p95Days: number | null
   count: number
   anomalyCount: number
+  /** Count of observations that came from reopen cycles (proposal 0054). */
+  reopenedIssueCount: number
   observations: CycleTimeObservation[]
-  band: CycleTimeBand
+  band: CycleTimeBand | null
 }
 
 export type CycleTimeResponse = CycleTimeResult[]

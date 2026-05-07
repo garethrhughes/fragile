@@ -3,9 +3,11 @@ import type { CycleTimeBand } from './api'
 export type { CycleTimeBand }
 
 export function classifyCycleTime(
-  medianDays: number,
+  medianDays: number | null,
   thresholds = [2, 5, 10],
-): CycleTimeBand {
+): CycleTimeBand | null {
+  // Proposal 0054 AC E: null input → null band (caller surfaces empty state).
+  if (medianDays === null) return null
   if (medianDays <= thresholds[0]) return 'excellent'
   if (medianDays <= thresholds[1]) return 'good'
   if (medianDays <= thresholds[2]) return 'fair'
