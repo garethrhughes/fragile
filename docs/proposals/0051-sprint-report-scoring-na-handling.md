@@ -3,7 +3,7 @@
 **Date:** 2026-05-06
 **Status:** Accepted
 **Author:** Architect Agent
-**Related ADRs:** —
+**Related ADRs:** [0053](../decisions/0053-sprint-report-na-propagation.md)
 **Related Proposals:** [0022](0022-sprint-report.md)
 
 ---
@@ -179,7 +179,7 @@ See Proposed Solution.
   `contributingDimensions`, `totalWeightApplied` — as proposed.
 - **ADR number:** AC mentions "ADR 0052" but slot 0052 is taken by the
   disjoint-removed-set decision (proposal 0050). The N/A handling
-  decision will land as **ADR 0053**.
+  decision landed as **[ADR 0053](../decisions/0053-sprint-report-na-propagation.md)**.
 - **Field name correction:** the response field is `compositeScore`
   (verified across `backend/src/sprint-report/sprint-report.service.ts`,
   `frontend/src/lib/api.ts`, and the page component) — not `composite`.
@@ -203,6 +203,6 @@ See Proposed Solution.
 - Frontend `SprintReportScoreCard` renders "Insufficient data" when
   `composite === null` and renders a `~` modifier when
   `totalWeightApplied < 1`.
-- ADR 0052 (to be created on acceptance) documents the renormalisation
-  formula and the explicit choice to fail open per-dimension rather
-  than fail closed.
+- [ADR 0053](../decisions/0053-sprint-report-na-propagation.md)
+  documents the renormalisation formula and the explicit choice to
+  fail open per-dimension rather than fail closed.
