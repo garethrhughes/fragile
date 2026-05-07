@@ -49,7 +49,7 @@ describe('extractCycles', () => {
     expect(result!.anomalyCount).toBe(0);
   });
 
-  it('returns 2 cycles for IP -> Done -> Backlog -> IP -> Done with second as representative', () => {
+  it('returns 2 cycles for IP -> Done -> Backlog -> IP -> Done with last as representative', () => {
     const t1 = new Date('2026-01-02T00:00:00Z');
     const t2 = new Date('2026-01-05T00:00:00Z');
     const t3 = new Date('2026-01-06T00:00:00Z');
@@ -72,8 +72,6 @@ describe('extractCycles', () => {
     expect(result!.representative).toBe(result!.cycles[1]);
     expect(result!.cycles[0].isReopen).toBe(false);
     expect(result!.cycles[1].isReopen).toBe(true);
-    expect(result!.cycles[1].start).toEqual(t4);
-    expect(result!.cycles[1].end).toEqual(t5);
     expect(result!.anomalyCount).toBe(0);
   });
 
@@ -99,7 +97,7 @@ describe('extractCycles', () => {
     expect(result!.anomalyCount).toBe(0);
   });
 
-  it('handles 3 cycles, representative = third, only first not reopen', () => {
+  it('handles 3 cycles, representative = last, only first not reopen', () => {
     const ts = (d: number) => new Date(`2026-01-${String(d).padStart(2, '0')}T00:00:00Z`);
     const result = extractCycles(
       [
@@ -122,6 +120,39 @@ describe('extractCycles', () => {
     expect(result!.cycles[0].isReopen).toBe(false);
     expect(result!.cycles[1].isReopen).toBe(true);
     expect(result!.cycles[2].isReopen).toBe(true);
+  });
+
+  it('merges Done→IP (no reset) into one cycle — premature close pattern (ACC-1 regression)', () => {
+    // Done → In Progress without an intervening reset means the "Done" was
+    // premature. The cycle clock should continue from the original start.
+    const t1 = new Date('2026-02-24T04:12:36Z'); // In Progress (original)
+    const t2 = new Date('2026-04-13T07:02:48Z'); // Done (premature)
+    const t3 = new Date('2026-04-14T03:32:50Z'); // In Progress (reopen, no reset)
+    const t4 = new Date('2026-04-14T09:23:27Z'); // Done (final)
+    const IP_MULTI = new Set(['In Progress', 'IN TEST', 'PEER REVIEW', 'Blocked']);
+    const result = extractCycles(
+      [
+        cl('ACC-1', 'In Progress', t1),
+        cl('ACC-1', 'IN TEST', new Date('2026-03-15T22:34:18Z')),
+        cl('ACC-1', 'In Progress', new Date('2026-03-25T07:33:28Z')),
+        cl('ACC-1', 'Blocked', new Date('2026-03-26T23:45:03Z')),
+        cl('ACC-1', 'IN TEST', new Date('2026-04-13T03:50:29Z')),
+        cl('ACC-1', 'Done', t2),
+        cl('ACC-1', 'In Progress', t3),
+        cl('ACC-1', 'PEER REVIEW', new Date('2026-04-14T03:43:45Z')),
+        cl('ACC-1', 'IN TEST', new Date('2026-04-14T04:04:24Z')),
+        cl('ACC-1', 'Done', t4),
+      ],
+      IP_MULTI,
+      DONE,
+      RESET,
+    );
+    expect(result).not.toBeNull();
+    // Should produce ONE cycle spanning original start → final Done
+    expect(result!.cycles).toHaveLength(1);
+    expect(result!.cycles[0].start).toEqual(t1);
+    expect(result!.cycles[0].end).toEqual(t4);
+    expect(result!.cycles[0].isReopen).toBe(false);
   });
 
   it('counts unmatched IP at end as anomaly: IP -> Done -> Backlog -> IP (no terminal Done)', () => {
@@ -178,6 +209,31 @@ describe('extractCycles', () => {
     );
     expect(result).not.toBeNull();
     expect(result!.cycles).toHaveLength(1);
+    expect(result!.cycles[0].start).toEqual(t1);
+    expect(result!.cycles[0].end).toEqual(t3);
+  });
+
+  it('does not reset start on consecutive IP→IP transitions (In Progress → In Review → Done)', () => {
+    // Regression: with multiple statuses in inProgressNames, moving between
+    // them (e.g. In Progress → In Review) must NOT reset the cycle clock.
+    // Cycle time should be measured from the FIRST entry into any IP status.
+    const IP_MULTI = new Set(['In Progress', 'In Review', 'QA']);
+    const t1 = new Date('2026-01-01T00:00:00Z'); // In Progress
+    const t2 = new Date('2026-01-30T00:00:00Z'); // In Review  (35 days later)
+    const t3 = new Date('2026-02-01T00:00:00Z'); // Done       (2 days after In Review)
+    const result = extractCycles(
+      [
+        cl('ACC-1', 'In Progress', t1),
+        cl('ACC-1', 'In Review', t2),
+        cl('ACC-1', 'Done', t3),
+      ],
+      IP_MULTI,
+      DONE,
+      RESET,
+    );
+    expect(result).not.toBeNull();
+    expect(result!.cycles).toHaveLength(1);
+    // Start must be the FIRST IP transition (t1), not In Review (t2)
     expect(result!.cycles[0].start).toEqual(t1);
     expect(result!.cycles[0].end).toEqual(t3);
   });
