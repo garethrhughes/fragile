@@ -7,7 +7,7 @@ import {
   OneToMany,
   Index,
 } from 'typeorm';
-import type { CustomReportGraph } from './custom-report-graph.entity.js';
+import type { CustomReportWidget } from './custom-report-widget.entity.js';
 import type { CustomReportFilter } from './custom-report-filter.entity.js';
 
 @Entity('custom_reports')
@@ -34,8 +34,8 @@ export class CustomReport {
   @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt!: Date;
 
-  @OneToMany('CustomReportGraph', 'customReport', { cascade: true, eager: false })
-  graphs!: CustomReportGraph[];
+  @OneToMany('CustomReportWidget', 'customReport', { cascade: true, eager: false })
+  widgets!: CustomReportWidget[];
 
   @OneToMany('CustomReportFilter', 'customReport', { cascade: true, eager: false })
   filters!: CustomReportFilter[];

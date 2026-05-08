@@ -5,7 +5,7 @@ import type { CustomReport } from '@/lib/api'
 import { applyFilters } from '@/lib/custom-report-filtering'
 import { useCustomReportFiltersStore } from '@/store/custom-report-filters-store'
 import { CustomReportFilters } from './CustomReportFilters'
-import { CustomReportGraph } from './CustomReportGraph'
+import { CustomReportWidget } from './CustomReportWidget'
 import { EmptyState } from '@/components/ui/empty-state'
 
 interface Props {
@@ -16,9 +16,9 @@ export function CustomReportView({ report }: Props) {
   const { valuesByReport, setFilterValue } = useCustomReportFiltersStore()
   const filterValues = valuesByReport[report.id] ?? {}
 
-  const sortedGraphs = useMemo(
-    () => [...report.graphs].sort((a, b) => a.position - b.position),
-    [report.graphs],
+  const sortedWidgets = useMemo(
+    () => [...report.widgets].sort((a, b) => a.position - b.position),
+    [report.widgets],
   )
 
   const sortedFilters = useMemo(
@@ -26,11 +26,11 @@ export function CustomReportView({ report }: Props) {
     [report.filters],
   )
 
-  // Derive available options for each filter key from dimensions across all graph data points
+  // Derive available options for each filter key from dimensions across all widget data points
   const filterOptions = useMemo(() => {
     const optionMap: Record<string, Set<string>> = {}
-    for (const graph of report.graphs) {
-      for (const point of graph.dataPoints) {
+    for (const widget of report.widgets) {
+      for (const point of widget.dataPoints) {
         if (!point.dimensions) continue
         for (const [key, val] of Object.entries(point.dimensions)) {
           if (typeof val !== 'string') continue
@@ -42,7 +42,7 @@ export function CustomReportView({ report }: Props) {
     return Object.fromEntries(
       Object.entries(optionMap).map(([k, s]) => [k, Array.from(s).sort()]),
     ) as Record<string, string[]>
-  }, [report.graphs])
+  }, [report.widgets])
 
   return (
     <div className="space-y-6">
@@ -54,21 +54,22 @@ export function CustomReportView({ report }: Props) {
         onChange={(key, value) => setFilterValue(report.id, key, value)}
       />
 
-      {/* Graphs */}
-      {sortedGraphs.length === 0 ? (
+      {/* Widgets */}
+      {sortedWidgets.length === 0 ? (
         <EmptyState
-          title="No graphs yet"
-          message="Add graphs to this report via the API or MCP."
+          title="No widgets yet"
+          message="Add widgets to this report via the API or MCP."
         />
       ) : (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {sortedGraphs.map((graph) => {
-            const filteredPoints = applyFilters(graph.dataPoints, sortedFilters, filterValues)
+          {sortedWidgets.map((widget) => {
+            const filteredPoints = applyFilters(widget.dataPoints, sortedFilters, filterValues)
             return (
-              <CustomReportGraph
-                key={graph.id}
-                graph={graph}
+              <CustomReportWidget
+                key={widget.id}
+                widget={widget}
                 filteredPoints={filteredPoints}
+                jiraBaseUrl={report.jiraBaseUrl}
               />
             )
           })}

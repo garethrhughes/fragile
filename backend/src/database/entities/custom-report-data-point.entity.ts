@@ -7,20 +7,20 @@ import {
   JoinColumn,
   Index,
 } from 'typeorm';
-import { CustomReportGraph } from './custom-report-graph.entity.js';
+import { CustomReportWidget } from './custom-report-widget.entity.js';
 
 @Entity('custom_report_data_points')
-@Index(['customReportGraphId'])
+@Index(['customReportWidgetId'])
 export class CustomReportDataPoint {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   id!: string;
 
   @Column({ type: 'uuid' })
-  customReportGraphId!: string;
+  customReportWidgetId!: string;
 
-  @ManyToOne(() => CustomReportGraph, (g) => g.dataPoints, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'customReportGraphId' })
-  graph!: CustomReportGraph;
+  @ManyToOne(() => CustomReportWidget, (w) => w.dataPoints, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'customReportWidgetId' })
+  widget!: CustomReportWidget;
 
   @Column({ type: 'varchar', length: 200 })
   x!: string;
