@@ -1165,3 +1165,149 @@ export function getSupportSummary(
     })}`,
   )
 }
+
+// ---- Custom Reports -------------------------------------------------------
+
+export type GraphKind = 'line' | 'bar' | 'area'
+export type FilterKind = 'select' | 'multiselect'
+
+export interface CustomReportDataPoint {
+  id: string
+  x: string
+  y: number
+  series: string | null
+  dimensions: Record<string, string> | null
+  createdAt: string
+}
+
+export interface CustomReportGraph {
+  id: string
+  customReportId: string
+  kind: GraphKind
+  title: string
+  seriesKey: string | null
+  xAxisLabel: string | null
+  yAxisLabel: string | null
+  position: number
+  createdAt: string
+  dataPoints: CustomReportDataPoint[]
+}
+
+export interface CustomReportFilter {
+  id: string
+  customReportId: string
+  key: string
+  label: string
+  kind: FilterKind
+  defaultValue: string | string[] | null
+  position: number
+}
+
+export interface CustomReport {
+  id: string
+  slug: string
+  title: string
+  description: string | null
+  layout: Record<string, unknown> | null
+  createdAt: string
+  updatedAt: string
+  graphs: CustomReportGraph[]
+  filters: CustomReportFilter[]
+}
+
+export interface CustomReportSummary {
+  id: string
+  slug: string
+  title: string
+  description: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateCustomReportBody {
+  slug: string
+  title: string
+  description?: string
+  layout?: Record<string, unknown>
+}
+
+export interface CreateGraphBody {
+  kind: GraphKind
+  title: string
+  seriesKey?: string
+  xAxisLabel?: string
+  yAxisLabel?: string
+  position?: number
+}
+
+export interface AppendDataPointsBody {
+  points: Array<{
+    x: string
+    y: number
+    series?: string
+    dimensions?: Record<string, string>
+  }>
+}
+
+export interface CreateFilterBody {
+  key: string
+  label: string
+  kind: FilterKind
+  defaultValue?: string | string[]
+  position?: number
+}
+
+export function listCustomReports(): Promise<CustomReportSummary[]> {
+  return apiFetch('/api/custom-reports')
+}
+
+export function getCustomReport(slug: string): Promise<CustomReport> {
+  return apiFetch(`/api/custom-reports/${encodeURIComponent(slug)}`)
+}
+
+export function createCustomReport(body: CreateCustomReportBody): Promise<CustomReport> {
+  return apiFetch('/api/custom-reports', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function updateCustomReport(
+  slug: string,
+  body: Partial<Pick<CreateCustomReportBody, 'title' | 'description' | 'layout'>>,
+): Promise<CustomReport> {
+  return apiFetch(`/api/custom-reports/${encodeURIComponent(slug)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export function deleteCustomReport(slug: string): Promise<void> {
+  return apiFetch(`/api/custom-reports/${encodeURIComponent(slug)}`, { method: 'DELETE' })
+}
+
+export function addCustomReportGraph(slug: string, body: CreateGraphBody): Promise<CustomReportGraph> {
+  return apiFetch(`/api/custom-reports/${encodeURIComponent(slug)}/graphs`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function appendCustomReportData(
+  slug: string,
+  graphId: string,
+  body: AppendDataPointsBody,
+): Promise<{ appended: number }> {
+  return apiFetch(
+    `/api/custom-reports/${encodeURIComponent(slug)}/graphs/${encodeURIComponent(graphId)}/data-points`,
+    { method: 'POST', body: JSON.stringify(body) },
+  )
+}
+
+export function replaceCustomReportData(
+  slug: string,
+  graphId: string,
+  body: AppendDataPointsBody,
+): Promise<{ replaced: number }> {
+  return apiFetch(
+    `/api/custom-reports/${encodeURIComponent(slug)}/graphs/${encodeURIComponent(graphId)}/data-points`,
+    { method: 'PUT', body: JSON.stringify(body) },
+  )
+}
