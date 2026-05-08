@@ -26,11 +26,30 @@ export function CustomReportView({ report }: Props) {
     [report.filters],
   )
 
+  // Derive available options for each filter key from dimensions across all graph data points
+  const filterOptions = useMemo(() => {
+    const optionMap: Record<string, Set<string>> = {}
+    for (const graph of report.graphs) {
+      for (const point of graph.dataPoints) {
+        if (!point.dimensions) continue
+        for (const [key, val] of Object.entries(point.dimensions)) {
+          if (typeof val !== 'string') continue
+          if (!optionMap[key]) optionMap[key] = new Set()
+          optionMap[key].add(val)
+        }
+      }
+    }
+    return Object.fromEntries(
+      Object.entries(optionMap).map(([k, s]) => [k, Array.from(s).sort()]),
+    ) as Record<string, string[]>
+  }, [report.graphs])
+
   return (
     <div className="space-y-6">
       {/* Filters */}
       <CustomReportFilters
         filters={sortedFilters}
+        options={filterOptions}
         values={filterValues}
         onChange={(key, value) => setFilterValue(report.id, key, value)}
       />
