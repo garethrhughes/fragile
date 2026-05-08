@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import type { CustomReport, CustomReportWidget as CustomReportWidgetType } from '@/lib/api'
 
 // ---------------------------------------------------------------------------
@@ -29,6 +29,7 @@ global.ResizeObserver = class {
 }
 
 import { CustomReportView } from './CustomReportView'
+import { CustomReportFilters } from './CustomReportFilters'
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -48,8 +49,11 @@ const makeReport = (overrides?: Partial<CustomReport>): CustomReport => ({
   ...overrides,
 })
 
-const makeWidget = (kind: 'line' | 'bar' | 'area' = 'line'): CustomReportWidgetType => ({
-  id: 'w1',
+const makeWidget = (
+  kind: 'line' | 'bar' | 'area' | 'table' = 'line',
+  id = 'w1',
+): CustomReportWidgetType => ({
+  id,
   customReportId: 'r1',
   kind,
   title: `${kind} chart`,
@@ -69,7 +73,7 @@ const makeWidget = (kind: 'line' | 'bar' | 'area' = 'line'): CustomReportWidgetT
 })
 
 // ---------------------------------------------------------------------------
-// CustomReportView
+// CustomReportView — basic rendering
 // ---------------------------------------------------------------------------
 
 describe('CustomReportView', () => {
@@ -103,5 +107,146 @@ describe('CustomReportView', () => {
     })
     render(<CustomReportView report={report} />)
     expect(screen.getByText('Team')).toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// CustomReportView — layout: grid column classes
+// ---------------------------------------------------------------------------
+
+describe('CustomReportView — layout grid', () => {
+  it('applies lg:grid-cols-2 by default when layout is null', () => {
+    const report = makeReport({ widgets: [makeWidget('line')] })
+    const { container } = render(<CustomReportView report={report} />)
+    const grid = container.querySelector('.lg\\:grid-cols-2')
+    expect(grid).toBeInTheDocument()
+  })
+
+  it('applies lg:grid-cols-3 when layout.defaultColumns is 3', () => {
+    const report = makeReport({
+      layout: { defaultColumns: 3 },
+      widgets: [makeWidget('line')],
+    })
+    const { container } = render(<CustomReportView report={report} />)
+    const grid = container.querySelector('.lg\\:grid-cols-3')
+    expect(grid).toBeInTheDocument()
+  })
+
+  it('wraps a non-table widget in lg:col-span-1 by default', () => {
+    const report = makeReport({
+      layout: { defaultColumns: 3 },
+      widgets: [makeWidget('line', 'w1')],
+    })
+    const { container } = render(<CustomReportView report={report} />)
+    const wrapper = container.querySelector('.lg\\:col-span-1')
+    expect(wrapper).toBeInTheDocument()
+  })
+
+  it('wraps a table widget in full-width col-span by default', () => {
+    const report = makeReport({
+      layout: { defaultColumns: 3 },
+      widgets: [{ ...makeWidget('table', 'w1'), columns: [] }],
+    })
+    const { container } = render(<CustomReportView report={report} />)
+    const wrapper = container.querySelector('.lg\\:col-span-3')
+    expect(wrapper).toBeInTheDocument()
+  })
+
+  it('respects explicit colSpan override for a table widget', () => {
+    const report = makeReport({
+      layout: { defaultColumns: 3, widgets: { w1: { colSpan: 2 } } },
+      widgets: [{ ...makeWidget('table', 'w1'), columns: [] }],
+    })
+    const { container } = render(<CustomReportView report={report} />)
+    // Should be col-span-2, not col-span-3
+    expect(container.querySelector('.lg\\:col-span-2')).toBeInTheDocument()
+    expect(container.querySelector('.lg\\:col-span-3')).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// CustomReportFilters — comma-separated input bug fix
+// ---------------------------------------------------------------------------
+
+describe('CustomReportFilters — comma-separated input', () => {
+  const multiFilter = {
+    id: 'f1',
+    customReportId: 'r1',
+    key: 'team',
+    label: 'Team',
+    kind: 'multiselect' as const,
+    defaultValue: null,
+    position: 0,
+  }
+
+  it('accepts comma characters while typing (does not strip them)', () => {
+    const onChange = vi.fn()
+    render(
+      <CustomReportFilters
+        filters={[multiFilter]}
+        options={{}}
+        values={{}}
+        onChange={onChange}
+      />,
+    )
+    const input = screen.getByRole('textbox', { name: /comma-separated/i })
+    fireEvent.change(input, { target: { value: 'foo,' } })
+    // The raw input value should contain the comma — onChange not called yet (no blur)
+    expect((input as HTMLInputElement).value).toBe('foo,')
+  })
+
+  it('splits on comma and trims values when input is blurred', () => {
+    const onChange = vi.fn()
+    render(
+      <CustomReportFilters
+        filters={[multiFilter]}
+        options={{}}
+        values={{}}
+        onChange={onChange}
+      />,
+    )
+    const input = screen.getByRole('textbox', { name: /comma-separated/i })
+    fireEvent.change(input, { target: { value: 'foo, bar, baz' } })
+    fireEvent.blur(input)
+    expect(onChange).toHaveBeenCalledWith('team', ['foo', 'bar', 'baz'])
+  })
+
+  it('calls onChange with undefined when input is cleared and blurred', () => {
+    const onChange = vi.fn()
+    render(
+      <CustomReportFilters
+        filters={[multiFilter]}
+        options={{}}
+        values={{ team: ['foo'] }}
+        onChange={onChange}
+      />,
+    )
+    const input = screen.getByRole('textbox', { name: /comma-separated/i })
+    fireEvent.change(input, { target: { value: '' } })
+    expect(onChange).toHaveBeenCalledWith('team', undefined)
+  })
+
+  it('syncs textbox value when selected values are cleared externally', () => {
+    const onChange = vi.fn()
+    const { rerender } = render(
+      <CustomReportFilters
+        filters={[multiFilter]}
+        options={{}}
+        values={{ team: ['foo', 'bar'] }}
+        onChange={onChange}
+      />,
+    )
+    const input = screen.getByRole('textbox', { name: /comma-separated/i }) as HTMLInputElement
+    expect(input.value).toBe('foo, bar')
+
+    rerender(
+      <CustomReportFilters
+        filters={[multiFilter]}
+        options={{}}
+        values={{}}
+        onChange={onChange}
+      />,
+    )
+    expect(input.value).toBe('')
   })
 })

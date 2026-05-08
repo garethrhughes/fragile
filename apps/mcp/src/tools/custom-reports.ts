@@ -2,6 +2,15 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { apiGet, apiPost, apiPatch, apiPut, apiDelete } from '../client.js';
 
+const widgetLayoutOverrideSchema = z.object({
+  colSpan: z.number().int().min(1).max(6).optional().describe('Column span override for this widget (1–6)'),
+});
+
+const reportLayoutSchema = z.object({
+  defaultColumns: z.number().int().min(1).max(6).optional().describe('Default number of grid columns (1–6); defaults to 3'),
+  widgets: z.record(widgetLayoutOverrideSchema).optional().describe('Per-widget layout overrides keyed by widget UUID'),
+}).describe('Optional grid layout configuration for the report');
+
 const dataPointSchema = z.object({
   x: z.string().describe('X-axis value (ISO date string or bucket label)'),
   y: z.number(),
@@ -50,7 +59,7 @@ export function registerCustomReportsTools(server: McpServer): void {
       slug: z.string().regex(/^[a-z0-9-]+$/).max(80),
       title: z.string().max(200),
       description: z.string().max(4000).optional(),
-      layout: z.record(z.unknown()).optional(),
+      layout: reportLayoutSchema.optional(),
     },
     async (body) => {
       const result = await apiPost('/api/custom-reports', body);
@@ -65,7 +74,7 @@ export function registerCustomReportsTools(server: McpServer): void {
       slug: z.string(),
       title: z.string().max(200).optional(),
       description: z.string().max(4000).optional(),
-      layout: z.record(z.unknown()).optional(),
+      layout: reportLayoutSchema.optional(),
     },
     async ({ slug, ...body }) => {
       const result = await apiPatch(`/api/custom-reports/${encodeURIComponent(slug)}`, body);

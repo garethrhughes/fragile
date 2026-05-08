@@ -1,5 +1,7 @@
-import { IsString, IsOptional, MaxLength, IsObject } from 'class-validator';
+import { IsString, IsOptional, MaxLength } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { IsValidLayout } from './is-valid-layout.decorator.js';
+import type { ReportLayout } from '../layout-schema.js';
 
 export class UpdateCustomReportDto {
   @ApiPropertyOptional()
@@ -14,8 +16,11 @@ export class UpdateCustomReportDto {
   @MaxLength(4000)
   description?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description: 'Grid layout configuration for widgets',
+    example: { defaultColumns: 3, widgets: { 'uuid-abc': { colSpan: 3 } } },
+  })
   @IsOptional()
-  @IsObject()
-  layout?: Record<string, unknown>;
+  @IsValidLayout()
+  layout?: ReportLayout;
 }

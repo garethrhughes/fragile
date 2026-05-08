@@ -1221,7 +1221,7 @@ export interface CustomReport {
   slug: string
   title: string
   description: string | null
-  layout: Record<string, unknown> | null
+  layout: import('./report-layout').ReportLayout | null
   createdAt: string
   updatedAt: string
   widgets: CustomReportWidget[]
@@ -1242,7 +1242,7 @@ export interface CreateCustomReportBody {
   slug: string
   title: string
   description?: string
-  layout?: Record<string, unknown>
+  layout?: import('./report-layout').ReportLayout
 }
 
 export interface CreateWidgetBody {

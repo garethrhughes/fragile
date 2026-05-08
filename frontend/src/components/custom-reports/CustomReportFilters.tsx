@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import type { CustomReportFilter } from '@/lib/api'
 import type { ReportFilterValues } from '@/store/custom-report-filters-store'
 
@@ -8,6 +9,67 @@ interface Props {
   options: Record<string, string[]>
   values: ReportFilterValues
   onChange: (key: string, value: string | string[] | undefined) => void
+}
+
+/**
+ * Free-text comma-separated input for multiselect filters with no known options.
+ *
+ * Keeps raw text in local state so commas can be typed freely.
+ * Parses into string[] only on blur (and on change when the field is cleared).
+ */
+function CommaSeparatedInput({
+  filterKey,
+  label,
+  selected,
+  onChange,
+}: {
+  filterKey: string
+  label: string
+  selected: string[]
+  onChange: (key: string, value: string[] | undefined) => void
+}) {
+  const [rawValue, setRawValue] = useState(selected.join(', '))
+  const [isEditing, setIsEditing] = useState(false)
+
+  useEffect(() => {
+    if (!isEditing) {
+      setRawValue(selected.join(', '))
+    }
+  }, [selected, isEditing])
+
+  const commit = (raw: string) => {
+    const parts = raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    onChange(filterKey, parts.length > 0 ? parts : undefined)
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs font-medium text-muted">{label}</label>
+      <input
+        type="text"
+        placeholder="val1, val2, …"
+        aria-label={`${label} (comma-separated)`}
+        value={rawValue}
+        onFocus={() => setIsEditing(true)}
+        onChange={(e) => {
+          setRawValue(e.target.value)
+          // If the field is fully cleared, propagate immediately
+          if (e.target.value === '') {
+            onChange(filterKey, undefined)
+          }
+        }}
+        onBlur={(e) => {
+          setIsEditing(false)
+          commit(e.target.value)
+        }}
+        className="rounded-md border border-border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+      />
+      <span className="text-[10px] text-muted">comma-separated</span>
+    </div>
+  )
 }
 
 export function CustomReportFilters({ filters, options, values, onChange }: Props) {
@@ -27,26 +89,14 @@ export function CustomReportFilters({ filters, options, values, onChange }: Prop
               : []
 
           if (opts.length === 0) {
-            // No options derived yet — fall back to comma-separated text input
             return (
-              <div key={filter.id} className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-muted">{filter.label}</label>
-                <input
-                  type="text"
-                  placeholder="val1, val2, …"
-                  aria-label={`${filter.label} (comma-separated)`}
-                  value={selected.join(', ')}
-                  onChange={(e) => {
-                    const parts = e.target.value
-                      .split(',')
-                      .map((s) => s.trim())
-                      .filter(Boolean)
-                    onChange(filter.key, parts.length > 0 ? parts : undefined)
-                  }}
-                  className="rounded-md border border-border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                />
-                <span className="text-[10px] text-muted">comma-separated</span>
-              </div>
+              <CommaSeparatedInput
+                key={filter.id}
+                filterKey={filter.key}
+                label={filter.label}
+                selected={selected}
+                onChange={onChange}
+              />
             )
           }
 

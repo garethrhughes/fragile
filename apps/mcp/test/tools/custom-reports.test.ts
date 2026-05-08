@@ -1,5 +1,5 @@
 /**
- * Tests for custom-reports MCP tools (AC9).
+ * Tests for custom-reports MCP tools.
  *
  * Verifies that all 13 custom-report tools are registered on the MCP server
  * and that each tool delegates correctly to the corresponding HTTP endpoint.
@@ -28,7 +28,7 @@ import { registerCustomReportsTools } from '../../src/tools/custom-reports.js';
 import { callTool } from '../test-helpers.js';
 
 // A valid UUID to satisfy z.string().uuid() schema constraints in the tools
-const GRAPH_UUID = '00000000-0000-4000-a000-000000000001';
+const WIDGET_UUID = '00000000-0000-4000-a000-000000000001';
 const FILTER_UUID = '00000000-0000-4000-a000-000000000002';
 
 function makeServer(): McpServer {
@@ -43,9 +43,9 @@ const EXPECTED_TOOLS = [
   'create_custom_report',
   'update_custom_report',
   'delete_custom_report',
-  'add_custom_report_graph',
-  'update_custom_report_graph',
-  'delete_custom_report_graph',
+  'add_custom_report_widget',
+  'update_custom_report_widget',
+  'delete_custom_report_widget',
   'append_custom_report_data',
   'replace_custom_report_data',
   'clear_custom_report_data',
@@ -58,9 +58,9 @@ describe('custom-reports MCP tools', () => {
     vi.clearAllMocks();
   });
 
-  it('registers exactly 13 tools (AC9)', () => {
-    const server = makeServer();
+  it('registers exactly 13 tools', () => {
     expect(EXPECTED_TOOLS).toHaveLength(13);
+    const server = makeServer();
     expect(server).toBeDefined();
   });
 
@@ -74,7 +74,7 @@ describe('custom-reports MCP tools', () => {
   });
 
   it('get_custom_report — calls GET /api/custom-reports/:slug', async () => {
-    const report = { id: '1', slug: 'demo', title: 'Demo', graphs: [], filters: [] };
+    const report = { id: '1', slug: 'demo', title: 'Demo', widgets: [], filters: [] };
     mockApiGet.mockResolvedValueOnce(mockSuccess(report));
     const server = makeServer();
     const result = await callTool(server, 'get_custom_report', { slug: 'demo' });
@@ -97,6 +97,26 @@ describe('custom-reports MCP tools', () => {
     );
   });
 
+  it('create_custom_report — accepts layout with defaultColumns and widget overrides', async () => {
+    const created = { id: '2', slug: 'layout-report', title: 'Layout Report' };
+    mockApiPost.mockResolvedValueOnce(mockSuccess(created, 201));
+    const server = makeServer();
+    const layout = {
+      defaultColumns: 4,
+      widgets: { [WIDGET_UUID]: { colSpan: 2 } },
+    };
+    const result = await callTool(server, 'create_custom_report', {
+      slug: 'layout-report',
+      title: 'Layout Report',
+      layout,
+    });
+    expect(JSON.parse(result.content[0]?.text ?? '')).toEqual(created);
+    expect(mockApiPost).toHaveBeenCalledWith(
+      '/api/custom-reports',
+      expect.objectContaining({ layout }),
+    );
+  });
+
   it('update_custom_report — calls PATCH /api/custom-reports/:slug', async () => {
     const updated = { id: '1', slug: 'demo', title: 'New Title' };
     mockApiPatch.mockResolvedValueOnce(mockSuccess(updated));
@@ -112,6 +132,22 @@ describe('custom-reports MCP tools', () => {
     );
   });
 
+  it('update_custom_report — accepts layout patch', async () => {
+    const updated = { id: '1', slug: 'demo', title: 'Demo' };
+    mockApiPatch.mockResolvedValueOnce(mockSuccess(updated));
+    const server = makeServer();
+    const layout = { defaultColumns: 2 };
+    const result = await callTool(server, 'update_custom_report', {
+      slug: 'demo',
+      layout,
+    });
+    expect(JSON.parse(result.content[0]?.text ?? '')).toEqual(updated);
+    expect(mockApiPatch).toHaveBeenCalledWith(
+      '/api/custom-reports/demo',
+      expect.objectContaining({ layout }),
+    );
+  });
+
   it('delete_custom_report — calls DELETE /api/custom-reports/:slug', async () => {
     mockApiDelete.mockResolvedValueOnce(mockSuccess(undefined, 204));
     const server = makeServer();
@@ -120,48 +156,48 @@ describe('custom-reports MCP tools', () => {
     expect(mockApiDelete).toHaveBeenCalledWith('/api/custom-reports/demo');
   });
 
-  it('add_custom_report_graph — calls POST /api/custom-reports/:slug/graphs', async () => {
-    const graph = { id: GRAPH_UUID, kind: 'line', title: 'Chart' };
-    mockApiPost.mockResolvedValueOnce(mockSuccess(graph, 201));
+  it('add_custom_report_widget — calls POST /api/custom-reports/:slug/widgets', async () => {
+    const widget = { id: WIDGET_UUID, kind: 'line', title: 'Chart' };
+    mockApiPost.mockResolvedValueOnce(mockSuccess(widget, 201));
     const server = makeServer();
-    const result = await callTool(server, 'add_custom_report_graph', {
+    const result = await callTool(server, 'add_custom_report_widget', {
       slug: 'demo',
       kind: 'line',
       title: 'Chart',
     });
-    expect(JSON.parse(result.content[0]?.text ?? '')).toEqual(graph);
+    expect(JSON.parse(result.content[0]?.text ?? '')).toEqual(widget);
     expect(mockApiPost).toHaveBeenCalledWith(
-      '/api/custom-reports/demo/graphs',
+      '/api/custom-reports/demo/widgets',
       expect.objectContaining({ kind: 'line', title: 'Chart' }),
     );
   });
 
-  it('update_custom_report_graph — calls PATCH /api/custom-reports/:slug/graphs/:graphId', async () => {
-    const graph = { id: GRAPH_UUID, kind: 'bar', title: 'Updated Chart' };
-    mockApiPatch.mockResolvedValueOnce(mockSuccess(graph));
+  it('update_custom_report_widget — calls PATCH /api/custom-reports/:slug/widgets/:widgetId', async () => {
+    const widget = { id: WIDGET_UUID, kind: 'bar', title: 'Updated Chart' };
+    mockApiPatch.mockResolvedValueOnce(mockSuccess(widget));
     const server = makeServer();
-    const result = await callTool(server, 'update_custom_report_graph', {
+    const result = await callTool(server, 'update_custom_report_widget', {
       slug: 'demo',
-      graphId: GRAPH_UUID,
+      widgetId: WIDGET_UUID,
       title: 'Updated Chart',
     });
-    expect(JSON.parse(result.content[0]?.text ?? '')).toEqual(graph);
+    expect(JSON.parse(result.content[0]?.text ?? '')).toEqual(widget);
     expect(mockApiPatch).toHaveBeenCalledWith(
-      `/api/custom-reports/demo/graphs/${GRAPH_UUID}`,
+      `/api/custom-reports/demo/widgets/${WIDGET_UUID}`,
       expect.objectContaining({ title: 'Updated Chart' }),
     );
   });
 
-  it('delete_custom_report_graph — calls DELETE /api/custom-reports/:slug/graphs/:graphId', async () => {
+  it('delete_custom_report_widget — calls DELETE /api/custom-reports/:slug/widgets/:widgetId', async () => {
     mockApiDelete.mockResolvedValueOnce(mockSuccess(undefined, 204));
     const server = makeServer();
-    const result = await callTool(server, 'delete_custom_report_graph', {
+    const result = await callTool(server, 'delete_custom_report_widget', {
       slug: 'demo',
-      graphId: GRAPH_UUID,
+      widgetId: WIDGET_UUID,
     });
     expect(JSON.parse(result.content[0]?.text ?? '')).toEqual({ deleted: true });
     expect(mockApiDelete).toHaveBeenCalledWith(
-      `/api/custom-reports/demo/graphs/${GRAPH_UUID}`,
+      `/api/custom-reports/demo/widgets/${WIDGET_UUID}`,
     );
   });
 
@@ -171,12 +207,12 @@ describe('custom-reports MCP tools', () => {
     const server = makeServer();
     const result = await callTool(server, 'append_custom_report_data', {
       slug: 'demo',
-      graphId: GRAPH_UUID,
+      widgetId: WIDGET_UUID,
       points: [{ x: '2024-01', y: 10 }],
     });
     expect(JSON.parse(result.content[0]?.text ?? '')).toEqual(res);
     expect(mockApiPost).toHaveBeenCalledWith(
-      `/api/custom-reports/demo/graphs/${GRAPH_UUID}/data-points`,
+      `/api/custom-reports/demo/widgets/${WIDGET_UUID}/data-points`,
       expect.objectContaining({ points: [{ x: '2024-01', y: 10 }] }),
     );
   });
@@ -187,12 +223,12 @@ describe('custom-reports MCP tools', () => {
     const server = makeServer();
     const result = await callTool(server, 'replace_custom_report_data', {
       slug: 'demo',
-      graphId: GRAPH_UUID,
+      widgetId: WIDGET_UUID,
       points: [{ x: '2024-01', y: 99 }],
     });
     expect(JSON.parse(result.content[0]?.text ?? '')).toEqual(res);
     expect(mockApiPut).toHaveBeenCalledWith(
-      `/api/custom-reports/demo/graphs/${GRAPH_UUID}/data-points`,
+      `/api/custom-reports/demo/widgets/${WIDGET_UUID}/data-points`,
       expect.objectContaining({ points: [{ x: '2024-01', y: 99 }] }),
     );
   });
@@ -203,12 +239,12 @@ describe('custom-reports MCP tools', () => {
     const server = makeServer();
     const result = await callTool(server, 'replace_custom_report_data', {
       slug: 'demo',
-      graphId: GRAPH_UUID,
+      widgetId: WIDGET_UUID,
       points: [],
     });
     expect(JSON.parse(result.content[0]?.text ?? '')).toEqual(res);
     expect(mockApiPut).toHaveBeenCalledWith(
-      `/api/custom-reports/demo/graphs/${GRAPH_UUID}/data-points`,
+      `/api/custom-reports/demo/widgets/${WIDGET_UUID}/data-points`,
       expect.objectContaining({ points: [] }),
     );
   });
@@ -218,11 +254,11 @@ describe('custom-reports MCP tools', () => {
     const server = makeServer();
     const result = await callTool(server, 'clear_custom_report_data', {
       slug: 'demo',
-      graphId: GRAPH_UUID,
+      widgetId: WIDGET_UUID,
     });
     expect(JSON.parse(result.content[0]?.text ?? '')).toEqual({ cleared: true });
     expect(mockApiDelete).toHaveBeenCalledWith(
-      `/api/custom-reports/demo/graphs/${GRAPH_UUID}/data-points`,
+      `/api/custom-reports/demo/widgets/${WIDGET_UUID}/data-points`,
     );
   });
 

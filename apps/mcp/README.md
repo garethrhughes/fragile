@@ -1,9 +1,9 @@
 # @fragile.app/mcp
 
 MCP (Model Context Protocol) server for the [Fragile](https://github.com/your-org/fragile)
-engineering metrics dashboard. Exposes 16 read-only tools, 2 resources, and 4 prompt
-templates over stdio — compatible with Claude Desktop, Cursor, GitHub Copilot agent mode,
-and any other MCP-compatible AI client.
+engineering metrics dashboard. Exposes 29 tools (16 read-only metrics tools + 13 custom
+report management tools), 2 resources, and 4 prompt templates over stdio — compatible with
+Claude Desktop, Cursor, GitHub Copilot agent mode, and any other MCP-compatible AI client.
 
 ## What it does
 
@@ -85,6 +85,40 @@ Add the following to `.cursor/mcp.json` in your home directory or project root:
 | `get_hygiene_gaps` | Issues missing epic links or story points |
 | `get_unplanned_done` | Issues completed without being planned |
 
+### Custom report management tools
+
+| Tool | Description |
+|---|---|
+| `list_custom_reports` | List all custom reports (id, slug, title, timestamps) |
+| `get_custom_report` | Get a report by slug, including widgets, data points, and filters |
+| `create_custom_report` | Create a new custom report with optional grid layout configuration |
+| `update_custom_report` | Update title, description, or layout of an existing report |
+| `delete_custom_report` | Delete a report and all its widgets, data points, and filters |
+| `add_custom_report_widget` | Add a widget (line, bar, area, table, stat) to a report |
+| `update_custom_report_widget` | Update an existing widget |
+| `delete_custom_report_widget` | Delete a widget and its data points |
+| `append_custom_report_data` | Append data points to a widget (additive, max 1000/call) |
+| `replace_custom_report_data` | Replace all data points for a widget |
+| `clear_custom_report_data` | Delete all data points without removing the widget |
+| `add_custom_report_filter` | Add a filter definition (select or multiselect) to a report |
+| `delete_custom_report_filter` | Remove a filter definition from a report |
+
+### Layout configuration
+
+The `create_custom_report` and `update_custom_report` tools accept an optional `layout` object:
+
+```json
+{
+  "defaultColumns": 3,
+  "widgets": {
+    "<widget-uuid>": { "colSpan": 2 }
+  }
+}
+```
+
+- `defaultColumns` (1–6): number of grid columns. Defaults to 3.
+- `widgets`: per-widget overrides keyed by widget UUID. `colSpan` (1–6) controls how many columns the widget occupies. Table widgets default to full-width (`colSpan = defaultColumns`) unless overridden.
+
 ## Available resources
 
 | Resource | Description |
@@ -151,7 +185,8 @@ Fragile API  (NestJS REST API, port 3001)
 PostgreSQL 16  (data pre-cached by scheduled Jira sync)
 ```
 
-The MCP server is **read-only** — it makes only `GET` requests to the Fragile API.
+The MCP server is **read-only for metrics** — metrics tools make only `GET` requests.
+Custom report management tools use `GET`, `POST`, `PATCH`, `PUT`, and `DELETE`.
 No Jira API calls are made from the MCP server.
 
 ## License
