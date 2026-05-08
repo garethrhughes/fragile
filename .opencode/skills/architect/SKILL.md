@@ -85,34 +85,22 @@ a proposal in `docs/proposals/`.
 
 ## Design Principles to Enforce
 
-### Application
-- Calculation and business logic lives in services — never in controllers or page components
-- All calls to external APIs go through a single typed client — never call external APIs
-  directly from domain services
-- Configuration (rules, thresholds, feature toggles) is stored in the database or config
-  files and loaded at runtime — never hardcoded
-- Database schema migrations, where used, must be reversible — both `up()` and `down()` must be implemented
-- Shared types go in a shared package or are clearly documented as intentional duplication
+The canonical project rules live in [`RULES.md`](../RULES.md) — apply them to every
+proposal. As architect, you are the primary enforcer of:
 
-### Infrastructure
-- **Infra is declarative.** No imperative scripts mutating shared environments
-- **Remote state is mandatory** with locking (e.g. S3+DynamoDB, GCS, Terraform Cloud).
-  No `backend "local"` for any shared environment
-- **Environments are reproducible from code.** `dev`, `staging`, `prod` differ only by
-  variables, not by resource definitions
-- **Least privilege by default.** Every IAM policy starts at deny; resource-level scoping
-  required; no `*` action on `*` resource
-- **Secrets never in code, never in state outputs.** Use a secrets manager referenced by
-  ID/ARN
-- **Tagging contract**: every cloud resource carries `owner`, `env`, `service`,
-  `cost-center`, `managed-by`
-- **Blast radius isolation**: separate state files per environment; separate accounts /
-  projects / subscriptions for production where feasible
+- **Application** — `RULES.md#backend-rules-nestjs` (services hold logic, not controllers;
+  one typed client per external service; configuration loaded at runtime, not hardcoded;
+  reversible migrations).
+- **Infrastructure** — `RULES.md#infrastructure-as-code` (declarative, remote state with
+  locking, environments reproducible from variables, least privilege IAM, no secrets in
+  code or state outputs, standard tagging contract, blast-radius isolation per
+  environment).
+- **Observability** — `RULES.md#logging--observability` (structured logs with correlation
+  ID, every external boundary observable, error context sufficient to diagnose without
+  replaying the request).
 
-### Observability
-- Every service emits structured logs with a correlation/request ID
-- Every external boundary (HTTP in, HTTP out, DB, queue) is observable
-- Errors surface enough context to diagnose without re-running the failing request
+If a proposal must depart from `RULES.md`, the proposal **must** state which rule is being
+overridden and why; the override only takes effect when the resulting ADR is `Accepted`.
 
 ## When to Write a Proposal
 
@@ -134,6 +122,16 @@ Write a proposal whenever any of the following apply:
 - A new secret, KMS key, or change to encryption configuration
 - A change to backup, retention, or disaster recovery posture
 - A change to the deployment pipeline or release process
+
+### Cross-cutting
+- A change to the **observability contract** (log shape, correlation ID strategy, new
+  SLI, new alert)
+- A change to the **failure model** (what is retried, what is fatal, circuit-breaker
+  policy, timeout defaults)
+- A change to the **release strategy** (deployment cadence, rollback approach, feature
+  flag policy)
+- A change to **data classification** for an existing entity, or introduction of a new
+  data class
 
 ## Proposal File Naming Convention
 
@@ -326,10 +324,15 @@ Maintain a running index of all proposals:
 
 ## Relationship Between Proposals and ADRs
 
-- A **proposal** is written *before* implementation — it is the design document.
-- An **ADR** is written *after* the decision is confirmed — it is the record of what was decided.
-- When a proposal is accepted, create the corresponding ADR(s) in `docs/decisions/` and
-  update the proposal status to `Accepted`, linking the ADR numbers.
+- A **proposal** is written *before* implementation — it is the design document. The
+  architect skill owns proposals.
+- An **ADR** is written *after* the decision is confirmed — it is the record of what was
+  decided. ADRs are owned exclusively by the `decision-log` skill.
+- When a proposal is accepted, **hand off to the `decision-log` skill** to create the
+  corresponding ADR(s) in `docs/decisions/`. Once the ADR exists, update the proposal
+  status to `Accepted` and link the ADR number(s) in the proposal's Decision section.
+- Never create ADR files directly from this skill — always invoke `decision-log` so that
+  numbering, indexing, and the standard ADR template are applied consistently.
 
 ## MCP Tools
 

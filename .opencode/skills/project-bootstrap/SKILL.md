@@ -22,6 +22,16 @@ into their project.
 
 ---
 
+## Authoritative Rules
+
+The defaults proposed throughout this interview reflect the project-wide engineering
+conventions in [`RULES.md`](../RULES.md) at the root of the skills repo. When a user
+accepts the defaults, they are accepting `RULES.md` verbatim. Where a user overrides a
+default in a way that conflicts with `RULES.md`, capture the override in their generated
+`CLAUDE.md` and call it out explicitly so future skill runs know the project deviates.
+
+---
+
 ## Phase 0 — Orientation
 
 Before asking any questions, tell the user:
@@ -77,7 +87,7 @@ Ask about each concern in turn. Group them into two rounds.
 - State management? [**Zustand** — one store file per concern in `store/`]
 - Frontend testing framework? [**Vitest + React Testing Library**]
 - How does the frontend call the backend? [**Typed `fetch` wrappers in `lib/api.ts`** — no direct fetch calls outside this file]
-- Data fetching pattern? [**Server Components by default; client-side data fetching via React Query when interactivity requires it; never `useEffect` for data fetching**]
+- Data fetching pattern? [defaults from `RULES.md` — Server Components first, React Query for client-side fetching, never `useEffect`]
 
 After both rounds, print a confirmation table:
 
@@ -105,8 +115,8 @@ Ask as a single message:
 - Where do IaC modules live? [**`infra/modules/` for reusable modules; `infra/envs/{dev,staging,prod}/` for environment root configs**]
 - Secrets manager? [**AWS Secrets Manager** — referenced by ARN; no secret values in `.tf`/`.tfvars`/state]
 - CI/CD pipeline? [**GitHub Actions** — `lint + test + plan` on PR; `apply` on merge to `main` for dev, manual approval for staging/prod]
-- Standard resource tags? [**`owner`, `env`, `service`, `cost-center`, `managed-by=opentofu`**]
-- How is config/env managed? [**`.env` files** (never committed); `.env.example` provided; backend reads via NestJS `ConfigService` only; production env vars sourced from Secrets Manager via task definition]
+- Standard resource tags? [defaults from `RULES.md` — accept unless you need to add project-specific tags]
+- How is config/env managed? [**`.env` files** (never committed); `.env.example` provided; backend reads via `ConfigService` only per `RULES.md`; production env vars sourced from Secrets Manager via task definition]
 - Is there a task runner? [**Makefile** — targets: `up`, `down`, `migrate`, `dev-api`, `dev-web`, `test-api`, `test-web`, `plan`, `apply`]
 
 After this round, confirm:
@@ -140,56 +150,57 @@ produce a skeleton with `[fill in]` placeholders for the module names.
 
 ## Phase 5 — Architecture Rules & Conventions
 
-Defaults (shown in brackets) are based on the reference stack.
-Ask as a single message — the user can answer briefly for each:
+The default architecture rules are defined in [`RULES.md`](../RULES.md) at the root of
+the skills repo. By accepting the defaults below the user is accepting `RULES.md`
+verbatim. Ask:
 
-- Are controllers thin (logic in services)? [**Yes — controllers are thin; all business logic lives in services**]
-- Is there a single typed client for all calls to external APIs/services? What is it called and where does it live? [**Yes — a single `[ServiceName]ClientService` in its own module; domain services never call external APIs directly; all external calls have a 5s timeout and exponential-backoff retry on 429**]
-- How is environment config accessed? [**NestJS `ConfigService` only — `process.env` must never be accessed outside of config module setup**]
-- Are there any hard rules around queries? [**No N+1 queries — related data fetched in bulk. All `find()` calls on large tables require a `where` clause or explicit pagination**]
-- Any frontend-specific rules? [**No logic in page components — delegate to services or custom hooks. All API calls through `lib/api.ts`. No direct state mutation outside Zustand store actions. Server Components by default; no `useEffect` for data fetching; explicit loading and error states for every async UI**]
-- TypeScript strictness rules? [**Strict mode throughout — no `any`, no implicit returns, `readonly` by default, `as const` + union over `enum`, discriminated unions over optional flags, no barrel `index.ts` files**]
-- Rate-limiting rules? [**`@nestjs/throttler` applied globally — 100 req/min/IP**, with stricter limits on auth and export endpoints]
-- Idempotency? [**Mutating endpoints that may be retried support an `Idempotency-Key` header**]
-- Any project-specific rules?
+> "I'll apply the standard architecture rules from `RULES.md` (TypeScript strict mode,
+> thin controllers + DTO validation at the boundary, single typed client per external
+> service with 5s timeout and exponential backoff, `ConfigService`-only env access, no
+> `useEffect` for data fetching, structured logging with no secrets, IaC standard tags,
+> no `*` action on `*` resource, etc.).
+>
+> Are there any project-specific rules to add on top of `RULES.md`? Are there any
+> defaults you need to **override** (and why)?"
 
-Tell the user: "These become the '## Architecture Rules' section of your CLAUDE.md.
-I'll include the standard defaults and add your project-specific ones."
+Capture project-specific additions and overrides. These become the
+"## Architecture Rules" section of `CLAUDE.md`, written as: `See RULES.md, plus the
+following project-specific rules: ...`.
 
 ---
 
 ## Phase 6 — Observability
 
-Ask as one message:
+The default observability stack and forbidden log content are defined in
+[`RULES.md`](../RULES.md#logging--observability). Ask as one message:
 
-- Logging backend? [**CloudWatch Logs via container stdout/stderr** — pino JSON logs ingested as-is; 30-day retention for dev, 90 days for prod]
-- Metrics backend? [**CloudWatch Metrics** — emit custom metrics via embedded metric format (EMF); SLI dashboards in CloudWatch]
-- Tracing backend? [**AWS X-Ray** via OpenTelemetry instrumentation, sampling 10% of requests in prod, 100% in dev]
-- Required structured log fields? [**`timestamp`, `level`, `correlationId`, `service`, `env`, `userId` (if authenticated), `route`, `durationMs`**]
-- Forbidden log content? [**No secrets, tokens, full `Authorization` headers, or PII payloads**]
-- Key SLIs to track from day one? [**HTTP request latency (p50, p95, p99), error rate (4xx/5xx), saturation (CPU, memory), external dependency latency**]
-- Alerting? [**CloudWatch alarms on error rate >1% over 5min, p99 latency >2s over 5min, deployment failure**]
+- Logging backend? [**CloudWatch Logs via container stdout/stderr** — pino JSON ingested as-is; 30-day retention dev, 90-day prod]
+- Metrics backend? [**CloudWatch Metrics** — custom metrics via embedded metric format (EMF)]
+- Tracing backend? [**AWS X-Ray** via OpenTelemetry, sampling 10% in prod, 100% in dev]
+- Required structured log fields? [defaults from `RULES.md#logging--observability`]
+- Forbidden log content? [defaults from `RULES.md#logging--observability`]
+- Key SLIs to track from day one? [**HTTP latency p50/p95/p99, error rate (4xx/5xx), CPU/memory saturation, external dependency latency**]
+- Alerting? [**CloudWatch alarms: error rate >1% over 5min, p99 latency >2s over 5min, deployment failure**]
 
 ---
 
 ## Phase 7 — Security & Compliance
 
-Defaults (shown in brackets) are based on the reference stack.
+Secrets handling, IAM principles, IaC defaults, and external client patterns are in
+[`RULES.md`](../RULES.md#configuration--secrets). Ask:
 
-Ask:
-
-- Compliance framework(s)? [**None by default**; common opt-ins: ISO27001, SOC2 Type 2, HIPAA, PCI-DSS]
+- Compliance framework(s)? [**None by default**; common opt-ins: ISO27001:2022, SOC2 Type 2, HIPAA, PCI-DSS]
 - Data classification scheme? [**`public` / `internal` / `confidential` / `pii`** — every entity tagged in its docstring or schema comment]
-- Encryption at rest? [**Provider-managed (AES-256) by default for RDS, S3, EBS; customer-managed KMS keys for any `confidential` or `pii` data class**]
+- Encryption at rest? [**Provider-managed (AES-256) by default for RDS, S3, EBS; customer-managed KMS keys for any `confidential` or `pii` data**]
 - Encryption in transit? [**TLS 1.2 minimum, TLS 1.3 preferred; HTTPS everywhere; HSTS header set**]
-- Are there external APIs or third-party services this project integrates with? For each: name, what it's used for, any rate-limiting or auth constraints. [**No default — list per project. For each: implement the typed client pattern with 5s timeout and exponential backoff on 429**]
-- Auth model details? [**JWT with 15min access + 7-day refresh; refresh rotation on use; revocation on logout/password change; rate limit 5 login attempts/min/IP**]
-- Public (unauthenticated) endpoints? [**`GET /health` and `GET /api-docs` are unguarded; everything else requires auth**]
-- Secrets handling? [**No secrets in code. No `process.env` outside config module. All production secrets from AWS Secrets Manager. No secrets in `.tf`/`.tfvars`/state. Lockfile committed and authoritative**]
-- IAM principle? [**Least privilege; no `*:*` policies; resource-level scoping required; long-lived access keys forbidden for humans (SSO/role-assumption only)**]
-- Network exposure rules? [**No `0.0.0.0/0` ingress except 443 on the public load balancer; databases never have public IPs; all internal services behind WAF**]
+- External APIs / third-party services? For each: name, purpose, rate-limit / auth constraints. [**No default — list per project. Client implementation follows `RULES.md#external-http-clients`**]
+- Auth model details? [**JWT 15min access + 7-day refresh; refresh rotation on use; revocation on logout/password change; 5 login attempts/min/IP**]
+- Public (unauthenticated) endpoints? [**`GET /health` and `GET /api-docs` only; everything else requires auth**]
+- Secrets handling? [defaults from `RULES.md#configuration--secrets`]
+- IAM principle? [defaults from `RULES.md#infrastructure-as-code`]
+- Network exposure rules? [**No `0.0.0.0/0` ingress except 443 on the public load balancer; databases never have public IPs; internal services behind WAF**]
 - Vulnerability scanning? [**Dependabot for npm + Terraform providers; `npm audit --omit=dev` in CI; Trivy scan of container images on build**]
-- Audit logging requirements? [**Log: auth events (success + failure), API key create/rotate/delete, role changes, data exports, admin actions, soft/hard deletes. Retain audit logs for 1 year minimum**]
+- Audit logging requirements? [**Log auth events (success + failure), API key lifecycle, role changes, data exports, admin actions, soft/hard deletes. Retain ≥1 year**]
 
 After this round, confirm:
 
@@ -328,36 +339,25 @@ Include the settled decisions table populated with any decisions from Phase 8.
 
 ## Architecture Rules
 
-### Backend
-{rules from Phase 5, including standard defaults}
+This project follows the canonical rules in
+[`RULES.md`](https://github.com/garethrhughes/skills/blob/main/RULES.md) (TypeScript
+conventions, config & secrets, external HTTP clients, frontend, backend,
+observability, IaC, testing, git & PRs).
 
-### Frontend
-*(omit if backend-only)*
-{frontend rules from Phase 5}
-
-### Infrastructure (IaC)
-{infra rules from Phase 3 — declarative, remote state, env-by-vars-only, tagging contract, pinned versions, secrets-by-reference, no `*:*` IAM, CI-only apply for shared envs}
-
-### TypeScript
-{typescript strictness rules}
-
-### Observability
-{observability rules from Phase 6}
+**Project-specific additions / overrides:**
+{additions and overrides captured in Phase 5; write "_(none)_" if empty}
 
 ---
 
 ## Security Rules (hard blocks)
 
-- No credentials, tokens, or secrets committed in any file (including test fixtures and `.tfvars`)
-- Environment config accessed only via the config service — never `process.env` directly
-- All controller endpoints require an auth guard, except: {list public routes}
-- No SQL built via string interpolation — use parameterised queries or ORM query builders
-- No hardcoded external service URLs or resource IDs in source code
-- No IAM policy with `*` action and `*` resource
-- No public network exposure without a documented justification in a proposal
-- No `dangerouslySetInnerHTML` (or framework equivalent) for user-supplied content
-- Lockfile changes must correspond to an intentional dependency change
-{any project-specific security rules from Phase 7}
+Standard security rules are in `RULES.md` (no secrets in code, `ConfigService`-only
+env access, parameterised queries, no `*` action on `*` resource, lockfile committed,
+etc.).
+
+**Project-specific additions:**
+- Public (unauthenticated) endpoints: {list public routes from Phase 7}
+- {any project-specific security rules from Phase 7, or "_(none)_"}
 
 ---
 
@@ -390,21 +390,12 @@ Include the settled decisions table populated with any decisions from Phase 8.
 
 ## Testing Requirements
 
-### Backend
-- Unit tests for all service methods — mock external clients and repositories
-- Do not test controllers directly — test services
-- Integration tests for critical API endpoints
-- Tests describe behaviour, not implementation, in their names
+See [`RULES.md#testing`](../RULES.md#testing) for the canonical testing rules
+(behaviour-focused names, no real network, services tested not controllers, IaC
+modules tested, plan summary in PR description).
 
-### Frontend
-*(omit if backend-only)*
-- Unit tests for all significant components
-- Unit tests for state stores in isolation
-- No test should hit a real network
-
-### Infrastructure
-- Non-trivial IaC modules have tests (Terratest / `terraform test` / Pulumi unit tests)
-- Every PR touching infra includes the `plan` summary in the PR description
+**Project-specific additions:**
+{additions captured in Phase 5/8, or "_(none)_"}
 
 ---
 

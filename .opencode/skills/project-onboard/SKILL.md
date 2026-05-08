@@ -22,6 +22,16 @@ and correct ambiguous findings.
 
 ---
 
+## Authoritative Rules
+
+The standard rules this skill checks the codebase against (and records as gaps in
+the Onboarding Notes section) are defined in [`RULES.md`](../RULES.md) at the root of
+the skills repo. The "gap analysis" performed during each phase is effectively a diff
+between the existing codebase and `RULES.md`. When recording findings, cite the
+relevant `RULES.md` section so the user can see exactly which rule the gap maps to.
+
+---
+
 ## Operating Principles
 
 1. **Code is the source of truth.** Prefer evidence from files in the repo over
@@ -53,8 +63,8 @@ and directories:
 
 - `CLAUDE.md`
 - `AGENTS.md`
-- `.claude/` (Claude Code agents, commands, settings)
-- `.github/agents/` (GitHub Copilot agents)
+- `.claude/` (Claude Code agents, commands, settings — produced by `scripts/install-claude-agents.sh`)
+- `.github/agents/` (GitHub Copilot agents — produced by `scripts/install-copilot-agents.sh`)
 - `.github/copilot-instructions.md`
 - `.opencode/` (OpenCode skills, agents, commands)
 - `cursor/` or `.cursor/` (Cursor rules)
@@ -409,6 +419,13 @@ Ask:
   Jira API, `JIRA_HOST` / `JIRA_EMAIL` / `JIRA_API_TOKEN` in `.env.example` or CI
   environment variables, any existing `opencode.json` with a `jira` MCP entry.
 
+> Note: `JIRA_HOST` / `JIRA_EMAIL` / `JIRA_API_TOKEN` env vars are a legacy pattern.
+> The current Jira MCP server (`@rui.branco/jira-mcp`, configured by `mcp-setup`) reads
+> credentials from `~/.config/jira-mcp/config.json` instead. If you find the env-var
+> pattern, treat it as evidence Jira is in use, but the MCP setup will not consume
+> those vars — the user runs `npx -y @rui.branco/jira-mcp setup ...` once to populate
+> the config file.
+
 ### Present
 
 If Jira evidence is found, show it to the user and ask to confirm the details.
@@ -521,37 +538,31 @@ Generate a complete, filled-in `CLAUDE.md` using the template structure below.
 
 ## Architecture Rules
 
-### Backend
-{rules observed in code from Phase 5, plus any user-added project rules}
+This project follows the canonical rules in
+[`RULES.md`](https://github.com/garethrhughes/skills/blob/main/RULES.md) (TypeScript,
+config & secrets, external HTTP clients, frontend, backend, observability, IaC,
+testing, git & PRs).
 
-### Frontend
-*(omit if backend-only)*
-{frontend rules observed}
+**Project-specific additions / overrides** (observed in code or supplied by user
+in Phase 5):
+{additions; write "_(none)_" if empty}
 
-### Infrastructure (IaC)
-{infra rules observed from Phase 3 — declarative, remote state, env-by-vars-only,
-tagging contract, pinned versions, secrets-by-reference, IAM scoping, CI-only apply}
-
-### TypeScript
-{typescript strictness rules observed in tsconfig and code}
-
-### Observability
-{observability rules observed from Phase 6}
+**Known divergences from `RULES.md`** (recorded as gaps in Onboarding Notes
+below):
+{list of items where current code does not match RULES.md, e.g. "useEffect data
+fetching in 4 components", "process.env outside config in 12 files"; or "_(none)_"}
 
 ---
 
 ## Security Rules (hard blocks)
 
-- No credentials, tokens, or secrets committed in any file (including test fixtures and `.tfvars`)
-- Environment config accessed only via the config service — never `process.env` directly
-- All controller endpoints require an auth guard, except: {list public routes found in Phase 7}
-- No SQL built via string interpolation — use parameterised queries or ORM query builders
-- No hardcoded external service URLs or resource IDs in source code
-- No IAM policy with `*` action and `*` resource
-- No public network exposure without a documented justification in a proposal
-- No `dangerouslySetInnerHTML` (or framework equivalent) for user-supplied content
-- Lockfile changes must correspond to an intentional dependency change
-{any project-specific security rules from Phase 7}
+Standard security rules are in `RULES.md` (no secrets in code, `ConfigService`-only
+env access, parameterised queries, no `*` action on `*` resource, lockfile committed,
+etc.).
+
+**Project-specific additions:**
+- Public (unauthenticated) endpoints: {list public routes found in Phase 7}
+- {any project-specific security rules from Phase 7, or "_(none)_"}
 
 ---
 
@@ -584,21 +595,10 @@ tagging contract, pinned versions, secrets-by-reference, IAM scoping, CI-only ap
 
 ## Testing Requirements
 
-### Backend
-- Unit tests for all service methods — mock external clients and repositories
-- Do not test controllers directly — test services
-- Integration tests for critical API endpoints
-- Tests describe behaviour, not implementation, in their names
+See [`RULES.md#testing`](../RULES.md#testing) for the canonical testing rules.
 
-### Frontend
-*(omit if backend-only)*
-- Unit tests for all significant components
-- Unit tests for state stores in isolation
-- No test should hit a real network
-
-### Infrastructure
-- Non-trivial IaC modules have tests (Terratest / `terraform test` / Pulumi unit tests)
-- Every PR touching infra includes the `plan` summary in the PR description
+**Project-specific additions** (observed or supplied):
+{additions, or "_(none)_"}
 
 ---
 

@@ -1147,7 +1147,7 @@ describe('SyncService', () => {
       expect(issueRepo.upsert).toHaveBeenCalledTimes(2);
     });
 
-    it('upserts JiraIssueSprint rows for each issue from customfield_10020', async () => {
+    it('replaces JiraIssueSprint rows when Jira returns a non-empty customfield_10020 (sprint move)', async () => {
       const issueWithSprints = makeRawIssue('PROJ-1', {
         customfield_10020: [{ id: 1 }, { id: 2 }],
       });
@@ -1158,7 +1158,8 @@ describe('SyncService', () => {
 
       await service.syncBoard('PROJ');
 
-      // Existing sprint rows for PROJ-1 must be deleted then new ones inserted
+      // When Jira reports current sprints, replace existing rows so legitimate
+      // sprint moves (Sprint A → Sprint B) are reflected.
       expect(issueSprint.delete).toHaveBeenCalledWith({ issueKey: 'PROJ-1' });
       expect(issueSprint.upsert).toHaveBeenCalledWith(
         expect.arrayContaining([
@@ -1169,17 +1170,64 @@ describe('SyncService', () => {
       );
     });
 
-    it('deletes JiraIssueSprint rows even when issue has no sprints (zero-membership cleanup)', async () => {
-      const issueNoSprints = makeRawIssue('PROJ-99', { customfield_10020: null });
+    // -----------------------------------------------------------------------
+    // Regression: SPS-504 / SPS-461 "never boarded" gap report bug.
+    //
+    // Issues created directly into a sprint emit no Sprint-field changelog.
+    // Once the issue is Done and the sprint closes, Jira drops the sprint
+    // from customfield_10020. The previous delete-then-upsert wiped the
+    // only remaining trace of historical membership, causing the gap report
+    // to falsely classify the issue as "never boarded".
+    //
+    // Fix (option 2): when customfield_10020 is empty/missing, leave existing
+    // JiraIssueSprint rows untouched. Only delete when Jira returns a
+    // non-empty list (so legitimate sprint moves still replace correctly).
+    // -----------------------------------------------------------------------
+
+    it('preserves existing JiraIssueSprint rows when Jira returns an empty customfield_10020 (Done issue, closed sprint)', async () => {
+      // Simulates the SPS-504 / SPS-461 case: Done issue whose sprint has
+      // closed, so Jira no longer returns it in customfield_10020.
+      const doneIssueNoSprints = makeRawIssue('PROJ-504', {
+        customfield_10020: [],
+        status: { id: '10003', name: 'Done' },
+      });
       jiraClient.searchIssues.mockResolvedValue({
-        issues: [issueNoSprints],
+        issues: [doneIssueNoSprints],
         nextPageToken: undefined,
       } as never);
 
       await service.syncBoard('PROJ');
 
-      // Delete must run but upsert should not be called with sprint rows for this issue
-      expect(issueSprint.delete).toHaveBeenCalledWith({ issueKey: 'PROJ-99' });
+      // Critical: must NOT delete or upsert sprint rows for this issue —
+      // historical membership (the only trace for issues with no Sprint
+      // changelog) must be preserved.
+      expect(issueSprint.delete).not.toHaveBeenCalledWith({ issueKey: 'PROJ-504' });
+      expect(issueSprint.upsert).not.toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ issueKey: 'PROJ-504' }),
+        ]),
+        expect.anything(),
+      );
+    });
+
+    it('preserves existing JiraIssueSprint rows when customfield_10020 is null/missing', async () => {
+      const issueNullSprintField = makeRawIssue('PROJ-461', {
+        customfield_10020: null,
+      });
+      jiraClient.searchIssues.mockResolvedValue({
+        issues: [issueNullSprintField],
+        nextPageToken: undefined,
+      } as never);
+
+      await service.syncBoard('PROJ');
+
+      expect(issueSprint.delete).not.toHaveBeenCalledWith({ issueKey: 'PROJ-461' });
+      expect(issueSprint.upsert).not.toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ issueKey: 'PROJ-461' }),
+        ]),
+        expect.anything(),
+      );
     });
 
     it('marks sync as failed when JQL search throws — no fallback to agile endpoint', async () => {

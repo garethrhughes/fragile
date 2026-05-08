@@ -459,18 +459,34 @@ export class SyncService {
   }
 
   /**
-   * Replaces the JiraIssueSprint rows for one issue key.
-   * Delete-then-upsert pattern: ensures the table always reflects the current
-   * sprint array from Jira, removing any memberships that no longer exist.
+   * Updates sprint membership rows for one issue key from Jira's current
+   * `customfield_10020`.
+   *
+   * Behaviour:
+   *   - If Jira returns a non-empty sprint array, replace existing rows
+   *     (delete-then-upsert) so the table reflects the current state and
+   *     handles legitimate sprint moves.
+   *   - If Jira returns an empty/missing sprint array, leave existing rows
+   *     untouched. This preserves historical membership for issues that
+   *     completed in a sprint that has since closed — Jira drops closed
+   *     sprints from `customfield_10020` for Done issues, but the row is
+   *     the only fallback the gaps report and sprint membership
+   *     reconstruction have for issues that were created directly into a
+   *     sprint (no Sprint-field changelog event is fired by Jira for
+   *     create-into-sprint).
+   *
+   * Without this guard, completed issues with no Sprint changelog were
+   * falsely classified as "never boarded" once Jira stopped returning their
+   * sprint in `customfield_10020`.
    */
   private async persistIssueSprintMembership(
     issueKey: string,
     fields: JiraIssueValue['fields'],
   ): Promise<void> {
-    // Always delete existing rows — even if the issue now has no sprints
-    await this.issueSprintRepo.delete({ issueKey });
-
     const sprintField = fields['customfield_10020'];
+
+    // Jira returned no current sprints — preserve existing rows as the
+    // historical membership snapshot. Do NOT delete.
     if (!Array.isArray(sprintField) || sprintField.length === 0) return;
 
     const rows: JiraIssueSprint[] = (
@@ -484,9 +500,13 @@ export class SyncService {
         return row;
       });
 
-    if (rows.length > 0) {
-      await this.issueSprintRepo.upsert(rows, ['issueKey', 'sprintId']);
-    }
+    if (rows.length === 0) return;
+
+    // Replace existing rows so legitimate sprint moves (Sprint A → Sprint B)
+    // are reflected accurately. Safe because `sprintField` is non-empty here,
+    // so we never end up with zero rows for an issue that previously had some.
+    await this.issueSprintRepo.delete({ issueKey });
+    await this.issueSprintRepo.upsert(rows, ['issueKey', 'sprintId']);
   }
 
   private async syncSprints(boardId: string, numericBoardId: string): Promise<JiraSprint[]> {

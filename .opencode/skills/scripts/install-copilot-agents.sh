@@ -37,6 +37,21 @@ echo "Skills dir : $SKILLS_DIR"
 echo "Agents dir : $AGENTS_DIR"
 echo ""
 
+# ── Copy RULES.md alongside the agents ──────────────────────────────────────
+# Skill files reference RULES.md by relative path; the installed agents need
+# a local copy so those links resolve.
+if [[ -f "$SKILLS_DIR/RULES.md" ]]; then
+  cp "$SKILLS_DIR/RULES.md" "$AGENTS_DIR/RULES.md"
+  rules_version="$(awk -F': *' '/^Version:/{print $2; exit}' "$SKILLS_DIR/RULES.md" | tr -d '[:space:]')"
+  if [[ -n "$rules_version" ]]; then
+    printf '%s\n' "$rules_version" > "$AGENTS_DIR/.rules-version"
+    echo "RULES.md (v$rules_version) copied to .github/agents/RULES.md"
+  else
+    echo "RULES.md copied to .github/agents/RULES.md"
+  fi
+  echo ""
+fi
+
 # ── Symlink each skill ───────────────────────────────────────────────────────
 linked=0
 skipped=0

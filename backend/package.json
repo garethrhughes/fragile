@@ -19,7 +19,8 @@
     "migration:generate": "npm run build && typeorm migration:generate -d dist/data-source.js",
     "migration:create": "typeorm migration:create",
     "migration:run": "typeorm migration:run -d dist/data-source.js",
-    "migration:revert": "typeorm migration:revert -d dist/data-source.js"
+    "migration:revert": "typeorm migration:revert -d dist/data-source.js",
+    "backfill:issue-sprints": "npm run build && node dist/scripts/backfill-issue-sprints.js"
   },
   "dependencies": {
     "@aws-sdk/client-lambda": "^3.1035.0",

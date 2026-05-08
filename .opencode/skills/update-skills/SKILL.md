@@ -47,8 +47,36 @@ Then for each **modified** skill, show a concise summary of what changed (not th
 
 If nothing changed, say so clearly: "All skills are already up to date. No changes pulled."
 
+### RULES.md changes (special case)
+
+If `RULES.md` itself was modified in this update, **call it out at the top of the
+report** — RULES.md is the single source of truth that every skill references, so any
+change there has cross-cutting impact. Show:
+
+- The version line if present (e.g. "RULES.md updated from v1.0 → v1.1")
+- A summary of which sections changed (added rules, tightened rules, relaxed rules)
+- Any project-specific overrides in the project's `CLAUDE.md` that may now conflict
+  with the new rules — flag these so the user can review them
+
 ## Rules
 
 - Do not edit any skill files yourself — the script handles everything.
 - Do not run `git pull` directly; always use the bundled script.
 - If the script exits with a non-zero code, report the error output verbatim and stop.
+
+## After updating — re-run installers if applicable
+
+The update script syncs the skills, root files, and `scripts/` directory but does
+**not** re-propagate changes into Claude Code or Copilot agent directories. After
+a successful update, remind the user:
+
+- **Claude Code users** — re-run `scripts/install-claude-agents.sh` from each
+  project root to refresh `.claude/agents/<skill>.md` and pick up any new tool
+  restrictions or RULES.md changes.
+- **GitHub Copilot users** — re-run `scripts/install-copilot-agents.sh` to refresh
+  symlinks in `.github/agents/` and re-copy `RULES.md` alongside.
+- **OpenCode users** — no action needed; OpenCode reads `.opencode/skills/`
+  directly.
+
+If `RULES.md` was updated, also remind the user to compare any overrides in their
+project `CLAUDE.md` against the new rules.
