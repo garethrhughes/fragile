@@ -5,8 +5,14 @@ import { CreateCustomReportDto } from './create-custom-report.dto.js';
 describe('CreateCustomReportDto — layout validation', () => {
   const base = { slug: 'my-report', title: 'My Report' };
 
-  it('accepts layout: null (absent)', async () => {
+  it('accepts layout when omitted', async () => {
     const dto = plainToInstance(CreateCustomReportDto, { ...base });
+    const errors = await validate(dto);
+    expect(errors.filter((e) => e.property === 'layout')).toHaveLength(0);
+  });
+
+  it('accepts layout: null', async () => {
+    const dto = plainToInstance(CreateCustomReportDto, { ...base, layout: null });
     const errors = await validate(dto);
     expect(errors.filter((e) => e.property === 'layout')).toHaveLength(0);
   });

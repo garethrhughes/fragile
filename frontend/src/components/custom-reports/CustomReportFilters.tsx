@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { CustomReportFilter } from '@/lib/api'
 import type { ReportFilterValues } from '@/store/custom-report-filters-store'
 
@@ -29,6 +29,13 @@ function CommaSeparatedInput({
   onChange: (key: string, value: string[] | undefined) => void
 }) {
   const [rawValue, setRawValue] = useState(selected.join(', '))
+  const [isEditing, setIsEditing] = useState(false)
+
+  useEffect(() => {
+    if (!isEditing) {
+      setRawValue(selected.join(', '))
+    }
+  }, [selected, isEditing])
 
   const commit = (raw: string) => {
     const parts = raw
@@ -46,6 +53,7 @@ function CommaSeparatedInput({
         placeholder="val1, val2, …"
         aria-label={`${label} (comma-separated)`}
         value={rawValue}
+        onFocus={() => setIsEditing(true)}
         onChange={(e) => {
           setRawValue(e.target.value)
           // If the field is fully cleared, propagate immediately
@@ -53,7 +61,10 @@ function CommaSeparatedInput({
             onChange(filterKey, undefined)
           }
         }}
-        onBlur={(e) => commit(e.target.value)}
+        onBlur={(e) => {
+          setIsEditing(false)
+          commit(e.target.value)
+        }}
         className="rounded-md border border-border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
       />
       <span className="text-[10px] text-muted">comma-separated</span>

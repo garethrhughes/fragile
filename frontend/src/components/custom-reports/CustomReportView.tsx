@@ -64,7 +64,7 @@ export function CustomReportView({ report }: Props) {
   }, [report.widgets])
 
   const cols = resolveGridCols(report.layout)
-  const gridColsClass = GRID_COLS_CLASS[cols] ?? 'grid-cols-2'
+  const gridColsClass = GRID_COLS_CLASS[cols] ?? 'lg:grid-cols-2'
 
   return (
     <div className="space-y-6">
@@ -87,7 +87,7 @@ export function CustomReportView({ report }: Props) {
           {sortedWidgets.map((widget) => {
             const filteredPoints = applyFilters(widget.dataPoints, sortedFilters, filterValues)
             const colSpan = resolveWidgetColSpan(widget.kind, widget.id, report.layout, cols)
-            const colSpanClass = COL_SPAN_CLASS[colSpan] ?? 'col-span-1'
+            const colSpanClass = COL_SPAN_CLASS[colSpan] ?? 'lg:col-span-1'
             return (
               <div key={widget.id} className={colSpanClass}>
                 <CustomReportWidget

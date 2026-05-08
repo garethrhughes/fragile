@@ -8,7 +8,7 @@
 ## Summary
 
 Activate the unused `layout` field on `CustomReport` to provide structured grid layout
-configuration for widgets, including per-row column counts, per-widget width overrides,
+configuration for widgets, including a per-report column count, per-widget width overrides,
 and a default full-width treatment for table widgets.
 
 Also fixes a bug in the comma-separated multiselect filter input where typing a comma

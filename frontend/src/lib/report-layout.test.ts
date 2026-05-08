@@ -26,6 +26,14 @@ describe('resolveGridCols', () => {
   it('returns 6 when defaultColumns is 6', () => {
     expect(resolveGridCols({ defaultColumns: 6 })).toBe(6)
   })
+
+  it('clamps defaultColumns below range to 1', () => {
+    expect(resolveGridCols({ defaultColumns: 0 })).toBe(1)
+  })
+
+  it('clamps defaultColumns above range to 6', () => {
+    expect(resolveGridCols({ defaultColumns: 7 })).toBe(6)
+  })
 })
 
 describe('resolveWidgetColSpan', () => {
@@ -69,5 +77,9 @@ describe('resolveWidgetColSpan', () => {
   it('returns defaultColumns for table widget when no entry for the widget id exists', () => {
     const layout: ReportLayout = { widgets: { other: { colSpan: 2 } } }
     expect(resolveWidgetColSpan('table', 'w1', layout, 3)).toBe(3)
+  })
+
+  it('normalizes cols to 1 when cols is invalid', () => {
+    expect(resolveWidgetColSpan('table', 'w1', null, 0)).toBe(1)
   })
 })

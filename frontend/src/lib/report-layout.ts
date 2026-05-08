@@ -16,7 +16,8 @@ export interface ReportLayout {
  * Falls back to 2 when layout is null/undefined or defaultColumns is not set.
  */
 export function resolveGridCols(layout: ReportLayout | null | undefined): number {
-  return layout?.defaultColumns ?? 2
+  const cols = layout?.defaultColumns ?? 2
+  return Math.min(Math.max(cols, 1), 6)
 }
 
 /**
@@ -33,12 +34,13 @@ export function resolveWidgetColSpan(
   layout: ReportLayout | null | undefined,
   cols: number,
 ): number {
+  const normalizedCols = Math.max(Math.min(cols, 6), 1)
   const override = layout?.widgets?.[widgetId]?.colSpan
   if (override !== undefined) {
-    return Math.min(Math.max(override, 1), cols)
+    return Math.min(Math.max(override, 1), normalizedCols)
   }
   if (kind === 'table') {
-    return cols
+    return normalizedCols
   }
   return 1
 }

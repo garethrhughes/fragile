@@ -225,4 +225,28 @@ describe('CustomReportFilters — comma-separated input', () => {
     fireEvent.change(input, { target: { value: '' } })
     expect(onChange).toHaveBeenCalledWith('team', undefined)
   })
+
+  it('syncs textbox value when selected values are cleared externally', () => {
+    const onChange = vi.fn()
+    const { rerender } = render(
+      <CustomReportFilters
+        filters={[multiFilter]}
+        options={{}}
+        values={{ team: ['foo', 'bar'] }}
+        onChange={onChange}
+      />,
+    )
+    const input = screen.getByRole('textbox', { name: /comma-separated/i }) as HTMLInputElement
+    expect(input.value).toBe('foo, bar')
+
+    rerender(
+      <CustomReportFilters
+        filters={[multiFilter]}
+        options={{}}
+        values={{}}
+        onChange={onChange}
+      />,
+    )
+    expect(input.value).toBe('')
+  })
 })
