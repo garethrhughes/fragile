@@ -154,11 +154,11 @@ export function registerCustomReportsTools(server: McpServer): void {
 
   server.tool(
     'replace_custom_report_data',
-    'Replace all data points for a graph with the provided set. Existing points are deleted first. Max 1000 points per call.',
+    'Replace all data points for a graph with the provided set. Existing points are deleted first. Pass an empty array to clear all points (equivalent to clear_custom_report_data). Max 1000 points per call.',
     {
       slug: z.string(),
       graphId: z.string().uuid(),
-      points: z.array(dataPointSchema).min(1).max(1000),
+      points: z.array(dataPointSchema).min(0).max(1000),
     },
     async ({ slug, graphId, points }) => {
       const result = await apiPut(

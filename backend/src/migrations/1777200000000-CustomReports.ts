@@ -11,6 +11,11 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  */
 export class CustomReports1777200000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
+    // gen_random_uuid() is built-in from PostgreSQL 13+. The extension guard
+    // is a no-op on PG 16 (our target) but keeps the migration safe on any
+    // PG 13+ instance where pgcrypto was not pre-loaded.
+    await queryRunner.query(`CREATE EXTENSION IF NOT EXISTS "pgcrypto"`);
+
     await queryRunner.query(`
       CREATE TABLE "custom_reports" (
         "id"          uuid        NOT NULL DEFAULT gen_random_uuid(),

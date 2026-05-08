@@ -8,9 +8,9 @@
  *    unit-tested in custom-report-filtering.test.ts.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
-import type { CustomReport, CustomReportSummary } from '@/lib/api'
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import type { CustomReport } from '@/lib/api'
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -40,6 +40,7 @@ const makeReport = (overrides?: Partial<CustomReport>): CustomReport => ({
   slug: 'demo',
   title: 'Demo Report',
   description: null,
+  layout: null,
   graphs: [],
   filters: [],
   createdAt: '2024-01-01T00:00:00Z',
@@ -56,6 +57,7 @@ const makeGraph = (kind: 'line' | 'bar' | 'area' = 'line') => ({
   seriesKey: null,
   xAxisLabel: null,
   yAxisLabel: null,
+  createdAt: '2024-01-01T00:00:00Z',
   dataPoints: [
     { id: 'p1', customReportGraphId: 'g1', x: '2024-01', y: 10, series: null, dimensions: null, createdAt: '2024-01-01T00:00:00Z' },
     { id: 'p2', customReportGraphId: 'g1', x: '2024-02', y: 20, series: null, dimensions: null, createdAt: '2024-01-01T00:00:00Z' },

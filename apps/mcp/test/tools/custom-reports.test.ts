@@ -197,6 +197,22 @@ describe('custom-reports MCP tools', () => {
     );
   });
 
+  it('replace_custom_report_data — accepts empty points array to clear all', async () => {
+    const res = { replaced: 0 };
+    mockApiPut.mockResolvedValueOnce(mockSuccess(res));
+    const server = makeServer();
+    const result = await callTool(server, 'replace_custom_report_data', {
+      slug: 'demo',
+      graphId: GRAPH_UUID,
+      points: [],
+    });
+    expect(JSON.parse(result.content[0]?.text ?? '')).toEqual(res);
+    expect(mockApiPut).toHaveBeenCalledWith(
+      `/api/custom-reports/demo/graphs/${GRAPH_UUID}/data-points`,
+      expect.objectContaining({ points: [] }),
+    );
+  });
+
   it('clear_custom_report_data — calls DELETE .../data-points', async () => {
     mockApiDelete.mockResolvedValueOnce(mockSuccess(undefined, 204));
     const server = makeServer();

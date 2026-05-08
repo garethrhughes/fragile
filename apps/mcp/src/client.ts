@@ -84,27 +84,7 @@ export async function apiGet<T = unknown>(
     const message = err instanceof Error ? err.message : String(err);
     throw new McpError(ErrorCode.InternalError, `Network error calling ${path}: ${message}`);
   }
-
-  if (response.status === 202) {
-    const data = await response.json() as T;
-    return { status: 202, data };
-  }
-
-  if (!response.ok) {
-    let message = `HTTP ${response.status}`;
-    try {
-      const body = await response.json() as { message?: string };
-      if (body.message) {
-        message = `HTTP ${response.status}: ${body.message}`;
-      }
-    } catch {
-      // ignore JSON parse errors for error bodies
-    }
-    throw new McpError(ErrorCode.InternalError, message);
-  }
-
-  const data = await response.json() as T;
-  return { status: response.status, data };
+  return handleResponse<T>(response, path);
 }
 
 export async function apiPost<T = unknown>(
