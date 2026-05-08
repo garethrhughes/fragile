@@ -48,6 +48,15 @@ these steps in order for any non-trivial piece of work. Each step maps to a spec
 **Open onboarding gaps:** 9 items — see CLAUDE.md ## Onboarding Notes
 ---
 
+## Authoritative Rules
+
+Project-wide engineering conventions enforced across every step of this cycle live in
+[`RULES.md`](../RULES.md). Each downstream skill (`developer`, `reviewer`, `infosec`)
+references the same file. When orchestrating a feature, treat `RULES.md` as the
+contract that all output must satisfy.
+
+---
+
 ## Feature Intake
 
 Before starting the cycle, gather the feature brief from the user.

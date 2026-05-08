@@ -27,7 +27,7 @@ MCP (Model Context Protocol) servers for their project by creating or updating
 
 ## Step 1 — Present the Menu
 
-Ask the user which MCP servers they want to add. Present all six options and
+Ask the user which MCP servers they want to add. Present all seven options and
 allow multiple selections:
 
 > "I can configure the following MCP servers for this project. All are free to
@@ -88,13 +88,12 @@ If not found, tell the user:
 **Jira** — ask:
 > "What is your Jira instance URL, email address, and API token?
 >
-> I'll read these from environment variables — add the following to your `~/.zshrc`
-> (or `~/.bashrc`) and restart your terminal:
+> The Jira MCP server (`@rui.branco/jira-mcp`) stores credentials in
+> `~/.config/jira-mcp/config.json`. Run the following one-time setup command
+> (replace the placeholders):
 >
 > ```sh
-> export JIRA_HOST="https://your-org.atlassian.net"
-> export JIRA_EMAIL="you@example.com"
-> export JIRA_API_TOKEN="your-api-token"
+> npx -y @rui.branco/jira-mcp setup "you@example.com" "your-api-token" "https://your-org.atlassian.net"
 > ```
 >
 > Generate an API token at: https://id.atlassian.com/manage-profile/security/api-tokens"
@@ -188,15 +187,13 @@ export SQUIRREL_PASSPHRASE="your-passphrase"
 ```json
 "jira": {
   "type": "local",
-  "command": ["npx", "-y", "mcp-server-jira"],
-  "environment": {
-    "JIRA_HOST": "{env:JIRA_HOST}",
-    "JIRA_EMAIL": "{env:JIRA_EMAIL}",
-    "JIRA_API_TOKEN": "{env:JIRA_API_TOKEN}"
-  },
+  "command": ["npx", "-y", "@rui.branco/jira-mcp"],
   "enabled": true
 }
 ```
+*Credentials are read from `~/.config/jira-mcp/config.json` — see Step 2 for the
+setup command. Supports JQL search, ticket retrieval, comments, and status
+transitions.*
 
 ---
 
@@ -232,7 +229,7 @@ After writing the file, print a confirmation summary:
 > - **Memory** — persistent knowledge graph. Use `remember ...` and `recall ...` in prompts.
 > - **Squirrel Notes** — read/write encrypted notes. Requires `SQUIRREL_API_KEY` and `SQUIRREL_PASSPHRASE` env vars.
 > - **Semgrep** — static analysis. Use `run semgrep` in any prompt to scan for issues.
-> - **Jira** — read Jira issues and tickets. Requires `JIRA_HOST`, `JIRA_EMAIL`, and `JIRA_API_TOKEN` env vars.
+> - **Jira** — read/write Jira issues, comments, and status transitions (JQL supported). Credentials configured via `npx -y @rui.branco/jira-mcp setup ...` (stored in `~/.config/jira-mcp/config.json`).
 >
 > Commit `opencode.json` to version control so the team shares the same MCP setup."
 

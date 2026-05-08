@@ -79,86 +79,28 @@
 
 ---
 
-## Architecture Rules
+## Engineering Rules
 
-### Backend
-- One module per feature domain — no cross-domain imports except through explicit interfaces
-- Controllers are thin — all business logic lives in services
-- All calls to external APIs go through a single typed client — never call external APIs directly from domain services
-- Environment config via `ConfigService` only — never `process.env` directly
-- No hardcoded external URLs, IDs, or credentials — always from config
-- No N+1 queries — related data fetched in bulk
-- All unbounded queries require a `where` clause or explicit pagination
-- Every external HTTP call has an explicit timeout (default 5s)
-- All inbound DTOs are validated at the controller boundary — never trust raw request bodies
-- Mutating endpoints that may be retried support an idempotency key
+The project-wide engineering conventions (TypeScript, configuration & secrets, external
+HTTP clients, frontend, backend, observability, IaC, testing, git) live in
+[`.opencode/skills/RULES.md`](.opencode/skills/RULES.md). They are referenced by every
+skill and are the single source of truth.
 
-### Frontend
-- All API calls through a single typed wrapper in `lib/api.ts`
-- State stores in `store/` — one file per concern; mutations only via defined actions
-- No logic in page components — delegate to services or custom hooks
-- Components with large data tables must use `useMemo` for derived calculations
-- Server Components by default in Next.js App Router; Client Components only when interactivity requires
-- No `useEffect` for data fetching — use Server Components or a query library
-- Every async UI has explicit loading and error states
+### Project-specific overrides
 
-### Infrastructure (IaC)
-- All infrastructure is declarative and committed to version control — no imperative scripts mutating shared environments
-- Remote state with locking is mandatory for any shared environment — no `backend "local"` outside throwaway sandboxes
-- Environments differ only by variables, not by resource definitions
-- Every cloud resource carries the standard tags: `owner`, `env`, `service`, `cost-center`, `managed-by`
-- Provider and module versions are pinned (`~>` for minor on providers, exact for registry modules)
-- Secrets never appear in `.tf`, `.tfvars`, plan output, or state outputs — always referenced from the secrets manager by ID/ARN
-- Apply is performed only by CI against shared environments — no developer laptops applying to staging/prod
-- IAM policies start from deny; resource-level scoping required; no `*` action on `*` resource
+If this project deviates from any rule in `RULES.md`, list the override here with a brief
+justification. Otherwise leave the table empty.
 
-### TypeScript
-- Strict mode throughout — no `any`, no implicit returns
-- `readonly` by default on class fields and array/tuple types where mutation isn't required
-- Discriminated unions over optional flags for state representation
-- `as const` object literals + derived union type instead of `enum`
-- Explicit return types on all exported functions and class methods
+| RULES.md section | Override | Justification |
+|---|---|---|
+| *(none)* | — | — |
 
-### Observability
-- Structured logging only — no `console.log` in production paths
-- Every request gets a correlation/request ID propagated to downstream calls
-- Log at boundaries: request in, request out, external call in, external call out
-- Log levels: `error` (actionable), `warn` (degraded), `info` (state change), `debug` (diagnostic)
-- Never log secrets, tokens, full Authorization headers, or PII
+### Project-specific additions
 
----
+If this project enforces rules **on top of** `RULES.md` (e.g. domain-specific naming,
+extra IaC tags, project-specific log fields), list them here.
 
-## Security Rules (hard blocks)
-
-- No credentials, tokens, or secrets committed in any file (including test fixtures and `.tfvars`)
-- `process.env` must not be accessed outside the config service
-- All controller endpoints require an auth guard, except explicitly public routes (e.g. health check, API docs)
-- No SQL built via string interpolation — use parameterised queries or ORM query builders
-- No hardcoded external service URLs or resource IDs in source code
-- No IAM policy with `*` action and `*` resource
-- No public network exposure (`0.0.0.0/0` ingress, public bucket, public DB) without a documented justification in a proposal
-- No `dangerouslySetInnerHTML` or equivalent for user-supplied content
-- Lockfile changes must correspond to an intentional dependency change
-
----
-
-## Testing Requirements
-
-### Backend
-- Unit tests for all service methods — mock external clients and ORM repositories
-- Do not test controllers directly — test services
-- Integration tests for critical API endpoints using a mock or test database
-- Tests describe behaviour, not implementation, in their names
-- No shared mutable state between tests
-
-### Frontend
-- Unit tests for all significant components
-- Unit tests for state stores in isolation
-- No logic under test should hit a real network
-
-### Infrastructure
-- Non-trivial IaC modules have tests (Terratest / `terraform test` / Pulumi unit tests)
-- Every PR touching infra includes the `terraform plan` (or equivalent) summary in the PR description
+- *(none)*
 
 ---
 

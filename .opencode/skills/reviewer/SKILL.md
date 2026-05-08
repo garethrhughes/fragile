@@ -54,6 +54,23 @@ implements a flawed or misaligned design.
 **Open onboarding gaps:** 9 items — see CLAUDE.md ## Onboarding Notes
 ---
 
+## Authoritative Rules
+
+The convention checks below are role-tailored summaries of the project-wide rules in
+[`RULES.md`](../RULES.md). When reviewing, treat `RULES.md` as the source of truth — any
+deviation from it is a finding (severity depends on which rule). Frequent reference
+sections:
+[TypeScript Conventions](../RULES.md#typescript-conventions),
+[Configuration & Secrets](../RULES.md#configuration--secrets),
+[External HTTP Clients](../RULES.md#external-http-clients),
+[Frontend Rules](../RULES.md#frontend-rules-nextjs),
+[Backend Rules](../RULES.md#backend-rules-nestjs),
+[Logging & Observability](../RULES.md#logging--observability),
+[Infrastructure as Code](../RULES.md#infrastructure-as-code-opentofu--terraform),
+[Testing](../RULES.md#testing).
+
+---
+
 ## Phase 1 — Feature Document Review (if a feature doc exists)
 
 Check whether a feature document exists in `docs/features/` linked from the PR
@@ -163,45 +180,48 @@ List each Acceptance Criterion from the proposal verbatim, then for each:
 
 ## Phase 3 — Code Review
 
-### Security Checks — Block PR if any are found
+### Convention Adherence — Block PR if any are violated
 
-### Application
+Every rule in [`RULES.md`](../RULES.md) is in scope. Read the diff against `RULES.md` and
+flag any deviation. Severity is determined as follows:
+
+- Rules under [Configuration & Secrets](../RULES.md#configuration--secrets),
+  [External HTTP Clients](../RULES.md#external-http-clients), and
+  [Infrastructure as Code](../RULES.md#infrastructure-as-code-opentofu--terraform) →
+  **Blocker** when violated.
+- Rules under [TypeScript Conventions](../RULES.md#typescript-conventions),
+  [Backend Rules](../RULES.md#backend-rules-nestjs),
+  [Frontend Rules](../RULES.md#frontend-rules-nextjs),
+  [Logging & Observability](../RULES.md#logging--observability) → **Major** when
+  violated (Blocker if the violation also creates a security or data-integrity risk).
+- Rules under [Testing](../RULES.md#testing) and [Git & PRs](../RULES.md#git--prs) →
+  **Major** when violated.
+
+### Reviewer-Specific Security Checks (beyond RULES.md)
+
 - Credentials, API tokens, or secrets committed in any file (including test fixtures,
   `.env`, `.tfvars`, snapshots)
-- `process.env` accessed outside the config service
-- Missing auth guard on any new controller endpoint (except explicitly public routes such
-  as `/health` and `/api-docs`)
-- SQL or query strings constructed via string interpolation — must use parameterised queries
-  or ORM query builders
-- External service base URLs or resource IDs hardcoded in source — must come from config
-- Logging of secrets, tokens, full `Authorization` headers, or full PII payloads
+- Missing auth guard on any new controller endpoint (except explicitly public routes
+  such as `/health` and `/api-docs`)
+- SQL or query strings constructed via string interpolation — must use parameterised
+  queries or ORM query builders
 - Missing input validation on any controller endpoint (DTO validator absent, or
   validation pipe disabled for the route)
-- External HTTP call without an explicit timeout
-- New dependency added without justification in PR description (see Supply Chain below)
 - CORS configured with `*` origin on a non-public endpoint
 - `dangerouslySetInnerHTML` (or framework equivalent) used with user-supplied content
 
-### Supply chain
+### Reviewer-Specific Supply Chain Checks
+
 - Lockfile changes that don't correspond to a stated dependency change in the PR
 - New dependency with a non-permissive licence (anything other than MIT / Apache-2.0 /
   BSD / ISC) without explicit justification
 - New dependency last released >12 months ago without explicit justification
-- Provider or module versions newly introduced without pinning
 
-## Infrastructure-as-Code Checks — Block PR if any are found
+### IaC-Specific Reviewer Checks (beyond RULES.md)
 
-- IAM policy with `*` action **and** `*` resource
-- IAM policy granting `iam:*`, `kms:*`, or `s3:*` (or equivalent admin scopes) without
-  resource-level scoping
 - Public network exposure: `0.0.0.0/0` ingress on any port other than 80/443 on a
   load balancer, public S3 bucket, public-IP database, security group default-allow —
   without explicit justification in the linked proposal
-- Secret values present in `.tf`, `.tfvars`, `.yaml`, `plan` output, or `outputs.tf`
-- Provider versions unpinned
-- Module versions from a registry without an exact pin
-- Missing standard tags (`owner`, `env`, `service`, `cost-center`, `managed-by`)
-  on any new resource
 - Destructive plan changes (`-/+ destroy and recreate`) on stateful resources
   (databases, persistent volumes, persistent disks) without a documented data
   preservation plan in the PR
@@ -269,34 +289,6 @@ cosmetic, in which case **Minor** is acceptable.
 - New tool definitions are registered in the MCP server's tool list
 - Removed tools are unregistered — no dead tool definitions left in the package
 - Tool input/output schemas in the MCP package match the actual implementation
-
-## Code Quality Checks
-
-- No `any` types — flag and suggest the correct type
-- No `enum` introduced — should be `as const` object + derived union type
-- No barrel-file `index.ts` re-exports introduced at module boundaries (without justification)
-- No logic in controllers or page components — must live in services or hooks
-- No `useEffect` for data fetching in new Next.js code — use Server Components or a
-  query library
-- Server Components used unless client interactivity requires otherwise
-- ORM migrations implement both `up()` and `down()`
-- Any new `package.json` / `requirements.txt` / Terraform module dependency is called
-  out with justification
-- Styling uses only the project's configured CSS approach — flag any deviation or second
-  styling system
-- State store mutations only via defined actions — no direct state mutation outside the store
-- All exported functions have explicit return types
-- `readonly` used on class fields and arrays where mutation isn't required
-
-## Observability Checks
-
-- Logger used; no `console.log` in production paths
-- New external call has logging at start (with correlation ID) and on failure
-- New endpoint emits a structured log line on completion with status and duration
-- Errors are thrown/caught with enough context to diagnose without a debugger
-- No log statement contains a secret, token, `Authorization` header value, or full
-  PII payload
-- Correlation/request ID is propagated to any newly added downstream call
 
 ## Performance Checks
 

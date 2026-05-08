@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-UPSTREAM="https://github.com/garethrhughes/skills.git"
+UPSTREAM="${SKILLS_UPSTREAM:-https://github.com/garethrhughes/skills.git}"
 
 SCRIPT_DIR="${_UPDATE_SKILLS_ORIG_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 SKILLS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -62,8 +62,11 @@ replace_project_context() {
   mv "$tmp" "$file"
 }
 
-# Root-level files that are copied verbatim (no Project Context merging)
-ROOT_FILES="README.md CLAUDE.md.template"
+# Root-level files that are copied verbatim (no Project Context merging).
+# RULES.md is the canonical rules file — overrides live in per-project ADRs,
+# never in RULES.md itself, so it is safe to copy verbatim. A warning is
+# emitted below if the installed RULES.md has been locally modified.
+ROOT_FILES="README.md CLAUDE.md.template RULES.md"
 
 CLONE_DIR="$(mktemp -d)"
 BEFORE_DIR="$(mktemp -d)"
@@ -146,6 +149,34 @@ if [ -f "$INSTALLED_README" ]; then
       rm -rf "$installed_skill_dir"
     fi
   done
+fi
+
+# Detect local RULES.md modifications before overwriting.
+# RULES.md is the single source of truth — overrides belong in per-project
+# ADRs, never in RULES.md itself. If the installed copy diverges from the
+# upstream copy that was previously installed, surface that loudly.
+RULES_LOCAL_MODIFIED=0
+if [ -f "$BEFORE_DIR/__root__RULES.md" ] && [ -f "$CLONE_DIR/RULES.md" ]; then
+  if ! diff -q "$BEFORE_DIR/__root__RULES.md" "$CLONE_DIR/RULES.md" >/dev/null 2>&1; then
+    # Upstream changed RULES.md — that's expected. Only warn if the local
+    # copy diverges from BOTH the previous install AND the new upstream.
+    :
+  fi
+fi
+# Compare installed RULES.md against upstream RULES.md directly to detect
+# local edits (which are forbidden — overrides go in ADRs).
+if [ -f "$SKILLS_DIR/RULES.md" ] && [ -f "$CLONE_DIR/RULES.md" ]; then
+  if ! diff -q "$SKILLS_DIR/RULES.md" "$CLONE_DIR/RULES.md" >/dev/null 2>&1; then
+    RULES_LOCAL_MODIFIED=1
+    echo ""
+    echo "⚠  WARNING: installed RULES.md differs from upstream RULES.md."
+    echo "   RULES.md is the single source of truth and must not be edited"
+    echo "   locally — per-project overrides belong in ADRs (decision-log)."
+    echo "   The local file will be overwritten. Diff:"
+    echo ""
+    diff -u "$SKILLS_DIR/RULES.md" "$CLONE_DIR/RULES.md" || true
+    echo ""
+  fi
 fi
 
 # Copy root-level files from upstream

@@ -50,6 +50,29 @@ way it is.
 **Open onboarding gaps:** 9 items — see CLAUDE.md ## Onboarding Notes
 ---
 
+## Authoritative Rules
+
+The project-wide engineering conventions live in [`RULES.md`](../RULES.md). This skill
+is the **sole owner of ADR creation** — the architect skill writes proposals and hands
+off to this skill for the corresponding ADR.
+
+### ADRs that override `RULES.md`
+
+If a decision overrides a rule in `RULES.md`, the ADR **must**:
+
+1. Cite the exact `RULES.md` section and rule being overridden (e.g.
+   `RULES.md#external-http-clients` — "5s default timeout").
+2. State the override explicitly in the **Decision** section.
+3. Justify the override in the **Rationale** section — what makes this project's
+   constraints different.
+4. List the additional risk and mitigation in **Consequences → Risks**.
+5. Be referenced from the project's `CLAUDE.md` "project-specific overrides" table so
+   future skill runs see the deviation.
+
+Never weaken a rule in `RULES.md` itself — overrides are per-project and live in ADRs.
+
+---
+
 ## When to Log a Decision
 
 Log a decision whenever any of the following occur:

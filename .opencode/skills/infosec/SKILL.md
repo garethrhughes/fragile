@@ -54,30 +54,53 @@ and privacy violations.
 **Open onboarding gaps:** 9 items — see CLAUDE.md ## Onboarding Notes
 ---
 
+## Authoritative Rules
+
+The control checks below cite ISO27001:2022 Annex A. Project-wide engineering rules that
+this skill audits against (secrets handling, IAM scoping, logging redaction, encryption
+defaults, dependency hygiene) are defined in [`RULES.md`](../RULES.md). When auditing,
+both this skill and `RULES.md` apply; any deviation from `RULES.md` is at minimum a
+**REQUIRES CHANGES** finding mapped to the relevant control. Frequent reference
+sections:
+[Configuration & Secrets](../RULES.md#configuration--secrets),
+[Logging & Observability](../RULES.md#logging--observability),
+[Infrastructure as Code](../RULES.md#infrastructure-as-code-opentofu--terraform),
+[External HTTP Clients](../RULES.md#external-http-clients).
+
+---
+
 ## Compliance Framework Mapping
 
-By default this skill is aligned with **ISO27001 Annex A controls**. If your project
-uses SOC2, HIPAA, PCI-DSS, or another framework, replace the Control column in the table
-below in your Project Context.
+By default this skill is aligned with **ISO/IEC 27001:2022 Annex A controls** (the 93
+controls organised under four themes: A.5 Organizational, A.6 People, A.7 Physical,
+A.8 Technological). If your project uses SOC2, HIPAA, PCI-DSS, or another framework,
+replace the Control column in the table below in your Project Context.
 
-| Control | Requirement | Applies To |
+| Control | Title | Applies To |
 |---|---|---|
-| A.5.1 | Policies & procedures for info security | Configuration, documentation, architecture decisions |
-| A.6.1 | Information security roles & responsibilities | User management, access policies, role definitions |
-| A.6.2 | Access control & segregation of duties | Auth guards, API endpoints, admin functions |
-| A.8.1 | Inventory & classification of assets | Encryption scope, data handling, encrypted fields |
-| A.8.2 | Information ownership & responsibility | Data lineage, ownership clarity, retention policies |
-| A.9.1 | Access control policy | Auth guards, permissions matrix |
-| A.9.2 | User access management | Provisioning, de-provisioning, least privilege |
-| A.9.4 | Access rights review | Audit trails, logging of sensitive operations |
-| A.10.1 | Cryptography & encryption standards | AES-256-GCM, PBKDF2, key management |
-| A.10.2 | Key management | KEK/DEK separation, secure storage, rotation |
-| A.12.4 | Logging & monitoring | Sensitive field logging, audit trails, alerting |
-| A.12.6 | Management of technical vulnerabilities | Dependency scanning, patch cadence |
-| A.13.1 | Network security | API authentication, transport security (TLS), public exposure |
-| A.13.2 | Information transfer & segregation | Data in transit, encryption, secure API contracts |
-| A.14.1 | Information security incident management | Error handling, breach detection, response procedures |
-| A.14.2 | Improvements & post-incident review | Lessons learned, remediation verification |
+| A.5.1 | Policies for information security | Configuration, documentation, architecture decisions |
+| A.5.2 | Information security roles and responsibilities | User management, access policies, role definitions |
+| A.5.3 | Segregation of duties | Auth guards, admin functions, conflicting-permission separation |
+| A.5.7 | Threat intelligence | Dependency CVE feeds, advisory monitoring |
+| A.5.9 | Inventory of information and other associated assets | Encryption scope, data handling, encrypted fields |
+| A.5.10 | Acceptable use of information and other associated assets | Data lineage, ownership clarity, retention policies |
+| A.5.14 | Information transfer | Data in transit, encryption, secure API contracts |
+| A.5.15 | Access control | Auth guards, permissions matrix |
+| A.5.16 | Identity management | Provisioning, de-provisioning, identity lifecycle |
+| A.5.18 | Access rights | Granting, review, and revocation of access; least privilege |
+| A.5.24 | Information security incident management planning and preparation | Incident playbooks, runbooks |
+| A.5.25 | Assessment and decision on information security events | Detection, triage, severity classification |
+| A.5.26 | Response to information security incidents | Error handling, breach detection, response procedures |
+| A.5.27 | Learning from information security incidents | Lessons learned, post-incident remediation |
+| A.8.2  | Privileged access rights | Admin endpoints, IAM admin scopes, break-glass accounts |
+| A.8.8  | Management of technical vulnerabilities | Dependency scanning, patch cadence |
+| A.8.15 | Logging | Audit trails, sensitive-operation logging |
+| A.8.16 | Monitoring activities | Alerting, anomaly detection |
+| A.8.20 | Networks security | API authentication, transport security (TLS), public exposure |
+| A.8.22 | Segregation of networks | VPC/subnet boundaries, security groups, internal-only services |
+| A.8.23 | Web filtering | Egress controls, allowlisted external destinations |
+| A.8.24 | Use of cryptography | AES-256-GCM, PBKDF2, key management, KEK/DEK separation, rotation |
+| A.8.28 | Secure coding | Input validation, injection prevention, dependency hygiene |
 
 ---
 
@@ -94,7 +117,7 @@ payloads, password hashes, API keys, personal data). Flag any code that:
 - Exposes them in API responses beyond the explicit reveal endpoint
 - Includes IV/nonce fields in logs or error responses unnecessarily
 
-**Maps to:** A.10.1, A.12.4
+**Maps to:** A.8.24, A.8.15
 
 **Suggested fix:** remove the field from logs/errors. Log identifiers and field names only,
 never values.
@@ -111,7 +134,7 @@ If the project uses client-side key derivation, the passphrase or master key mus
 
 Flag any backend DTO that accepts a `passphrase`, `masterKey`, or equivalent field.
 
-**Maps to:** A.10.2, A.6.2
+**Maps to:** A.8.24, A.5.3
 
 ### 3. API Key & Sensitive Secret Leakage
 
@@ -123,7 +146,7 @@ secrets) must not appear in:
 - Logs at any level
 - Error messages or debugging output
 
-**Maps to:** A.6.2, A.9.2, A.12.4
+**Maps to:** A.5.3, A.5.16, A.8.15
 
 **Suggested fix:** use response DTOs with explicit field exclusion (e.g. `@Exclude()` from
 `class-transformer`, or a hand-written response shape). Never return the full entity.
@@ -139,7 +162,7 @@ Flag any code involving encryption keys (DEK, KEK, raw key material) that:
 - Logs key material (full key, fragments, or hints sufficient to derive the key)
 - Stores key material in logs, error messages, or exception bodies
 
-**Maps to:** A.10.2
+**Maps to:** A.8.24
 
 ### 5. Cryptography Standards
 
@@ -153,7 +176,7 @@ Flag any code involving encryption keys (DEK, KEK, raw key material) that:
 - No custom crypto implementations — use established libraries (Node `crypto`, libsodium,
   Web Crypto API)
 
-**Maps to:** A.10.1
+**Maps to:** A.8.24
 
 ---
 
@@ -169,7 +192,7 @@ Every controller endpoint must be protected:
 
 Flag any route lacking both a guard and an explicit public marker.
 
-**Maps to:** A.9.1, A.13.1
+**Maps to:** A.5.15, A.8.20
 
 ### 2. User Data Access & Authorisation
 
@@ -180,7 +203,7 @@ Flag any endpoint that:
 - Allows bulk data export without rate limiting and audit logging
 - Bypasses auth guards for admin endpoints without documented business justification
 
-**Maps to:** A.6.2, A.9.1, A.9.4
+**Maps to:** A.5.3, A.5.15, A.5.18
 
 ### 3. RBAC
 
@@ -191,7 +214,7 @@ If roles exist:
 - Role assignment must be audited
 - Role changes cannot be self-assigned
 
-**Maps to:** A.6.2, A.9.2
+**Maps to:** A.5.3, A.5.16, A.5.18
 
 ### 4. Session & Token Management
 
@@ -203,7 +226,7 @@ Flag:
 - Token signing secrets hardcoded or stored outside the secrets manager
 - Missing rate limiting on token issuance endpoints
 
-**Maps to:** A.6.1, A.10.2
+**Maps to:** A.5.2, A.8.24
 
 ### 5. Input Validation & Injection Prevention
 
@@ -213,7 +236,7 @@ Flag:
 - No raw SQL interpolation — parameterised queries or ORM query builders only
 - No `dangerouslySetInnerHTML` (or framework equivalent) on user-supplied content
 
-**Maps to:** A.14.1
+**Maps to:** A.8.28
 
 ### 6. Rate Limiting
 
@@ -224,7 +247,7 @@ Flag endpoints lacking rate limits where they are required:
 - Data export and bulk operations
 - Password change
 
-**Maps to:** A.12.4, A.14.1
+**Maps to:** A.8.16, A.5.25
 
 ---
 
@@ -240,7 +263,7 @@ Flag:
 - Long-lived access keys for human users (should be SSO/role assumption)
 - Missing MFA condition on privileged role assumptions
 
-**Maps to:** A.6.2, A.9.1, A.9.2
+**Maps to:** A.5.3, A.5.15, A.8.2
 
 ### 2. Network Exposure
 
@@ -252,7 +275,7 @@ Flag:
 - Security group default-allow rules
 - Missing WAF / IP allowlist on internal-only services
 
-**Maps to:** A.13.1
+**Maps to:** A.8.20, A.8.22, A.8.23
 
 ### 3. Secrets in IaC
 
@@ -264,7 +287,7 @@ Flag:
 
 Secrets must be created out-of-band and referenced by ARN/ID.
 
-**Maps to:** A.10.2
+**Maps to:** A.8.24
 
 ### 4. Encryption at Rest
 
@@ -272,7 +295,7 @@ Flag any new data store (S3 bucket, database, EBS volume, queue, etc.) without
 encryption at rest enabled. Customer-managed keys (CMK) preferred for confidential
 data classes.
 
-**Maps to:** A.10.1, A.13.2
+**Maps to:** A.8.24, A.5.14
 
 ### 5. Backup & Retention
 
@@ -283,7 +306,7 @@ Flag:
 - Backups not encrypted
 - No documented restore procedure
 
-**Maps to:** A.8.2, A.14.2
+**Maps to:** A.5.10, A.5.27
 
 ---
 
@@ -307,7 +330,7 @@ Audit logs must be:
 - Retained per the project's policy
 - Free of plaintext secrets and PII
 
-**Maps to:** A.12.4, A.9.4
+**Maps to:** A.8.15, A.5.18
 
 ---
 
@@ -321,7 +344,7 @@ Flag any code that:
 - Leaves backup copies of deleted data accessible past retention
 - Writes PII to temporary files without secure cleanup
 
-**Maps to:** A.8.2, A.14.2
+**Maps to:** A.5.10, A.5.27
 
 ---
 
@@ -337,7 +360,7 @@ Flag:
 - Lockfile changes that don't correspond to a stated dependency change
 - Provider/module versions newly introduced without pinning
 
-**Maps to:** A.12.6
+**Maps to:** A.8.8, A.5.7
 
 ---
 
@@ -349,7 +372,7 @@ Flag:
 - `X-Frame-Options` or `frame-ancestors` CSP directive set
 - CORS whitelist explicit — no `*` origin on authenticated endpoints
 
-**Maps to:** A.13.1, A.13.2
+**Maps to:** A.8.20, A.5.14
 
 ---
 
@@ -366,7 +389,7 @@ to the change under review:
 - **Change Management Procedure:** how schema and infra changes are reviewed and deployed
 - **Privacy Policy:** what data is collected, how it's used, who can access it
 
-**Maps to:** A.5.1, A.14.2
+**Maps to:** A.5.1, A.5.27
 
 ---
 
@@ -464,6 +487,9 @@ Use the GitHub MCP server to:
 ### filesystem — Policy & Decision Cross-Reference
 Use the Filesystem MCP server to:
 
+- Read `docs/features/` to understand the original feature intent and any data
+  classifications declared in the feature document — this often surfaces the
+  authoritative data-class context for the change
 - Read `docs/decisions/` to verify that any APPROVED WITH EXCEPTION findings from
   prior reviews have been logged as ADRs before re-approving
 - Read `docs/proposals/` to understand the full scope of the change under review,

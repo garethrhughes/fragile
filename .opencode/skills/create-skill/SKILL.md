@@ -51,7 +51,7 @@ drip-feed one question at a time. Wait for answers before generating.
 
 ### 5. MCP Tools
 - Which of the available MCP servers should this skill use?
-  (context7, github, filesystem, semgrep — or none)
+  (context7, github, filesystem, memory, squirrel-notes, semgrep, jira — or none)
 - For each: in what specific situations should it be used within this skill?
 
 ### 6. Project Context
