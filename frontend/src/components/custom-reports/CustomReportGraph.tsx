@@ -14,7 +14,7 @@ import {
   Tooltip,
   Legend,
 } from 'recharts'
-import type { CustomReportDataPoint, CustomReportGraph } from '@/lib/api'
+import type { CustomReportDataPoint, CustomReportWidget } from '@/lib/api'
 
 // Deterministic palette — same order as existing chart colours in the codebase
 const SERIES_COLOURS = [
@@ -29,7 +29,7 @@ const SERIES_COLOURS = [
 ]
 
 interface Props {
-  graph: CustomReportGraph
+  graph: CustomReportWidget
   filteredPoints: CustomReportDataPoint[]
 }
 
