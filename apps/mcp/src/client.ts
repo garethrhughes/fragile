@@ -41,6 +41,34 @@ function buildUrl(path: string, params?: Record<string, string | number | boolea
   return url.toString();
 }
 
+async function handleResponse<T>(response: Response, path: string): Promise<ApiResponse<T>> {
+  if (response.status === 202 || response.status === 204) {
+    let data: T;
+    try {
+      data = await response.json() as T;
+    } catch {
+      data = undefined as unknown as T;
+    }
+    return { status: response.status, data };
+  }
+
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    try {
+      const body = await response.json() as { message?: string };
+      if (body.message) {
+        message = `HTTP ${response.status}: ${body.message}`;
+      }
+    } catch {
+      // ignore JSON parse errors for error bodies
+    }
+    throw new McpError(ErrorCode.InternalError, `${path}: ${message}`);
+  }
+
+  const data = await response.json() as T;
+  return { status: response.status, data };
+}
+
 export async function apiGet<T = unknown>(
   path: string,
   params?: Record<string, string | number | boolean | undefined>,
@@ -56,25 +84,79 @@ export async function apiGet<T = unknown>(
     const message = err instanceof Error ? err.message : String(err);
     throw new McpError(ErrorCode.InternalError, `Network error calling ${path}: ${message}`);
   }
+  return handleResponse<T>(response, path);
+}
 
-  if (response.status === 202) {
-    const data = await response.json() as T;
-    return { status: 202, data };
+export async function apiPost<T = unknown>(
+  path: string,
+  body: unknown,
+): Promise<ApiResponse<T>> {
+  const url = buildUrl(path);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: buildHeaders(),
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new McpError(ErrorCode.InternalError, `Network error calling ${path}: ${message}`);
   }
+  return handleResponse<T>(response, path);
+}
 
-  if (!response.ok) {
-    let message = `HTTP ${response.status}`;
-    try {
-      const body = await response.json() as { message?: string };
-      if (body.message) {
-        message = `HTTP ${response.status}: ${body.message}`;
-      }
-    } catch {
-      // ignore JSON parse errors for error bodies
-    }
-    throw new McpError(ErrorCode.InternalError, message);
+export async function apiPatch<T = unknown>(
+  path: string,
+  body: unknown,
+): Promise<ApiResponse<T>> {
+  const url = buildUrl(path);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'PATCH',
+      headers: buildHeaders(),
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new McpError(ErrorCode.InternalError, `Network error calling ${path}: ${message}`);
   }
+  return handleResponse<T>(response, path);
+}
 
-  const data = await response.json() as T;
-  return { status: response.status, data };
+export async function apiPut<T = unknown>(
+  path: string,
+  body: unknown,
+): Promise<ApiResponse<T>> {
+  const url = buildUrl(path);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'PUT',
+      headers: buildHeaders(),
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new McpError(ErrorCode.InternalError, `Network error calling ${path}: ${message}`);
+  }
+  return handleResponse<T>(response, path);
+}
+
+export async function apiDelete<T = unknown>(
+  path: string,
+): Promise<ApiResponse<T>> {
+  const url = buildUrl(path);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'DELETE',
+      headers: buildHeaders(),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new McpError(ErrorCode.InternalError, `Network error calling ${path}: ${message}`);
+  }
+  return handleResponse<T>(response, path);
 }

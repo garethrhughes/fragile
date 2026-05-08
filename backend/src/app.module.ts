@@ -17,6 +17,7 @@ import { GapsModule } from './gaps/gaps.module.js';
 import { AppConfigModule } from './config/config.module.js';
 import { SprintReportModule } from './sprint-report/sprint-report.module.js';
 import { SupportModule } from './support/support.module.js';
+import { CustomReportsModule } from './custom-reports/custom-reports.module.js';
 
 // YamlConfigModule is intentionally NOT imported here directly.
 // AppConfigModule already imports and re-exports YamlConfigModule.
@@ -58,6 +59,7 @@ import { SupportModule } from './support/support.module.js';
     AppConfigModule,
     SprintReportModule,
     SupportModule,
+    CustomReportsModule,
   ],
 })
 export class AppModule {}
