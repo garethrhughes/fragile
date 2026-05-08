@@ -1,5 +1,5 @@
 /**
- * Tests for CustomReportView and CustomReportGraph components (AC7).
+ * Tests for CustomReportView component.
  *
  * Strategy:
  *  - Recharts renders SVG — jsdom renders it but chart-specific internals are not
@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import type { CustomReport } from '@/lib/api'
+import type { CustomReport, CustomReportWidget as CustomReportWidgetType } from '@/lib/api'
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -29,7 +29,6 @@ global.ResizeObserver = class {
 }
 
 import { CustomReportView } from './CustomReportView'
-import { CustomReportGraph } from './CustomReportGraph'
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -41,15 +40,16 @@ const makeReport = (overrides?: Partial<CustomReport>): CustomReport => ({
   title: 'Demo Report',
   description: null,
   layout: null,
-  graphs: [],
+  widgets: [],
   filters: [],
+  jiraBaseUrl: 'https://example.atlassian.net',
   createdAt: '2024-01-01T00:00:00Z',
   updatedAt: '2024-01-01T00:00:00Z',
   ...overrides,
 })
 
-const makeGraph = (kind: 'line' | 'bar' | 'area' = 'line') => ({
-  id: 'g1',
+const makeWidget = (kind: 'line' | 'bar' | 'area' = 'line'): CustomReportWidgetType => ({
+  id: 'w1',
   customReportId: 'r1',
   kind,
   title: `${kind} chart`,
@@ -57,49 +57,15 @@ const makeGraph = (kind: 'line' | 'bar' | 'area' = 'line') => ({
   seriesKey: null,
   xAxisLabel: null,
   yAxisLabel: null,
+  columns: null,
+  statUnit: null,
+  statSubtitle: null,
+  statBand: null,
   createdAt: '2024-01-01T00:00:00Z',
   dataPoints: [
-    { id: 'p1', customReportGraphId: 'g1', x: '2024-01', y: 10, series: null, dimensions: null, createdAt: '2024-01-01T00:00:00Z' },
-    { id: 'p2', customReportGraphId: 'g1', x: '2024-02', y: 20, series: null, dimensions: null, createdAt: '2024-01-01T00:00:00Z' },
+    { id: 'p1', x: '2024-01', y: 10, series: null, dimensions: null, createdAt: '2024-01-01T00:00:00Z' },
+    { id: 'p2', x: '2024-02', y: 20, series: null, dimensions: null, createdAt: '2024-01-01T00:00:00Z' },
   ],
-})
-
-// ---------------------------------------------------------------------------
-// CustomReportGraph
-// ---------------------------------------------------------------------------
-
-describe('CustomReportGraph', () => {
-  it('renders the graph title', () => {
-    const graph = makeGraph('line')
-    render(<CustomReportGraph graph={graph} filteredPoints={graph.dataPoints} />)
-    expect(screen.getByText('line chart')).toBeInTheDocument()
-  })
-
-  it('renders a chart container for line kind', () => {
-    const graph = makeGraph('line')
-    const { container } = render(<CustomReportGraph graph={graph} filteredPoints={graph.dataPoints} />)
-    // ResponsiveContainer renders a div wrapper; title is inside the card
-    expect(container.querySelector('h3')).toBeInTheDocument()
-    expect(screen.getByText('line chart')).toBeInTheDocument()
-  })
-
-  it('renders a chart container for bar kind', () => {
-    const graph = makeGraph('bar')
-    render(<CustomReportGraph graph={graph} filteredPoints={graph.dataPoints} />)
-    expect(screen.getByText('bar chart')).toBeInTheDocument()
-  })
-
-  it('renders a chart container for area kind', () => {
-    const graph = makeGraph('area')
-    render(<CustomReportGraph graph={graph} filteredPoints={graph.dataPoints} />)
-    expect(screen.getByText('area chart')).toBeInTheDocument()
-  })
-
-  it('renders with empty points without crashing', () => {
-    const graph = makeGraph()
-    render(<CustomReportGraph graph={graph} filteredPoints={[]} />)
-    expect(screen.getByText('line chart')).toBeInTheDocument()
-  })
 })
 
 // ---------------------------------------------------------------------------
@@ -107,14 +73,14 @@ describe('CustomReportGraph', () => {
 // ---------------------------------------------------------------------------
 
 describe('CustomReportView', () => {
-  it('shows empty state when report has no graphs', () => {
+  it('shows empty state when report has no widgets', () => {
     render(<CustomReportView report={makeReport()} />)
-    expect(screen.getByText('No graphs yet')).toBeInTheDocument()
+    expect(screen.getByText('No widgets yet')).toBeInTheDocument()
   })
 
-  it('renders one graph card per graph in the report (AC7)', () => {
+  it('renders one widget card per widget in the report', () => {
     const report = makeReport({
-      graphs: [makeGraph('line'), { ...makeGraph('bar'), id: 'g2', title: 'bar chart', position: 1 }],
+      widgets: [makeWidget('line'), { ...makeWidget('bar'), id: 'w2', title: 'bar chart', position: 1 }],
     })
     render(<CustomReportView report={report} />)
     expect(screen.getByText('line chart')).toBeInTheDocument()

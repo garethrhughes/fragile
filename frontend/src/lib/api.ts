@@ -1168,8 +1168,17 @@ export function getSupportSummary(
 
 // ---- Custom Reports -------------------------------------------------------
 
-export type GraphKind = 'line' | 'bar' | 'area'
+export type WidgetKind = 'line' | 'bar' | 'area' | 'table' | 'stat'
+export type StatBand = 'elite' | 'high' | 'medium' | 'low' | 'none'
+export type ColumnType = 'text' | 'number' | 'status' | 'priority' | 'issue' | 'link' | 'icon'
 export type FilterKind = 'select' | 'multiselect'
+
+export interface ColumnDefinition {
+  key: string
+  label: string
+  type: ColumnType
+  sortable?: boolean
+}
 
 export interface CustomReportDataPoint {
   id: string
@@ -1180,15 +1189,19 @@ export interface CustomReportDataPoint {
   createdAt: string
 }
 
-export interface CustomReportGraph {
+export interface CustomReportWidget {
   id: string
   customReportId: string
-  kind: GraphKind
+  kind: WidgetKind
   title: string
   seriesKey: string | null
   xAxisLabel: string | null
   yAxisLabel: string | null
   position: number
+  columns: ColumnDefinition[] | null
+  statUnit: string | null
+  statSubtitle: string | null
+  statBand: StatBand | null
   createdAt: string
   dataPoints: CustomReportDataPoint[]
 }
@@ -1211,8 +1224,9 @@ export interface CustomReport {
   layout: Record<string, unknown> | null
   createdAt: string
   updatedAt: string
-  graphs: CustomReportGraph[]
+  widgets: CustomReportWidget[]
   filters: CustomReportFilter[]
+  jiraBaseUrl: string
 }
 
 export interface CustomReportSummary {
@@ -1231,13 +1245,17 @@ export interface CreateCustomReportBody {
   layout?: Record<string, unknown>
 }
 
-export interface CreateGraphBody {
-  kind: GraphKind
+export interface CreateWidgetBody {
+  kind: WidgetKind
   title: string
   seriesKey?: string
   xAxisLabel?: string
   yAxisLabel?: string
   position?: number
+  columns?: ColumnDefinition[]
+  statUnit?: string
+  statSubtitle?: string
+  statBand?: StatBand
 }
 
 export interface AppendDataPointsBody {
@@ -1283,8 +1301,8 @@ export function deleteCustomReport(slug: string): Promise<void> {
   return apiFetch(`/api/custom-reports/${encodeURIComponent(slug)}`, { method: 'DELETE' })
 }
 
-export function addCustomReportGraph(slug: string, body: CreateGraphBody): Promise<CustomReportGraph> {
-  return apiFetch(`/api/custom-reports/${encodeURIComponent(slug)}/graphs`, {
+export function addCustomReportWidget(slug: string, body: CreateWidgetBody): Promise<CustomReportWidget> {
+  return apiFetch(`/api/custom-reports/${encodeURIComponent(slug)}/widgets`, {
     method: 'POST',
     body: JSON.stringify(body),
   })
@@ -1292,22 +1310,22 @@ export function addCustomReportGraph(slug: string, body: CreateGraphBody): Promi
 
 export function appendCustomReportData(
   slug: string,
-  graphId: string,
+  widgetId: string,
   body: AppendDataPointsBody,
 ): Promise<{ appended: number }> {
   return apiFetch(
-    `/api/custom-reports/${encodeURIComponent(slug)}/graphs/${encodeURIComponent(graphId)}/data-points`,
+    `/api/custom-reports/${encodeURIComponent(slug)}/widgets/${encodeURIComponent(widgetId)}/data-points`,
     { method: 'POST', body: JSON.stringify(body) },
   )
 }
 
 export function replaceCustomReportData(
   slug: string,
-  graphId: string,
+  widgetId: string,
   body: AppendDataPointsBody,
 ): Promise<{ replaced: number }> {
   return apiFetch(
-    `/api/custom-reports/${encodeURIComponent(slug)}/graphs/${encodeURIComponent(graphId)}/data-points`,
+    `/api/custom-reports/${encodeURIComponent(slug)}/widgets/${encodeURIComponent(widgetId)}/data-points`,
     { method: 'PUT', body: JSON.stringify(body) },
   )
 }

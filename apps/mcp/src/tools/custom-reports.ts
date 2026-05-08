@@ -9,6 +9,13 @@ const dataPointSchema = z.object({
   dimensions: z.record(z.string()).optional().describe('Key-value pairs for client-side filtering'),
 });
 
+const columnDefinitionSchema = z.object({
+  key: z.string().max(200).describe('Dimension key, or reserved keys: x, y, series'),
+  label: z.string().max(200).describe('Column header text'),
+  type: z.enum(['text', 'number', 'status', 'priority', 'issue', 'link', 'icon']),
+  sortable: z.boolean().optional().describe('Default true'),
+});
+
 function json(data: unknown): { content: [{ type: 'text'; text: string }] } {
   return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
 }
@@ -28,7 +35,7 @@ export function registerCustomReportsTools(server: McpServer): void {
 
   server.tool(
     'get_custom_report',
-    'Get a custom report by slug, including all graphs, data points, and filter definitions.',
+    'Get a custom report by slug, including all widgets, data points, filter definitions, and jiraBaseUrl.',
     { slug: z.string().describe('URL-safe report slug') },
     async ({ slug }) => {
       const result = await apiGet(`/api/custom-reports/${encodeURIComponent(slug)}`);
@@ -68,7 +75,7 @@ export function registerCustomReportsTools(server: McpServer): void {
 
   server.tool(
     'delete_custom_report',
-    'Delete a custom report and all its graphs, data points, and filters.',
+    'Delete a custom report and all its widgets, data points, and filters.',
     { slug: z.string() },
     async ({ slug }) => {
       await apiDelete(`/api/custom-reports/${encodeURIComponent(slug)}`);
@@ -76,23 +83,33 @@ export function registerCustomReportsTools(server: McpServer): void {
     },
   );
 
-  // ── Graphs ───────────────────────────────────────────────────────────────
+  // ── Widgets ───────────────────────────────────────────────────────────────
 
   server.tool(
-    'add_custom_report_graph',
-    'Add a graph (chart) to a custom report. kind must be one of: line, bar, area.',
+    'add_custom_report_widget',
+    [
+      'Add a widget to a custom report.',
+      'kind must be one of: line, bar, area, table, stat.',
+      'For "table" widgets, provide columns (array of column definitions with key, label, type, sortable).',
+      'For "stat" widgets, provide statUnit, statSubtitle, and/or statBand (elite|high|medium|low|none). Do NOT provide columns with kind="stat".',
+      'For chart kinds (line, bar, area), provide seriesKey, xAxisLabel, yAxisLabel as needed.',
+    ].join(' '),
     {
       slug: z.string(),
-      kind: z.enum(['line', 'bar', 'area']),
+      kind: z.enum(['line', 'bar', 'area', 'table', 'stat']),
       title: z.string().max(200),
-      seriesKey: z.string().max(100).optional().describe('Dimension key used to split into separate series'),
+      seriesKey: z.string().max(100).optional().describe('Dimension key used to split into separate series (chart kinds)'),
       xAxisLabel: z.string().max(100).optional(),
       yAxisLabel: z.string().max(100).optional(),
       position: z.number().int().min(0).optional(),
+      columns: z.array(columnDefinitionSchema).max(50).optional().describe('Column definitions for table widgets'),
+      statUnit: z.string().max(200).optional().describe('Unit suffix for stat widgets (e.g. "days")'),
+      statSubtitle: z.string().max(200).optional().describe('Secondary text below value for stat widgets'),
+      statBand: z.enum(['elite', 'high', 'medium', 'low', 'none']).optional().describe('Left-border band colour for stat widgets'),
     },
     async ({ slug, ...body }) => {
       const result = await apiPost(
-        `/api/custom-reports/${encodeURIComponent(slug)}/graphs`,
+        `/api/custom-reports/${encodeURIComponent(slug)}/widgets`,
         body,
       );
       return json(result.data);
@@ -100,21 +117,25 @@ export function registerCustomReportsTools(server: McpServer): void {
   );
 
   server.tool(
-    'update_custom_report_graph',
-    'Update an existing graph on a custom report.',
+    'update_custom_report_widget',
+    'Update an existing widget on a custom report.',
     {
       slug: z.string(),
-      graphId: z.string().uuid(),
-      kind: z.enum(['line', 'bar', 'area']).optional(),
+      widgetId: z.string().uuid(),
+      kind: z.enum(['line', 'bar', 'area', 'table', 'stat']).optional(),
       title: z.string().max(200).optional(),
       seriesKey: z.string().max(100).optional(),
       xAxisLabel: z.string().max(100).optional(),
       yAxisLabel: z.string().max(100).optional(),
       position: z.number().int().min(0).optional(),
+      columns: z.array(columnDefinitionSchema).max(50).optional(),
+      statUnit: z.string().max(200).optional(),
+      statSubtitle: z.string().max(200).optional(),
+      statBand: z.enum(['elite', 'high', 'medium', 'low', 'none']).optional(),
     },
-    async ({ slug, graphId, ...body }) => {
+    async ({ slug, widgetId, ...body }) => {
       const result = await apiPatch(
-        `/api/custom-reports/${encodeURIComponent(slug)}/graphs/${encodeURIComponent(graphId)}`,
+        `/api/custom-reports/${encodeURIComponent(slug)}/widgets/${encodeURIComponent(widgetId)}`,
         body,
       );
       return json(result.data);
@@ -122,12 +143,12 @@ export function registerCustomReportsTools(server: McpServer): void {
   );
 
   server.tool(
-    'delete_custom_report_graph',
-    'Delete a graph and all its data points from a custom report.',
-    { slug: z.string(), graphId: z.string().uuid() },
-    async ({ slug, graphId }) => {
+    'delete_custom_report_widget',
+    'Delete a widget and all its data points from a custom report.',
+    { slug: z.string(), widgetId: z.string().uuid() },
+    async ({ slug, widgetId }) => {
       await apiDelete(
-        `/api/custom-reports/${encodeURIComponent(slug)}/graphs/${encodeURIComponent(graphId)}`,
+        `/api/custom-reports/${encodeURIComponent(slug)}/widgets/${encodeURIComponent(widgetId)}`,
       );
       return json({ deleted: true });
     },
@@ -137,15 +158,15 @@ export function registerCustomReportsTools(server: McpServer): void {
 
   server.tool(
     'append_custom_report_data',
-    'Append data points to a graph. Existing points are preserved (additive). Max 1000 points per call.',
+    'Append data points to a widget. Existing points are preserved (additive). Max 1000 points per call.',
     {
       slug: z.string(),
-      graphId: z.string().uuid(),
+      widgetId: z.string().uuid(),
       points: z.array(dataPointSchema).min(1).max(1000),
     },
-    async ({ slug, graphId, points }) => {
+    async ({ slug, widgetId, points }) => {
       const result = await apiPost(
-        `/api/custom-reports/${encodeURIComponent(slug)}/graphs/${encodeURIComponent(graphId)}/data-points`,
+        `/api/custom-reports/${encodeURIComponent(slug)}/widgets/${encodeURIComponent(widgetId)}/data-points`,
         { points },
       );
       return json(result.data);
@@ -154,15 +175,15 @@ export function registerCustomReportsTools(server: McpServer): void {
 
   server.tool(
     'replace_custom_report_data',
-    'Replace all data points for a graph with the provided set. Existing points are deleted first. Pass an empty array to clear all points (equivalent to clear_custom_report_data). Max 1000 points per call.',
+    'Replace all data points for a widget with the provided set. Existing points are deleted first. Pass an empty array to clear all points. Max 1000 points per call.',
     {
       slug: z.string(),
-      graphId: z.string().uuid(),
+      widgetId: z.string().uuid(),
       points: z.array(dataPointSchema).min(0).max(1000),
     },
-    async ({ slug, graphId, points }) => {
+    async ({ slug, widgetId, points }) => {
       const result = await apiPut(
-        `/api/custom-reports/${encodeURIComponent(slug)}/graphs/${encodeURIComponent(graphId)}/data-points`,
+        `/api/custom-reports/${encodeURIComponent(slug)}/widgets/${encodeURIComponent(widgetId)}/data-points`,
         { points },
       );
       return json(result.data);
@@ -171,11 +192,11 @@ export function registerCustomReportsTools(server: McpServer): void {
 
   server.tool(
     'clear_custom_report_data',
-    'Delete all data points for a graph without removing the graph itself.',
-    { slug: z.string(), graphId: z.string().uuid() },
-    async ({ slug, graphId }) => {
+    'Delete all data points for a widget without removing the widget itself.',
+    { slug: z.string(), widgetId: z.string().uuid() },
+    async ({ slug, widgetId }) => {
       await apiDelete(
-        `/api/custom-reports/${encodeURIComponent(slug)}/graphs/${encodeURIComponent(graphId)}/data-points`,
+        `/api/custom-reports/${encodeURIComponent(slug)}/widgets/${encodeURIComponent(widgetId)}/data-points`,
       );
       return json({ cleared: true });
     },

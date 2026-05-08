@@ -13,8 +13,8 @@ import { ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { CustomReportsService } from './custom-reports.service.js';
 import { CreateCustomReportDto } from './dto/create-custom-report.dto.js';
 import { UpdateCustomReportDto } from './dto/update-custom-report.dto.js';
-import { CreateGraphDto } from './dto/create-graph.dto.js';
-import { UpdateGraphDto } from './dto/update-graph.dto.js';
+import { CreateWidgetDto } from './dto/create-widget.dto.js';
+import { UpdateWidgetDto } from './dto/update-widget.dto.js';
 import { AppendDataPointsDto } from './dto/append-data-points.dto.js';
 import { ReplaceDataPointsDto } from './dto/replace-data-points.dto.js';
 import { CreateFilterDto } from './dto/create-filter.dto.js';
@@ -39,7 +39,7 @@ export class CustomReportsController {
     return this.service.createReport(dto);
   }
 
-  @ApiOperation({ summary: 'Get a custom report with all graphs, filters, and data points' })
+  @ApiOperation({ summary: 'Get a custom report with all widgets, filters, and data points' })
   @ApiParam({ name: 'slug' })
   @Get(':slug')
   getReport(@Param('slug') slug: string) {
@@ -61,77 +61,77 @@ export class CustomReportsController {
     return this.service.deleteReport(slug);
   }
 
-  // ── Graphs ─────────────────────────────────────────────────────────────────
+  // ── Widgets ─────────────────────────────────────────────────────────────────
 
-  @ApiOperation({ summary: 'Add a graph to a report' })
+  @ApiOperation({ summary: 'Add a widget to a report' })
   @ApiParam({ name: 'slug' })
-  @Post(':slug/graphs')
+  @Post(':slug/widgets')
   @HttpCode(201)
-  addGraph(@Param('slug') slug: string, @Body() dto: CreateGraphDto) {
-    return this.service.addGraph(slug, dto);
+  addWidget(@Param('slug') slug: string, @Body() dto: CreateWidgetDto) {
+    return this.service.addWidget(slug, dto);
   }
 
-  @ApiOperation({ summary: 'Update a graph' })
+  @ApiOperation({ summary: 'Update a widget' })
   @ApiParam({ name: 'slug' })
-  @ApiParam({ name: 'graphId' })
-  @Patch(':slug/graphs/:graphId')
-  updateGraph(
+  @ApiParam({ name: 'widgetId' })
+  @Patch(':slug/widgets/:widgetId')
+  updateWidget(
     @Param('slug') slug: string,
-    @Param('graphId') graphId: string,
-    @Body() dto: UpdateGraphDto,
+    @Param('widgetId') widgetId: string,
+    @Body() dto: UpdateWidgetDto,
   ) {
-    return this.service.updateGraph(slug, graphId, dto);
+    return this.service.updateWidget(slug, widgetId, dto);
   }
 
-  @ApiOperation({ summary: 'Delete a graph and all its data points' })
+  @ApiOperation({ summary: 'Delete a widget and all its data points' })
   @ApiParam({ name: 'slug' })
-  @ApiParam({ name: 'graphId' })
+  @ApiParam({ name: 'widgetId' })
   @HttpCode(204)
-  @Delete(':slug/graphs/:graphId')
-  deleteGraph(
+  @Delete(':slug/widgets/:widgetId')
+  deleteWidget(
     @Param('slug') slug: string,
-    @Param('graphId') graphId: string,
+    @Param('widgetId') widgetId: string,
   ): Promise<void> {
-    return this.service.deleteGraph(slug, graphId);
+    return this.service.deleteWidget(slug, widgetId);
   }
 
   // ── Data points ────────────────────────────────────────────────────────────
 
-  @ApiOperation({ summary: 'Append data points to a graph (additive)' })
+  @ApiOperation({ summary: 'Append data points to a widget (additive)' })
   @ApiParam({ name: 'slug' })
-  @ApiParam({ name: 'graphId' })
-  @Post(':slug/graphs/:graphId/data-points')
+  @ApiParam({ name: 'widgetId' })
+  @Post(':slug/widgets/:widgetId/data-points')
   @HttpCode(201)
   appendDataPoints(
     @Param('slug') slug: string,
-    @Param('graphId') graphId: string,
+    @Param('widgetId') widgetId: string,
     @Body() dto: AppendDataPointsDto,
   ) {
-    return this.service.appendDataPoints(slug, graphId, dto.points);
+    return this.service.appendDataPoints(slug, widgetId, dto.points);
   }
 
-  @ApiOperation({ summary: 'Replace all data points for a graph' })
+  @ApiOperation({ summary: 'Replace all data points for a widget' })
   @ApiParam({ name: 'slug' })
-  @ApiParam({ name: 'graphId' })
-  @Put(':slug/graphs/:graphId/data-points')
+  @ApiParam({ name: 'widgetId' })
+  @Put(':slug/widgets/:widgetId/data-points')
   replaceDataPoints(
     @Param('slug') slug: string,
-    @Param('graphId') graphId: string,
+    @Param('widgetId') widgetId: string,
     @Body() dto: ReplaceDataPointsDto,
   ) {
-    return this.service.replaceDataPoints(slug, graphId, dto.points);
+    return this.service.replaceDataPoints(slug, widgetId, dto.points);
   }
 
-  @ApiOperation({ summary: 'Clear all data points for a graph' })
+  @ApiOperation({ summary: 'Clear all data points for a widget' })
   @ApiParam({ name: 'slug' })
-  @ApiParam({ name: 'graphId' })
+  @ApiParam({ name: 'widgetId' })
   @HttpCode(204)
-  @Delete(':slug/graphs/:graphId/data-points')
+  @Delete(':slug/widgets/:widgetId/data-points')
   clearDataPoints(
     @Param('slug') slug: string,
-    @Param('graphId') graphId: string,
+    @Param('widgetId') widgetId: string,
   ): Promise<void> {
-    return this.service.clearDataPoints(slug, graphId);
+    return this.service.clearDataPoints(slug, widgetId);
   }
 
   // ── Filters ────────────────────────────────────────────────────────────────
