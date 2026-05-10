@@ -49,6 +49,7 @@ async-all-the-way, no `dynamic` for `dotnet`).
 | [mcp-setup](mcp-setup/SKILL.md) | Interactive MCP server setup — presents a menu of available MCP servers (Context7, GitHub, Filesystem, Memory, Squirrel Notes, Semgrep, Jira) and writes the chosen config into `opencode.json`; invoked automatically by `project-bootstrap` and `project-onboard` |
 | [create-skill](create-skill/SKILL.md) | Interactively creates or updates OpenCode skills — asks structured questions about purpose, workflow, MCP tools, and output format, then produces a complete SKILL.md and updates the README |
 | [update-skills](update-skills/SKILL.md) | Pulls the latest skills from the upstream repository and reports what changed (added, removed, modified) with a unified diff per skill |
+| [upgrade-rules-v2](upgrade-rules-v2/SKILL.md) | One-shot, idempotent migration of an existing project from rules v1 (monolithic `RULES.md`) to v2 (language-agnostic core + per-stack overlay). Detects the active stack, patches `CLAUDE.md` (Active Skillset line, rule links), flags pasted-in v1 rule sections, and re-runs the relevant installer scripts |
 
 ## Setup
 
