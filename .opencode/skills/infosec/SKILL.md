@@ -56,16 +56,25 @@ and privacy violations.
 
 ## Authoritative Rules
 
-The control checks below cite ISO27001:2022 Annex A. Project-wide engineering rules that
-this skill audits against (secrets handling, IAM scoping, logging redaction, encryption
-defaults, dependency hygiene) are defined in [`RULES.md`](../RULES.md). When auditing,
-both this skill and `RULES.md` apply; any deviation from `RULES.md` is at minimum a
-**REQUIRES CHANGES** finding mapped to the relevant control. Frequent reference
-sections:
+The control checks below cite ISO27001:2022 Annex A. Project-wide engineering rules
+that this skill audits against (secrets handling, IAM scoping, logging redaction,
+encryption defaults, dependency hygiene) are defined in [`RULES.md`](../RULES.md)
+(language-agnostic core) plus the active **stack overlay** under [`rules/`](../rules/),
+pinned by the project's `## Active Skillset` line in `CLAUDE.md`.
+
+When auditing, both this skill and (`RULES.md` + the active overlay) apply; any
+deviation is at minimum a **REQUIRES CHANGES** finding mapped to the relevant control.
+
+Frequent reference sections:
 [Configuration & Secrets](../RULES.md#configuration--secrets),
 [Logging & Observability](../RULES.md#logging--observability),
 [Infrastructure as Code](../RULES.md#infrastructure-as-code-opentofu--terraform),
-[External HTTP Clients](../RULES.md#external-http-clients).
+[External HTTP Clients](../RULES.md#external-http-clients), plus the overlay's
+*Configuration & Secrets* and *Logging* sections (for stack-specific concrete
+mechanisms — `ConfigService`/`IOptions<T>`, `pino`/`Serilog`, etc.).
+
+If `CLAUDE.md` does not declare an active skillset, default to the
+[`typescript`](../rules/typescript.md) overlay for backwards compatibility.
 
 ---
 

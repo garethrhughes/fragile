@@ -74,7 +74,7 @@ skill_description() {
       echo "Use when designing modules, defining API contracts, planning schema changes, evaluating infrastructure topology, or writing a proposal before a significant change."
       ;;
     developer)
-      echo "Use when implementing features or bug fixes. Follows TDD (red-green-refactor), strict TypeScript, IaC conventions, and project observability/supply-chain rules."
+      echo "Use when implementing features or bug fixes. Follows TDD (red-green-refactor), the active stack overlay's language conventions, IaC conventions, and project observability/supply-chain rules."
       ;;
     reviewer)
       echo "Use to review staged changes or a pull request. Checks security, IaC safety, correctness, observability, performance, and convention adherence. Returns a PASS / PASS WITH COMMENTS / BLOCK verdict with Acceptance Criteria traceability."
@@ -97,21 +97,44 @@ skill_description() {
   esac
 }
 
-# ── Copy RULES.md alongside the agents ──────────────────────────────────────
-# Skill files reference RULES.md by relative path; the installed agents need
-# a local copy so those links resolve.
+# ── Copy RULES.md, rules/ and profiles/ alongside the agents ────────────────
+# Skill files reference RULES.md, rules/<profile>.md, and profiles/<profile>/
+# by relative path (../RULES.md, ../rules/, ../profiles/). The installed
+# agents live at .claude/agents/<skill>.md, so those relative links resolve
+# to the *parent* of agents/ — i.e. .claude/. Copy there.
+RULES_PARENT_DIR="$(dirname "$AGENTS_DIR")"
+
+# Clean up legacy copies from older installer versions that put these inside
+# .claude/agents/ instead of .claude/.
+rm -f "$AGENTS_DIR/RULES.md" "$AGENTS_DIR/.rules-version"
+rm -rf "$AGENTS_DIR/rules" "$AGENTS_DIR/profiles"
+
 if [[ -f "$SKILLS_DIR/RULES.md" ]]; then
-  cp "$SKILLS_DIR/RULES.md" "$AGENTS_DIR/RULES.md"
+  cp "$SKILLS_DIR/RULES.md" "$RULES_PARENT_DIR/RULES.md"
   # Sidecar: pin the RULES.md version so update-skills can detect drift.
   rules_version="$(awk -F': *' '/^Version:/{print $2; exit}' "$SKILLS_DIR/RULES.md" | tr -d '[:space:]')"
   if [[ -n "$rules_version" ]]; then
-    printf '%s\n' "$rules_version" > "$AGENTS_DIR/.rules-version"
-    echo "  RULES.md (v$rules_version) copied to .claude/agents/RULES.md"
+    printf '%s\n' "$rules_version" > "$RULES_PARENT_DIR/.rules-version"
+    echo "  RULES.md (v$rules_version) copied to ${RULES_PARENT_DIR#$PROJECT_ROOT/}/RULES.md"
   else
-    echo "  RULES.md copied to .claude/agents/RULES.md"
+    echo "  RULES.md copied to ${RULES_PARENT_DIR#$PROJECT_ROOT/}/RULES.md"
   fi
-  echo ""
 fi
+
+if [[ -d "$SKILLS_DIR/rules" ]]; then
+  rm -rf "$RULES_PARENT_DIR/rules"
+  cp -R "$SKILLS_DIR/rules" "$RULES_PARENT_DIR/rules"
+  overlay_count="$(find "$RULES_PARENT_DIR/rules" -maxdepth 1 -name '*.md' | wc -l | tr -d '[:space:]')"
+  echo "  rules/ copied ($overlay_count stack overlay(s)) to ${RULES_PARENT_DIR#$PROJECT_ROOT/}/rules/"
+fi
+
+if [[ -d "$SKILLS_DIR/profiles" ]]; then
+  rm -rf "$RULES_PARENT_DIR/profiles"
+  cp -R "$SKILLS_DIR/profiles" "$RULES_PARENT_DIR/profiles"
+  profile_count="$(find "$RULES_PARENT_DIR/profiles" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d '[:space:]')"
+  echo "  profiles/ copied ($profile_count profile(s)) to ${RULES_PARENT_DIR#$PROJECT_ROOT/}/profiles/"
+fi
+echo ""
 
 # ── Process each skill ───────────────────────────────────────────────────────
 written=0

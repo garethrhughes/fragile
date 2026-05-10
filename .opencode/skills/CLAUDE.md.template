@@ -1,5 +1,18 @@
 # CLAUDE.md — [Project Name]
 
+## Active Skillset: [typescript | dotnet | …]
+
+This project follows the language-agnostic core rules in
+[`.opencode/skills/RULES.md`](.opencode/skills/RULES.md) plus the matching stack
+overlay in
+[`.opencode/skills/rules/[profile].md`](.opencode/skills/rules/[profile].md)
+(replace `[profile]` with the active skillset above — e.g. `typescript.md` or
+`dotnet.md`).
+Skills (`developer`, `reviewer`, `architect`, `infosec`) read both when applying
+conventions to this project.
+
+---
+
 ## Project Overview
 
 [Short description: what does this system do, who uses it, what problem does it solve?]
@@ -81,24 +94,32 @@
 
 ## Engineering Rules
 
-The project-wide engineering conventions (TypeScript, configuration & secrets, external
-HTTP clients, frontend, backend, observability, IaC, testing, git) live in
-[`.opencode/skills/RULES.md`](.opencode/skills/RULES.md). They are referenced by every
-skill and are the single source of truth.
+The project-wide engineering conventions live in two layers:
+
+1. **Core (language-agnostic):**
+   [`.opencode/skills/RULES.md`](.opencode/skills/RULES.md) — configuration & secrets,
+   external HTTP clients, observability principles, infrastructure as code, testing,
+   git & PRs.
+2. **Stack overlay** (matches the active skillset above):
+   [`.opencode/skills/rules/[profile].md`](.opencode/skills/rules/[profile].md) —
+   language conventions, framework rules, ORM, logger, test runner. Replace
+   `[profile]` with the active skillset above (e.g. `typescript.md`, `dotnet.md`).
+
+Both are referenced by every skill and form the single source of truth.
 
 ### Project-specific overrides
 
-If this project deviates from any rule in `RULES.md`, list the override here with a brief
-justification. Otherwise leave the table empty.
+If this project deviates from any rule in the core or overlay, list the override here
+with a brief justification. Otherwise leave the table empty.
 
-| RULES.md section | Override | Justification |
-|---|---|---|
-| *(none)* | — | — |
+| Source | Section | Override | Justification |
+|---|---|---|---|
+| *(none)* | — | — | — |
 
 ### Project-specific additions
 
-If this project enforces rules **on top of** `RULES.md` (e.g. domain-specific naming,
-extra IaC tags, project-specific log fields), list them here.
+If this project enforces rules **on top of** the core + overlay (e.g. domain-specific
+naming, extra IaC tags, project-specific log fields), list them here.
 
 - *(none)*
 

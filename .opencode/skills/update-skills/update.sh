@@ -68,17 +68,61 @@ replace_project_context() {
 # emitted below if the installed RULES.md has been locally modified.
 ROOT_FILES="README.md CLAUDE.md.template RULES.md"
 
-CLONE_DIR="$(mktemp -d)"
+if [ -n "${_UPDATE_SKILLS_REUSE_CLONE:-}" ] && [ -d "$_UPDATE_SKILLS_REUSE_CLONE" ]; then
+  CLONE_DIR="$_UPDATE_SKILLS_REUSE_CLONE"
+  REUSED_CLONE=1
+  # Only delete the inherited clone dir if the previous run explicitly handed
+  # ownership over (it does this when self-updating via exec, since the
+  # previous process can't clean up after exec). External callers that pass
+  # _UPDATE_SKILLS_REUSE_CLONE without _UPDATE_SKILLS_OWN_CLONE keep their
+  # directory intact.
+  OWN_CLONE_DIR="${_UPDATE_SKILLS_OWN_CLONE:-0}"
+else
+  CLONE_DIR="$(mktemp -d)"
+  REUSED_CLONE=0
+  OWN_CLONE_DIR=1
+fi
 BEFORE_DIR="$(mktemp -d)"
 AFTER_DIR="$(mktemp -d)"
 CONTEXT_DIR="$(mktemp -d)"
-cleanup() { rm -rf "$CLONE_DIR" "$BEFORE_DIR" "$AFTER_DIR" "$CONTEXT_DIR" "$AWK_EXTRACT" "$AWK_REPLACE"; }
+cleanup() {
+  [ "$OWN_CLONE_DIR" = "1" ] && rm -rf "$CLONE_DIR"
+  rm -rf "$BEFORE_DIR" "$AFTER_DIR" "$CONTEXT_DIR" "$AWK_EXTRACT" "$AWK_REPLACE"
+}
 trap cleanup EXIT
 
-echo "Fetching upstream skills..."
-git clone --depth 1 --quiet "$UPSTREAM" "$CLONE_DIR"
-echo "Done."
-echo ""
+if [ "$REUSED_CLONE" = "0" ]; then
+  echo "Fetching upstream skills..."
+  git clone --depth 1 --quiet "$UPSTREAM" "$CLONE_DIR"
+  echo "Done."
+  echo ""
+fi
+
+# --- Self-update: re-exec from the new update.sh if upstream changed ---
+# Without this, a change to update.sh itself only takes effect on the *next*
+# run, because the current process is still executing the old logic from a
+# tempfile snapshot taken before this script ran. Detect drift, install the
+# new version, and exec into it so a single /update-skills picks up
+# everything (including any new top-level dirs the new logic syncs).
+UPSTREAM_UPDATE="$CLONE_DIR/update-skills/update.sh"
+INSTALLED_UPDATE="$SKILLS_DIR/update-skills/update.sh"
+if [ -z "${_UPDATE_SKILLS_SELF_UPDATED:-}" ] \
+   && [ -f "$UPSTREAM_UPDATE" ] \
+   && [ -f "$INSTALLED_UPDATE" ] \
+   && ! diff -q "$UPSTREAM_UPDATE" "$INSTALLED_UPDATE" >/dev/null 2>&1; then
+  echo "→ update.sh changed upstream — installing new version and re-running."
+  echo ""
+  cp "$UPSTREAM_UPDATE" "$INSTALLED_UPDATE"
+  chmod +x "$INSTALLED_UPDATE"
+  # Hand the existing clone to the next run so we don't pay for a second
+  # `git clone`. The cleanup trap won't fire because exec replaces this
+  # process; the new run will manage CLONE_DIR via its own trap.
+  _UPDATE_SKILLS_SELF_UPDATED=1 \
+  _UPDATE_SKILLS_REUSE_CLONE="$CLONE_DIR" \
+  _UPDATE_SKILLS_OWN_CLONE=1 \
+  _UPDATE_SKILLS_ORIG_DIR="${_UPDATE_SKILLS_ORIG_DIR:-$SCRIPT_DIR}" \
+  exec bash "$INSTALLED_UPDATE" "$@"
+fi
 
 for f in "$SKILLS_DIR"/*/SKILL.md; do
   [ -f "$f" ] || continue
@@ -104,6 +148,26 @@ if [ -d "$SKILLS_DIR/scripts" ]; then
   for f in "$SKILLS_DIR/scripts/"*; do
     [ -f "$f" ] || continue
     cp "$f" "$BEFORE_DIR/__scripts__$(basename "$f")"
+  done
+fi
+
+# Snapshot rules/ before update (top-level stack overlays)
+if [ -d "$SKILLS_DIR/rules" ]; then
+  for f in "$SKILLS_DIR/rules/"*; do
+    [ -f "$f" ] || continue
+    cp "$f" "$BEFORE_DIR/__rules__$(basename "$f")"
+  done
+fi
+
+# Snapshot profiles/ before update (per-profile bootstrap defaults + scaffolders)
+if [ -d "$SKILLS_DIR/profiles" ]; then
+  for d in "$SKILLS_DIR/profiles"/*/; do
+    [ -d "$d" ] || continue
+    profile="$(basename "$d")"
+    for f in "$d"*; do
+      [ -f "$f" ] || continue
+      cp "$f" "$BEFORE_DIR/__profiles__${profile}__$(basename "$f")"
+    done
   done
 fi
 
@@ -193,6 +257,41 @@ if [ -d "$CLONE_DIR/scripts" ]; then
   done
 fi
 
+# Sync rules/ from upstream (stack overlays — worker skills reference these)
+if [ -d "$CLONE_DIR/rules" ]; then
+  mkdir -p "$SKILLS_DIR/rules"
+  for f in "$CLONE_DIR/rules/"*; do
+    [ -f "$f" ] || continue
+    cp "$f" "$SKILLS_DIR/rules/$(basename "$f")"
+  done
+  # Remove rules files that no longer exist upstream
+  for f in "$SKILLS_DIR/rules/"*; do
+    [ -f "$f" ] || continue
+    fname="$(basename "$f")"
+    [ -f "$CLONE_DIR/rules/$fname" ] || rm -f "$f"
+  done
+fi
+
+# Sync profiles/ from upstream (per-profile bootstrap defaults + scaffolders)
+if [ -d "$CLONE_DIR/profiles" ]; then
+  mkdir -p "$SKILLS_DIR/profiles"
+  for upstream_profile_dir in "$CLONE_DIR/profiles"/*/; do
+    [ -d "$upstream_profile_dir" ] || continue
+    profile="$(basename "$upstream_profile_dir")"
+    mkdir -p "$SKILLS_DIR/profiles/$profile"
+    for f in "$upstream_profile_dir"*; do
+      [ -f "$f" ] || continue
+      cp "$f" "$SKILLS_DIR/profiles/$profile/$(basename "$f")"
+    done
+  done
+  # Remove profiles that no longer exist upstream
+  for installed_profile_dir in "$SKILLS_DIR/profiles"/*/; do
+    [ -d "$installed_profile_dir" ] || continue
+    profile="$(basename "$installed_profile_dir")"
+    [ -d "$CLONE_DIR/profiles/$profile" ] || rm -rf "$installed_profile_dir"
+  done
+fi
+
 for f in "$SKILLS_DIR"/*/SKILL.md; do
   [ -f "$f" ] || continue
   skill="$(basename "$(dirname "$f")")"
@@ -216,6 +315,26 @@ if [ -d "$SKILLS_DIR/scripts" ]; then
   for f in "$SKILLS_DIR/scripts/"*; do
     [ -f "$f" ] || continue
     cp "$f" "$AFTER_DIR/__scripts__$(basename "$f")"
+  done
+fi
+
+# Snapshot rules/ after update
+if [ -d "$SKILLS_DIR/rules" ]; then
+  for f in "$SKILLS_DIR/rules/"*; do
+    [ -f "$f" ] || continue
+    cp "$f" "$AFTER_DIR/__rules__$(basename "$f")"
+  done
+fi
+
+# Snapshot profiles/ after update
+if [ -d "$SKILLS_DIR/profiles" ]; then
+  for d in "$SKILLS_DIR/profiles"/*/; do
+    [ -d "$d" ] || continue
+    profile="$(basename "$d")"
+    for f in "$d"*; do
+      [ -f "$f" ] || continue
+      cp "$f" "$AFTER_DIR/__profiles__${profile}__$(basename "$f")"
+    done
   done
 fi
 
@@ -295,7 +414,53 @@ done
 extras_modified_count=0
 for e in $EXTRAS_MODIFIED; do extras_modified_count=$((extras_modified_count+1)); done
 
-TOTAL=$(( added_count + removed_count + modified_count + root_modified_count + scripts_modified_count + extras_modified_count ))
+# Count modified rules/ files
+RULES_MODIFIED=""
+for after_f in "$AFTER_DIR"/__rules__*; do
+  [ -f "$after_f" ] || continue
+  fname="$(basename "$after_f" | sed 's/^__rules__//')"
+  before_f="$BEFORE_DIR/__rules__$fname"
+  if [ ! -f "$before_f" ]; then
+    RULES_MODIFIED="$RULES_MODIFIED $fname"
+  elif ! diff -q "$before_f" "$after_f" > /dev/null 2>&1; then
+    RULES_MODIFIED="$RULES_MODIFIED $fname"
+  fi
+done
+# Detect removed rules files
+for before_f in "$BEFORE_DIR"/__rules__*; do
+  [ -f "$before_f" ] || continue
+  fname="$(basename "$before_f" | sed 's/^__rules__//')"
+  if [ ! -f "$AFTER_DIR/__rules__$fname" ]; then
+    RULES_MODIFIED="$RULES_MODIFIED REMOVED:$fname"
+  fi
+done
+rules_modified_count=0
+for f in $RULES_MODIFIED; do rules_modified_count=$((rules_modified_count+1)); done
+
+# Count modified profiles/ files
+PROFILES_MODIFIED=""
+for after_f in "$AFTER_DIR"/__profiles__*; do
+  [ -f "$after_f" ] || continue
+  key="$(basename "$after_f" | sed 's/^__profiles__//')"  # profile__filename
+  before_f="$BEFORE_DIR/__profiles__$key"
+  if [ ! -f "$before_f" ]; then
+    PROFILES_MODIFIED="$PROFILES_MODIFIED $key"
+  elif ! diff -q "$before_f" "$after_f" > /dev/null 2>&1; then
+    PROFILES_MODIFIED="$PROFILES_MODIFIED $key"
+  fi
+done
+# Detect removed profile files
+for before_f in "$BEFORE_DIR"/__profiles__*; do
+  [ -f "$before_f" ] || continue
+  key="$(basename "$before_f" | sed 's/^__profiles__//')"
+  if [ ! -f "$AFTER_DIR/__profiles__$key" ]; then
+    PROFILES_MODIFIED="$PROFILES_MODIFIED REMOVED:$key"
+  fi
+done
+profiles_modified_count=0
+for f in $PROFILES_MODIFIED; do profiles_modified_count=$((profiles_modified_count+1)); done
+
+TOTAL=$(( added_count + removed_count + modified_count + root_modified_count + scripts_modified_count + extras_modified_count + rules_modified_count + profiles_modified_count ))
 
 if [ $TOTAL -eq 0 ]; then
   echo "STATUS: up-to-date"
@@ -386,6 +551,70 @@ if [ $extras_modified_count -gt 0 ]; then
     else
       echo "    (new file)"
     fi
+  done
+  echo ""
+fi
+
+if [ $rules_modified_count -gt 0 ]; then
+  echo "--- RULES OVERLAYS UPDATED ($rules_modified_count) ---"
+  for entry in $RULES_MODIFIED; do
+    case "$entry" in
+      REMOVED:*)
+        fname="${entry#REMOVED:}"
+        echo ""
+        echo "  file: rules/$fname  (REMOVED upstream)"
+        ;;
+      *)
+        fname="$entry"
+        echo ""
+        echo "  file: rules/$fname"
+        before_f="$BEFORE_DIR/__rules__$fname"
+        after_f="$AFTER_DIR/__rules__$fname"
+        if [ -f "$before_f" ]; then
+          diff --unified=3 \
+            --label "before/rules/$fname" \
+            --label "after/rules/$fname" \
+            "$before_f" "$after_f" \
+            | sed 's/^/    /' || true
+        else
+          echo "    (new file)"
+        fi
+        ;;
+    esac
+  done
+  echo ""
+fi
+
+if [ $profiles_modified_count -gt 0 ]; then
+  echo "--- PROFILES UPDATED ($profiles_modified_count) ---"
+  for entry in $PROFILES_MODIFIED; do
+    case "$entry" in
+      REMOVED:*)
+        key="${entry#REMOVED:}"
+        profile="${key%%__*}"
+        fname="${key#*__}"
+        echo ""
+        echo "  file: profiles/$profile/$fname  (REMOVED upstream)"
+        ;;
+      *)
+        key="$entry"
+        profile="${key%%__*}"
+        fname="${key#*__}"
+        echo ""
+        echo "  file: profiles/$profile/$fname"
+        before_f="$BEFORE_DIR/__profiles__$key"
+        after_f="$AFTER_DIR/__profiles__$key"
+        if [ -f "$before_f" ]; then
+          diff --unified=3 \
+            --label "before/profiles/$profile/$fname" \
+            --label "after/profiles/$profile/$fname" \
+            "$before_f" "$after_f" \
+            | sed 's/^/    /' || true
+        else
+          echo "    (new file)"
+        fi
+        ;;
+    esac
   done
   echo ""
 fi

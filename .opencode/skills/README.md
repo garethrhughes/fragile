@@ -2,23 +2,36 @@
 
 Opinionated OpenCode skills for structured software development with AI agents.
 
-These skills assume — and enforce — a specific stack:
+The skills are organised in two layers so they can target multiple stacks:
 
-- **Backend:** TypeScript + NestJS 11 + TypeORM + PostgreSQL
-- **Frontend:** TypeScript + Next.js (App Router) + React Server Components by default
-- **Infrastructure:** OpenTofu on AWS with remote state and pinned provider versions
-- **Observability:** structured logging via `pino`
-- **Testing:** Jest (backend) + Vitest (frontend) with TDD (red-green-refactor)
-- **Compliance:** ISO27001-aligned by default
+- **Core, language-agnostic rules** in [`RULES.md`](RULES.md): configuration & secrets,
+  external HTTP clients (timeouts, retries), observability principles, infrastructure
+  as code (OpenTofu/Terraform), TDD and testing, git & PRs.
+- **Stack overlays** under [`rules/`](rules/), one per supported skillset. Each
+  overlay refines the core for a specific stack (language conventions, framework
+  rules, ORM, logger, test runner).
 
-The conventions are deliberately strict (no `any`, no `enum`, no barrel files, no
-`process.env` outside `ConfigService`, no `useEffect` for data fetching, no `*` action on
-`*` resource, 5s default timeouts on external HTTP, standard resource tags, etc.). They
-are codified in [`RULES.md`](RULES.md) and referenced by every skill.
+Selectable skillset profiles:
 
-If your project uses a different stack, run `project-bootstrap` or `project-onboard` to
-override the defaults — but expect to do extra work, since the skills are tuned for the
-defaults above.
+| Identifier | Overlay | Stack |
+|---|---|---|
+| [`typescript`](rules/typescript.md) | [`rules/typescript.md`](rules/typescript.md) | NestJS + Next.js + TypeORM + pino + Jest/Vitest (the original opinionated stack) |
+| [`dotnet`](rules/dotnet.md) | [`rules/dotnet.md`](rules/dotnet.md) | ASP.NET Core + EF Core + Serilog + xUnit + FluentValidation |
+
+The active profile for a project is pinned in its `CLAUDE.md` via the
+`## Active Skillset` line — written automatically by `project-bootstrap` (interactive)
+or `project-onboard` (auto-detects from `*.csproj` / `package.json` / etc.).
+
+Bootstrap **defaults** per profile live in [`profiles/<profile>/bootstrap.md`](profiles/);
+**scaffolder commands** in [`profiles/<profile>/scaffolders.md`](profiles/). To add a
+new skillset (Python, Go, Rust, etc.), drop a directory under `profiles/`, add the
+matching `rules/<profile>.md`, and skills pick it up — no skill code changes needed.
+
+The conventions are deliberately strict (no raw env-var access outside the typed config
+module, no `*` action on `*` resource, 5s default timeouts on external HTTP, standard
+resource tags, TDD red-green-refactor, etc.) plus stack-specific rules (no `any`, no
+`enum`, no `useEffect` for data fetching for `typescript`; nullable reference types on,
+async-all-the-way, no `dynamic` for `dotnet`).
 
 ## Skills
 

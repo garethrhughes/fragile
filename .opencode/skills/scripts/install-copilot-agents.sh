@@ -37,20 +37,43 @@ echo "Skills dir : $SKILLS_DIR"
 echo "Agents dir : $AGENTS_DIR"
 echo ""
 
-# ── Copy RULES.md alongside the agents ──────────────────────────────────────
-# Skill files reference RULES.md by relative path; the installed agents need
-# a local copy so those links resolve.
+# ── Copy RULES.md, rules/ and profiles/ alongside the agents ────────────────
+# Skill files reference RULES.md, rules/<profile>.md, and profiles/<profile>/
+# by relative path (../RULES.md, ../rules/, ../profiles/). The installed
+# agents live at .github/agents/<skill>.md, so those relative links resolve
+# to the *parent* of agents/ — i.e. .github/. Copy there.
+RULES_PARENT_DIR="$(dirname "$AGENTS_DIR")"
+
+# Clean up legacy copies from older installer versions that put these inside
+# .github/agents/ instead of .github/.
+rm -f "$AGENTS_DIR/RULES.md" "$AGENTS_DIR/.rules-version"
+rm -rf "$AGENTS_DIR/rules" "$AGENTS_DIR/profiles"
+
 if [[ -f "$SKILLS_DIR/RULES.md" ]]; then
-  cp "$SKILLS_DIR/RULES.md" "$AGENTS_DIR/RULES.md"
+  cp "$SKILLS_DIR/RULES.md" "$RULES_PARENT_DIR/RULES.md"
   rules_version="$(awk -F': *' '/^Version:/{print $2; exit}' "$SKILLS_DIR/RULES.md" | tr -d '[:space:]')"
   if [[ -n "$rules_version" ]]; then
-    printf '%s\n' "$rules_version" > "$AGENTS_DIR/.rules-version"
-    echo "RULES.md (v$rules_version) copied to .github/agents/RULES.md"
+    printf '%s\n' "$rules_version" > "$RULES_PARENT_DIR/.rules-version"
+    echo "RULES.md (v$rules_version) copied to ${RULES_PARENT_DIR#$PROJECT_ROOT/}/RULES.md"
   else
-    echo "RULES.md copied to .github/agents/RULES.md"
+    echo "RULES.md copied to ${RULES_PARENT_DIR#$PROJECT_ROOT/}/RULES.md"
   fi
-  echo ""
 fi
+
+if [[ -d "$SKILLS_DIR/rules" ]]; then
+  rm -rf "$RULES_PARENT_DIR/rules"
+  cp -R "$SKILLS_DIR/rules" "$RULES_PARENT_DIR/rules"
+  overlay_count="$(find "$RULES_PARENT_DIR/rules" -maxdepth 1 -name '*.md' | wc -l | tr -d '[:space:]')"
+  echo "rules/ copied ($overlay_count stack overlay(s)) to ${RULES_PARENT_DIR#$PROJECT_ROOT/}/rules/"
+fi
+
+if [[ -d "$SKILLS_DIR/profiles" ]]; then
+  rm -rf "$RULES_PARENT_DIR/profiles"
+  cp -R "$SKILLS_DIR/profiles" "$RULES_PARENT_DIR/profiles"
+  profile_count="$(find "$RULES_PARENT_DIR/profiles" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d '[:space:]')"
+  echo "profiles/ copied ($profile_count profile(s)) to ${RULES_PARENT_DIR#$PROJECT_ROOT/}/profiles/"
+fi
+echo ""
 
 # ── Symlink each skill ───────────────────────────────────────────────────────
 linked=0

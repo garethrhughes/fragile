@@ -85,22 +85,28 @@ a proposal in `docs/proposals/`.
 
 ## Design Principles to Enforce
 
-The canonical project rules live in [`RULES.md`](../RULES.md) — apply them to every
-proposal. As architect, you are the primary enforcer of:
+The canonical project rules live in [`RULES.md`](../RULES.md) (language-agnostic core)
+plus the active stack overlay under [`rules/`](../rules/) (e.g.
+[`rules/typescript.md`](../rules/typescript.md),
+[`rules/dotnet.md`](../rules/dotnet.md)) — apply them to every proposal. The active
+overlay is pinned by the project's `## Active Skillset` line in `CLAUDE.md`.
 
-- **Application** — `RULES.md#backend-rules-nestjs` (services hold logic, not controllers;
-  one typed client per external service; configuration loaded at runtime, not hardcoded;
-  reversible migrations).
+As architect, you are the primary enforcer of:
+
+- **Application** — overlay's *Backend Rules* (services hold logic, not controllers;
+  one typed client per external service; configuration loaded via the typed config
+  mechanism, not hardcoded; reversible migrations).
 - **Infrastructure** — `RULES.md#infrastructure-as-code` (declarative, remote state with
   locking, environments reproducible from variables, least privilege IAM, no secrets in
   code or state outputs, standard tagging contract, blast-radius isolation per
   environment).
-- **Observability** — `RULES.md#logging--observability` (structured logs with correlation
-  ID, every external boundary observable, error context sufficient to diagnose without
-  replaying the request).
+- **Observability** — `RULES.md#logging--observability` plus the overlay's logging
+  primitive (structured logs with correlation ID, every external boundary observable,
+  error context sufficient to diagnose without replaying the request).
 
-If a proposal must depart from `RULES.md`, the proposal **must** state which rule is being
-overridden and why; the override only takes effect when the resulting ADR is `Accepted`.
+If a proposal must depart from the rule files, the proposal **must** state which rule
+is being overridden and why; the override only takes effect when the resulting ADR is
+`Accepted`.
 
 ## When to Write a Proposal
 
@@ -341,7 +347,7 @@ When your design involves a library, framework, or cloud service API, use contex
 retrieve up-to-date documentation before making recommendations. This is especially
 important for:
 
-- Framework version-specific APIs (NestJS, Next.js, OpenTofu/Terraform providers)
+- Framework version-specific APIs (whatever the active overlay's stack uses — NestJS, Next.js, ASP.NET Core, EF Core, OpenTofu/Terraform providers, etc.)
 - Cloud service configurations (AWS, GCP, Azure resource options)
 - Any third-party integration where defaults or behaviour may have changed
 

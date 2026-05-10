@@ -1,14 +1,17 @@
 ---
 name: developer
-description: Writes production-quality TypeScript and Infrastructure-as-Code using TDD (red-green-refactor). Follows project conventions exactly — thin controllers, typed API clients, ConfigService-only env access, strict TypeScript, declarative infra with pinned versions and remote state.
+description: Writes production-quality application code and Infrastructure-as-Code using TDD (red-green-refactor). Follows project conventions exactly — thin controllers, typed API clients, typed-config-service-only env access, strict language settings, declarative infra with pinned versions and remote state.
 compatibility: opencode
 ---
 
 # Developer Skill
 
-You write production-quality TypeScript and Infrastructure-as-Code. You follow the project
-conventions exactly and do not introduce new dependencies (npm packages, Terraform modules,
+You write production-quality application code and Infrastructure-as-Code. You follow the
+project conventions exactly and do not introduce new dependencies (packages, modules,
 provider versions) without calling them out explicitly.
+
+The exact language and framework conventions you apply depend on the project's
+**active skillset profile**, declared in `CLAUDE.md` under `## Active Skillset`.
 
 ## Project Context
 
@@ -51,28 +54,32 @@ provider versions) without calling them out explicitly.
 
 ## Authoritative Rules
 
-The conventions in this skill are role-tailored summaries of the project-wide rules in
-[`RULES.md`](../RULES.md). When this skill and `RULES.md` disagree, `RULES.md` is the
-source of truth — raise a PR against `RULES.md` to change a rule, never weaken it inline
-here.
+The conventions in this skill are role-tailored summaries of:
 
-Sections in `RULES.md` most relevant to this skill:
-[TypeScript Conventions](../RULES.md#typescript-conventions),
-[Configuration & Secrets](../RULES.md#configuration--secrets),
-[External HTTP Clients](../RULES.md#external-http-clients),
-[Frontend Rules](../RULES.md#frontend-rules-nextjs),
-[Backend Rules](../RULES.md#backend-rules-nestjs),
-[Logging & Observability](../RULES.md#logging--observability),
-[Infrastructure as Code](../RULES.md#infrastructure-as-code-opentofu--terraform),
-[Testing](../RULES.md#testing).
+1. The language-agnostic rules in [`RULES.md`](../RULES.md) (config & secrets, external
+   HTTP clients, observability, IaC, testing, git & PRs).
+2. The active **stack overlay** under [`rules/`](../rules/), pinned by the project's
+   `## Active Skillset` line in `CLAUDE.md`. Examples:
+   [`rules/typescript.md`](../rules/typescript.md),
+   [`rules/dotnet.md`](../rules/dotnet.md).
+
+When this skill and (`RULES.md` + the active overlay) disagree, the rule files are the
+source of truth — raise a PR against them to change a rule, never weaken it inline here.
+
+Sections most relevant to this skill (read both the core file and the overlay):
+*Configuration & Secrets*, *External HTTP Clients*, *Backend Rules*, *Frontend Rules*,
+*Logging & Observability*, *Testing*, plus *Infrastructure as Code* (core only).
+
+If `CLAUDE.md` does not declare an active skillset, default to the
+[`typescript`](../rules/typescript.md) overlay for backwards compatibility.
 
 ---
 
 ## Test-Driven Development (TDD)
 
 **All implementation work must follow the red-green-refactor cycle. Do not write production
-code before a failing test exists for it.** This applies to TypeScript, infrastructure
-modules, and any other production artefact for which a testing tool exists.
+code before a failing test exists for it.** This applies to application code,
+infrastructure modules, and any other production artefact for which a testing tool exists.
 
 ### Workflow
 
@@ -101,28 +108,35 @@ write the implementation, the test is wrong.
 - **Snapshot tests** only for stable, intentional output (e.g. generated SQL, generated
   Terraform plan). Never for UI components — use semantic queries instead
 
-## TypeScript, Backend, Frontend, IaC, and Observability Conventions
+## Language, Backend, Frontend, IaC, and Observability Conventions
 
-These are defined in [`RULES.md`](../RULES.md) and apply to every line of code you write.
-Re-read the relevant section before implementing in a given layer:
+Defined in [`RULES.md`](../RULES.md) (core) plus the active stack overlay under
+[`rules/`](../rules/). Re-read the relevant sections before implementing in a given
+layer:
 
-- [TypeScript Conventions](../RULES.md#typescript-conventions)
-- [Configuration & Secrets](../RULES.md#configuration--secrets)
-- [External HTTP Clients](../RULES.md#external-http-clients) — incl. 5s timeout default
-- [Backend Rules (NestJS)](../RULES.md#backend-rules-nestjs) — thin controllers, DTO
-  validation at the boundary, repositories own persistence
-- [Frontend Rules (Next.js)](../RULES.md#frontend-rules-nextjs) — Server Components by
-  default, no `useEffect` for data fetching
-- [Logging & Observability](../RULES.md#logging--observability) — structured logging,
-  no secrets/PII in logs
-- [Infrastructure as Code](../RULES.md#infrastructure-as-code-opentofu--terraform) —
-  pinned providers, remote state, standard tags, no `*` action on `*` resource
-- [Testing](../RULES.md#testing) — TDD red→green→refactor
+- *Language Conventions* — overlay only (e.g. TypeScript strict mode; C# nullable
+  reference types; etc.)
+- *Configuration & Secrets* — core principles in `RULES.md`; concrete mechanism
+  (`ConfigService`, `IOptions<T>`, etc.) in the overlay
+- *External HTTP Clients* — 5s timeout default + retry/jitter from core; typed-client
+  pattern from the overlay (`*ClientService` in NestJS, `IHttpClientFactory`-based
+  typed client in ASP.NET Core, etc.)
+- *Backend Rules* — overlay (thin controllers, DTO validation at the boundary,
+  repositories own persistence — applies regardless of stack, with stack-specific
+  primitives)
+- *Frontend Rules* — overlay (Server Components / no `useEffect` for Next.js;
+  service-injected components for Blazor; etc.)
+- *Logging & Observability* — core principles + overlay-specific logger (`pino`,
+  `Serilog`, etc.)
+- *Infrastructure as Code* — `RULES.md` only (pinned providers, remote state, standard
+  tags, no `*` on `*`)
+- *Testing* — TDD red→green→refactor in core; concrete runner (Jest/Vitest, xUnit,
+  etc.) in the overlay
 
-The notes below cover developer-specific concerns that go beyond `RULES.md`: TDD
+The notes below cover developer-specific concerns that go beyond the rule files: TDD
 mechanics, implementation consistency across layers, and dependency hygiene.
 
-## Beyond RULES.md — Coverage Philosophy
+## Beyond the rule files — Coverage Philosophy
 
 Coverage is a *consequence*, not a target. Don't write tests to hit a number. But: any
 service method without a test is a defect; any non-trivial infra module without a test
@@ -133,7 +147,7 @@ is a defect.
 ### context7 — Live Documentation
 Use context7 to retrieve up-to-date documentation whenever you are:
 
-- Implementing against a framework or library API (NestJS, Next.js, TypeORM, Tailwind, etc.)
+- Implementing against a framework or library API (whatever the active overlay's stack uses — e.g. NestJS, Next.js, TypeORM, Tailwind, ASP.NET Core, EF Core, Serilog, Blazor)
 - Writing IaC that references a provider resource or data source (AWS, GCP, Azure)
 - Unsure of the correct method signature, config option, or decorator for the version in use
 

@@ -25,10 +25,20 @@ and correct ambiguous findings.
 ## Authoritative Rules
 
 The standard rules this skill checks the codebase against (and records as gaps in
-the Onboarding Notes section) are defined in [`RULES.md`](../RULES.md) at the root of
-the skills repo. The "gap analysis" performed during each phase is effectively a diff
-between the existing codebase and `RULES.md`. When recording findings, cite the
-relevant `RULES.md` section so the user can see exactly which rule the gap maps to.
+the Onboarding Notes section) are defined in [`RULES.md`](../RULES.md)
+(language-agnostic core) plus the active **stack overlay** in [`rules/`](../rules/).
+The active overlay is determined in Phase 1.5 — typically by auto-detection.
+
+The "gap analysis" performed during each phase is effectively a diff between the
+existing codebase and (`RULES.md` + the active overlay). When recording findings,
+cite the relevant section so the user can see exactly which rule the gap maps to.
+
+Available profiles:
+
+| Identifier | Overlay | Auto-detect signals |
+|---|---|---|
+| `typescript` | [`rules/typescript.md`](../rules/typescript.md) | `package.json` with `next`/`@nestjs/*`/`typeorm`, root `tsconfig.json` |
+| `dotnet` | [`rules/dotnet.md`](../rules/dotnet.md) | `*.sln`, `*.csproj`, `global.json`, `Directory.Build.props`, `appsettings.json` |
 
 ---
 
@@ -119,16 +129,46 @@ Then begin Phase 1. Do **not** wait for the user to acknowledge — start workin
 
 ### Investigate
 
-- Read `package.json` (root and any workspace packages) for `name` and `description`.
-- Read root `README.md` (and any `docs/README.md`) for the elevator pitch.
-- Note the repo directory name as a fallback.
-- Detect whether this is a monorepo (workspaces field, `pnpm-workspace.yaml`,
-  `turbo.json`, `nx.json`, `lerna.json`).
+The exact files to read depend on the active profile chosen in Phase 1.5;
+since Phase 1 runs first, check both stacks and use whichever signals are
+present.
+
+**Project name** — try in order:
+
+- Root `package.json` `name`
+- In a JS workspaces monorepo with no root `name`, use the workspace root
+  directory name; do not pick an individual workspace package's `name` as
+  the project name (record those as component names in Phase 4 instead)
+- `*.sln` filename at the repo root
+- Root `*.csproj` `<AssemblyName>` (or the `.csproj` filename if absent)
+- `pyproject.toml` `[project].name` or `setup.cfg` `[metadata].name`
+  (future-proofing — not a currently supported profile, but worth checking)
+- Repo directory name as the final fallback
+
+**Description / overview**:
+
+- Root `README.md` (and any `docs/README.md`) is the primary source for the
+  elevator pitch.
+- Also check `package.json` `description` and `*.csproj` `<Description>` /
+  `<PackageDescription>` as secondary signals.
+
+**Monorepo detection** — any of:
+
+- JS/TS: `workspaces` field in `package.json`, `pnpm-workspace.yaml`,
+  `turbo.json`, `nx.json`, `lerna.json`.
+- .NET: a `*.sln` that references **multiple** `*.csproj` files, or multiple
+  top-level app folders each with their own `*.csproj`.
+- Generic: multiple top-level directories that each look like an app root
+  (their own build/manifest file — `package.json`, `*.csproj`,
+  `pyproject.toml`, `go.mod`, etc.).
 
 ### Infer
 
-- Project name (high confidence from `package.json` or repo name).
-- A draft 1–3 sentence overview from the README, if one exists.
+- Project name (high confidence from any of the primary sources above —
+  `package.json`, `*.sln`, root `*.csproj`, `pyproject.toml`/`setup.cfg`;
+  medium confidence when falling back to the repo directory name).
+- A draft 1–3 sentence overview from the README, if one exists; otherwise
+  from a `description` field in `package.json` or `*.csproj`.
 
 ### Ask the user
 
@@ -144,11 +184,55 @@ Reflect back: "Got it — *[name]: [one-line summary]*. Moving on."
 
 ---
 
+## Phase 1.5 — Skillset Profile
+
+### Investigate
+
+Look for unambiguous stack markers:
+
+- **`dotnet`** — any of: `*.sln` at root, `**/*.csproj`, `global.json`,
+  `Directory.Build.props`, `Directory.Packages.props`, `appsettings.json` adjacent
+  to a `*.csproj`.
+- **`typescript`** — any of: root `package.json` containing `next`, `@nestjs/*`,
+  `typeorm`, `vite`, `react`, `vue`, `svelte`; root `tsconfig.json`.
+
+If both sets of markers are present (e.g. ASP.NET Core API with a Next.js SPA), pick
+**one** profile based on the backend host language — that overlay is the active one,
+since `CLAUDE.md` carries a single `## Active Skillset`. Note any secondary stack in
+the Onboarding Notes so the user knows it exists, but the worker skills will still
+apply only the chosen overlay. Multi-overlay activation is a future enhancement.
+
+### Present
+
+> "Detected stack: **`{profile}`** (evidence: *{file paths}*).
+>
+> The skills will use:
+> - `RULES.md` (language-agnostic core)
+> - `rules/{profile}.md` (stack overlay)
+>
+> Override with another identifier if you want to use a different profile."
+
+If detection is ambiguous (no markers, or many languages), ask the user to pick.
+
+### Record
+
+Capture `{profile}` for use in every subsequent phase. Each phase compares the
+existing code against `rules/{profile}.md` (not just `RULES.md`).
+
+---
+
 ## Phase 2 — Application Tech Stack
 
 ### Investigate
 
-**Backend:**
+The exact things to investigate depend on the active profile from Phase 1.5. If
+the profile is `dotnet`, swap the backend investigation to: `*.csproj`
+`PackageReference` lines (ASP.NET Core, EF Core, FluentValidation, Serilog, xUnit),
+`Program.cs` for host setup, `appsettings*.json` for config shape, `Directory.Packages.props`
+for centrally-pinned versions, EF Core migrations under `Migrations/`. The list below
+covers the `typescript` profile.
+
+**Backend (`typescript`):**
 - `package.json` dependencies: detect framework (`@nestjs/core`, `express`,
   `fastify`, `koa`, `hono`, etc.) and language (presence of `typescript`,
   `tsconfig.json`).
@@ -472,6 +556,17 @@ Generate a complete, filled-in `CLAUDE.md` using the template structure below.
 ```markdown
 # CLAUDE.md — {project name}
 
+## Active Skillset: {profile}
+
+This project follows the language-agnostic core rules in
+[`RULES.md`](https://github.com/garethrhughes/skills/blob/main/RULES.md) plus the
+**`{profile}`** stack overlay in
+[`rules/{profile}.md`](https://github.com/garethrhughes/skills/blob/main/rules/{profile}.md).
+Skills (`developer`, `reviewer`, `architect`, `infosec`) read both when applying
+conventions to this project.
+
+---
+
 ## Project Overview
 
 {project overview from Phase 1}
@@ -538,19 +633,19 @@ Generate a complete, filled-in `CLAUDE.md` using the template structure below.
 
 ## Architecture Rules
 
-This project follows the canonical rules in
-[`RULES.md`](https://github.com/garethrhughes/skills/blob/main/RULES.md) (TypeScript,
-config & secrets, external HTTP clients, frontend, backend, observability, IaC,
-testing, git & PRs).
+This project follows:
+
+- The language-agnostic rules in
+  [`RULES.md`](https://github.com/garethrhughes/skills/blob/main/RULES.md).
+- The **`{profile}`** stack overlay in
+  [`rules/{profile}.md`](https://github.com/garethrhughes/skills/blob/main/rules/{profile}.md).
 
 **Project-specific additions / overrides** (observed in code or supplied by user
 in Phase 5):
 {additions; write "_(none)_" if empty}
 
-**Known divergences from `RULES.md`** (recorded as gaps in Onboarding Notes
-below):
-{list of items where current code does not match RULES.md, e.g. "useEffect data
-fetching in 4 components", "process.env outside config in 12 files"; or "_(none)_"}
+**Known divergences from rules** (recorded as gaps in Onboarding Notes below):
+{list of items where current code does not match RULES.md or the active overlay; or "_(none)_"}
 
 ---
 

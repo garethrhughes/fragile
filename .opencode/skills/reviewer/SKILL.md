@@ -56,18 +56,23 @@ implements a flawed or misaligned design.
 
 ## Authoritative Rules
 
-The convention checks below are role-tailored summaries of the project-wide rules in
-[`RULES.md`](../RULES.md). When reviewing, treat `RULES.md` as the source of truth — any
-deviation from it is a finding (severity depends on which rule). Frequent reference
-sections:
-[TypeScript Conventions](../RULES.md#typescript-conventions),
-[Configuration & Secrets](../RULES.md#configuration--secrets),
-[External HTTP Clients](../RULES.md#external-http-clients),
-[Frontend Rules](../RULES.md#frontend-rules-nextjs),
-[Backend Rules](../RULES.md#backend-rules-nestjs),
-[Logging & Observability](../RULES.md#logging--observability),
-[Infrastructure as Code](../RULES.md#infrastructure-as-code-opentofu--terraform),
-[Testing](../RULES.md#testing).
+The convention checks below are role-tailored summaries of:
+
+1. The language-agnostic rules in [`RULES.md`](../RULES.md) (config & secrets,
+   external HTTP clients, observability, IaC, testing, git & PRs).
+2. The active **stack overlay** under [`rules/`](../rules/), pinned by the project's
+   `## Active Skillset` line in `CLAUDE.md` — e.g.
+   [`rules/typescript.md`](../rules/typescript.md) or
+   [`rules/dotnet.md`](../rules/dotnet.md).
+
+When reviewing, treat (`RULES.md` + the active overlay) as the source of truth — any
+deviation is a finding (severity depends on which rule). Frequent reference sections:
+*Configuration & Secrets*, *External HTTP Clients*, *Backend Rules*, *Frontend Rules*,
+*Logging & Observability*, *Testing*, *Infrastructure as Code* (core only), plus the
+overlay's *Language Conventions*.
+
+If `CLAUDE.md` does not declare an active skillset, default to the
+[`typescript`](../rules/typescript.md) overlay for backwards compatibility.
 
 ---
 
@@ -182,33 +187,33 @@ List each Acceptance Criterion from the proposal verbatim, then for each:
 
 ### Convention Adherence — Block PR if any are violated
 
-Every rule in [`RULES.md`](../RULES.md) is in scope. Read the diff against `RULES.md` and
-flag any deviation. Severity is determined as follows:
+Every rule in (`RULES.md` + the active stack overlay under `rules/`) is in scope.
+Read the diff and flag any deviation. Severity is determined as follows:
 
 - Rules under [Configuration & Secrets](../RULES.md#configuration--secrets),
   [External HTTP Clients](../RULES.md#external-http-clients), and
   [Infrastructure as Code](../RULES.md#infrastructure-as-code-opentofu--terraform) →
   **Blocker** when violated.
-- Rules under [TypeScript Conventions](../RULES.md#typescript-conventions),
-  [Backend Rules](../RULES.md#backend-rules-nestjs),
-  [Frontend Rules](../RULES.md#frontend-rules-nextjs),
-  [Logging & Observability](../RULES.md#logging--observability) → **Major** when
-  violated (Blocker if the violation also creates a security or data-integrity risk).
-- Rules under [Testing](../RULES.md#testing) and [Git & PRs](../RULES.md#git--prs) →
-  **Major** when violated.
+- Rules under the overlay's *Language Conventions*, *Backend Rules*, *Frontend Rules*,
+  plus core [Logging & Observability](../RULES.md#logging--observability) → **Major**
+  when violated (Blocker if the violation also creates a security or data-integrity
+  risk).
+- Rules under core [Testing](../RULES.md#testing) and [Git & PRs](../RULES.md#git--prs)
+  (and overlay testing primitives) → **Major** when violated.
 
-### Reviewer-Specific Security Checks (beyond RULES.md)
+### Reviewer-Specific Security Checks (beyond the rule files)
 
 - Credentials, API tokens, or secrets committed in any file (including test fixtures,
-  `.env`, `.tfvars`, snapshots)
-- Missing auth guard on any new controller endpoint (except explicitly public routes
-  such as `/health` and `/api-docs`)
+  `.env`, `appsettings.{Environment}.json`, `.tfvars`, snapshots)
+- Missing auth guard / authorization filter on any new controller endpoint or Minimal
+  API route (except explicitly public routes such as `/health`, `/api-docs`, `/swagger`)
 - SQL or query strings constructed via string interpolation — must use parameterised
-  queries or ORM query builders
+  queries or ORM query builders (TypeORM/Prisma/Drizzle/EF Core/etc.)
 - Missing input validation on any controller endpoint (DTO validator absent, or
-  validation pipe disabled for the route)
+  validation pipeline disabled for the route)
 - CORS configured with `*` origin on a non-public endpoint
-- `dangerouslySetInnerHTML` (or framework equivalent) used with user-supplied content
+- `dangerouslySetInnerHTML` (React) / `MarkupString` with user content (Blazor) /
+  framework equivalent used with user-supplied content
 
 ### Reviewer-Specific Supply Chain Checks
 
