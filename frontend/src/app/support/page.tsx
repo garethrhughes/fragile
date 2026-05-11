@@ -89,6 +89,7 @@ function SupportPageInner() {
   const periodMode = (searchParams.get('mode') ?? 'quarter') as PeriodMode
   const selectedQuarter = searchParams.get('quarter') ?? ''
   const selectedSprintId = searchParams.get('sprintId') ?? ''
+  const ttbLinkedOnly = searchParams.get('matchReason') === 'link'
 
   const [quarters, setQuarters] = useState<QuarterInfo[]>([])
   const [sprints, setSprints] = useState<SprintInfo[]>([])
@@ -174,6 +175,7 @@ function SupportPageInner() {
       ...(inSprintMode
         ? { sprintId: selectedSprintId }
         : { quarter: selectedQuarter }),
+      ...(ttbLinkedOnly ? { matchReason: 'link' as const } : {}),
     }
 
     const run = async (): Promise<void> => {
@@ -196,7 +198,7 @@ function SupportPageInner() {
     }
     void run()
     return () => { cancelled = true }
-  }, [selectedBoards, selectedQuarter, selectedSprintId, periodMode, boardsStatus, retryKey])
+  }, [selectedBoards, selectedQuarter, selectedSprintId, periodMode, boardsStatus, retryKey, ttbLinkedOnly])
 
   // All tickets across boards for the table
   const allTickets = useMemo(() => {
@@ -337,6 +339,27 @@ function SupportPageInner() {
             </select>
           </div>
         )}
+
+        {/* TTB-linked only toggle */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={ttbLinkedOnly}
+            onClick={() => replaceParams({ matchReason: ttbLinkedOnly ? '' : 'link' })}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-ring ${
+              ttbLinkedOnly ? 'bg-blue-600' : 'bg-slate-200'
+            }`}
+          >
+            <span
+              className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                ttbLinkedOnly ? 'translate-x-4' : 'translate-x-0'
+              }`}
+            />
+          </button>
+          <span className="text-sm font-medium">TTB-linked only</span>
+          <span className="text-xs text-muted">Show only issues linked to the triage board</span>
+        </div>
       </div>
 
       {/* Skeleton */}
