@@ -31,7 +31,7 @@ export interface BoardConfig {
   cancelledStatusNames: string[];
   roadmapLinkTypes: string[];
   supportLabels: string[];
-  supportLinkType: string | null;
+  supportLinkTypes: string[];
   triageBoardKey: string | null;
   supportEpics: string[];
 }
@@ -1138,6 +1138,7 @@ export interface SupportQueryParams {
   quarter?: string
   sprintId?: string
   period?: string
+  matchReason?: 'link' | 'label' | 'epic'
 }
 
 export function getSupportTickets(
@@ -1149,6 +1150,7 @@ export function getSupportTickets(
       quarter: params.quarter,
       sprintId: params.sprintId,
       period: params.period,
+      matchReason: params.matchReason,
     })}`,
   )
 }
@@ -1162,6 +1164,7 @@ export function getSupportSummary(
       quarter: params.quarter,
       sprintId: params.sprintId,
       period: params.period,
+      matchReason: params.matchReason,
     })}`,
   )
 }

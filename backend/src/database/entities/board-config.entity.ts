@@ -107,12 +107,13 @@ export class BoardConfig {
   supportLabels!: string[];
 
   /**
-   * Jira issue link type name whose target points to the triage board
-   * (e.g. "clones").  Null disables link-based classification.
-   * Used together with `triageBoardKey` (ADR 0045).
+   * Jira issue link type names whose target points to the triage board
+   * (e.g. ["clones", "is caused by"]).  An empty array disables link-based
+   * classification.  Used together with `triageBoardKey` (ADR 0045, ADR 0061).
+   * Replaces the former `supportLinkType` varchar field.
    */
-  @Column({ type: 'varchar', nullable: true, default: null })
-  supportLinkType!: string | null;
+  @Column({ type: 'simple-json', default: '[]' })
+  supportLinkTypes!: string[];
 
   /**
    * Project key prefix for the triage board (e.g. "TTB").  An issue is

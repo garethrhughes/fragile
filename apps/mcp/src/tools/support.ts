@@ -11,13 +11,21 @@ export function registerSupportTools(server: McpServer): void {
       quarter: z.string().optional().describe('Quarter in YYYY-QN format'),
       sprintId: z.string().optional().describe('Sprint ID (alternative to quarter)'),
       period: z.string().optional().describe('ISO date range in YYYY-MM-DD/YYYY-MM-DD format'),
+      matchReason: z
+        .enum(['link', 'label', 'epic'])
+        .optional()
+        .describe(
+          'Filter tickets by match reason. Use "link" to return only issues linked to the triage board (TTB). ' +
+          'totalIssues denominator is unaffected.',
+        ),
     },
-    async ({ boardId, quarter, sprintId, period }) => {
+    async ({ boardId, quarter, sprintId, period, matchReason }) => {
       const params: Record<string, string | undefined> = {};
       if (boardId) params['boardId'] = boardId;
       if (quarter) params['quarter'] = quarter;
       if (sprintId) params['sprintId'] = sprintId;
       if (period) params['period'] = period;
+      if (matchReason) params['matchReason'] = matchReason;
 
       const result = await apiGet('/api/support', params);
       return {
@@ -39,13 +47,21 @@ export function registerSupportTools(server: McpServer): void {
       quarter: z.string().optional().describe('Quarter in YYYY-QN format'),
       sprintId: z.string().optional().describe('Sprint ID (alternative to quarter)'),
       period: z.string().optional().describe('ISO date range in YYYY-MM-DD/YYYY-MM-DD format'),
+      matchReason: z
+        .enum(['link', 'label', 'epic'])
+        .optional()
+        .describe(
+          'Filter summary stats by match reason. Use "link" to return stats for only triage-board-linked issues. ' +
+          'totalIssues denominator is unaffected.',
+        ),
     },
-    async ({ boardId, quarter, sprintId, period }) => {
+    async ({ boardId, quarter, sprintId, period, matchReason }) => {
       const params: Record<string, string | undefined> = {};
       if (boardId) params['boardId'] = boardId;
       if (quarter) params['quarter'] = quarter;
       if (sprintId) params['sprintId'] = sprintId;
       if (period) params['period'] = period;
+      if (matchReason) params['matchReason'] = matchReason;
 
       const result = await apiGet('/api/support/summary', params);
       return {

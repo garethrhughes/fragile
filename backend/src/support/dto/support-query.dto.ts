@@ -1,4 +1,4 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString, IsIn } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class SupportQueryDto {
@@ -21,4 +21,14 @@ export class SupportQueryDto {
   @IsOptional()
   @IsString()
   period?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Filter tickets by match reason. When set to "link", only tickets classified via issue link are returned. ' +
+      'totalIssues (denominator) is unaffected. Supported values: "link", "label", "epic".',
+    enum: ['link', 'label', 'epic'],
+  })
+  @IsOptional()
+  @IsIn(['link', 'label', 'epic'])
+  matchReason?: 'link' | 'label' | 'epic';
 }
