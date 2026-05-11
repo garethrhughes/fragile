@@ -3,7 +3,7 @@
 **Date:** 2026-05-12
 **Status:** Accepted
 **Author:** Architect Agent
-**Related ADRs:** TBD (will produce ADR 0061)
+**Related ADRs:** [docs/decisions/0061-support-report-ttb-filter-and-plural-link-types.md](../decisions/0061-support-report-ttb-filter-and-plural-link-types.md)
 
 ## Problem Statement
 

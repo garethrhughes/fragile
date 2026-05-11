@@ -345,7 +345,9 @@ function SupportPageInner() {
           <button
             type="button"
             role="switch"
+            id="ttb-linked-toggle"
             aria-checked={ttbLinkedOnly}
+            aria-labelledby="ttb-linked-label"
             onClick={() => replaceParams({ matchReason: ttbLinkedOnly ? '' : 'link' })}
             className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-ring ${
               ttbLinkedOnly ? 'bg-blue-600' : 'bg-slate-200'
@@ -357,7 +359,7 @@ function SupportPageInner() {
               }`}
             />
           </button>
-          <span className="text-sm font-medium">TTB-linked only</span>
+          <span id="ttb-linked-label" className="text-sm font-medium">TTB-linked only</span>
           <span className="text-xs text-muted">Show only issues linked to the triage board</span>
         </div>
       </div>

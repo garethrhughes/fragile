@@ -56,7 +56,8 @@ None.
 
 ## Notes
 
-- The filter is a client-side filter on the `matchReason` field — or it could be a
-  server-side query parameter. Design decision to be made in the proposal.
-- The plural rename is a breaking schema change requiring a TypeORM migration with both
-  `up()` and `down()`.
+The filter is implemented server-side via an optional `matchReason` query parameter on
+both `/api/support` and `/api/support/summary`. This keeps the API response
+self-consistent — `supportIssues`, `supportPercentage`, `p50Days`, and `p95Days` all
+reflect the filtered subset, while `totalIssues` remains the full period denominator.
+See ADR 0061 and proposal 0060 for the rationale.
