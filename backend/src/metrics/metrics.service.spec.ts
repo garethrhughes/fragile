@@ -410,6 +410,21 @@ describe('MetricsService', () => {
       expect(result.period.partial).toBe(true);
       expect(result.period.elapsedDays).toBeLessThanOrEqual(result.period.totalDays);
     });
+
+    it('boardBreakdowns[0].period has elapsedDays, totalDays, and partial fields', async () => {
+      const result = await service.getDoraAggregate({ boardId: 'ACC' });
+      const bp = result.boardBreakdowns[0]?.period;
+      expect(bp).toBeDefined();
+      expect(typeof bp?.elapsedDays).toBe('number');
+      expect(typeof bp?.totalDays).toBe('number');
+      expect(typeof bp?.partial).toBe('boolean');
+    });
+
+    it('boardBreakdowns[0].period.partial is false for a completed quarter', async () => {
+      const result = await service.getDoraAggregate({ boardId: 'ACC', quarter: '2020-Q1' });
+      expect(result.boardBreakdowns[0]?.period.partial).toBe(false);
+      expect(result.boardBreakdowns[0]?.period.elapsedDays).toBe(result.boardBreakdowns[0]?.period.totalDays);
+    });
   });
 
   // -------------------------------------------------------------------------
