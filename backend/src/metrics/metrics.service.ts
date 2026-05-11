@@ -39,7 +39,7 @@ import { TrendDataLoader, type TrendDataSlice } from './trend-data-loader.servic
 
 export interface DoraMetricsResult {
   boardId: string;
-  period: { start: string; end: string; totalDays: number; elapsedDays: number; partial: boolean };
+  period: { start: string; end: string; totalDays?: number; elapsedDays?: number; partial?: boolean };
   deploymentFrequency: DeploymentFrequencyResult;
   leadTime: LeadTimeResult;
   changeFailureRate: CfrResult;
@@ -108,18 +108,21 @@ export class MetricsService {
           this.mttrService.calculate(boardId, startDate, endDate),
         ]);
 
+      const now = new Date();
+      const periodMs = endDate.getTime() - startDate.getTime();
+      const totalDays = Math.max(Math.round(periodMs / (1000 * 60 * 60 * 24)), 1);
+      const effectiveEnd = endDate < now ? endDate : now;
+      const elapsedDays = Math.max(Math.round((effectiveEnd.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)), 1);
+      const partial = now < endDate;
+
       results.push({
         boardId,
         period: {
           start: startDate.toISOString(),
           end: endDate.toISOString(),
-          totalDays: Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)),
-          elapsedDays: (() => {
-            const now = new Date();
-            const eff = endDate < now ? endDate : now;
-            return Math.max(Math.round((eff.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)), 1);
-          })(),
-          partial: new Date() < endDate,
+          totalDays,
+          elapsedDays,
+          partial,
         },
         deploymentFrequency,
         leadTime,

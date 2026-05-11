@@ -63,7 +63,9 @@ const stubTrendLoader = {
   load: jest.fn().mockResolvedValue({ boardId: 'ACC', boardConfig: null, wtEntity: null, issues: [], changelogs: [], versions: [], issueLinks: [] }),
 };
 
-// Snapshot service — return null so the controller always falls through to live compute.
+// Snapshot service — returns null so the controller responds 202/pending for
+// current-quarter requests (snapshot absent). Historical-quarter requests bypass
+// the snapshot path entirely and compute live via MetricsService.
 const stubSnapshotSvc = {
   getSnapshot: jest.fn().mockResolvedValue(null),
   getSnapshotStatus: jest.fn().mockResolvedValue([]),

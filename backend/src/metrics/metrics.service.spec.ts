@@ -393,7 +393,7 @@ describe('MetricsService', () => {
       expect(typeof result.period.partial).toBe('boolean');
       expect(result.period.elapsedDays).toBeGreaterThan(0);
       expect(result.period.totalDays).toBeGreaterThan(0);
-      expect(result.period.elapsedDays).toBeLessThanOrEqual(result.period.totalDays);
+      expect(result.period.elapsedDays!).toBeLessThanOrEqual(result.period.totalDays!);
     });
 
     it('period.partial is false for a completed quarter', async () => {
@@ -404,11 +404,17 @@ describe('MetricsService', () => {
     });
 
     it('period.partial is true for the current in-progress quarter', async () => {
-      // No quarter param → defaults to current quarter which is in progress
-      const result = await service.getDoraAggregate({ boardId: 'ACC' });
-      // The current quarter is always partial unless today is literally the last ms of the quarter
-      expect(result.period.partial).toBe(true);
-      expect(result.period.elapsedDays).toBeLessThanOrEqual(result.period.totalDays);
+      // Freeze time to 2025-02-15 — guaranteed mid-Q1 (never at a quarter boundary)
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2025-02-15T12:00:00.000Z').getTime());
+
+      try {
+        const result = await service.getDoraAggregate({ boardId: 'ACC' });
+        expect(result.period.partial).toBe(true);
+        expect(result.period.elapsedDays!).toBeLessThanOrEqual(result.period.totalDays!);
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it('boardBreakdowns[0].period has elapsedDays, totalDays, and partial fields', async () => {
