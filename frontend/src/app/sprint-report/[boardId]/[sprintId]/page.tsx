@@ -37,39 +37,45 @@ import { CompositeScoreDisplay } from '@/components/sprint-report/CompositeScore
 const SPRINT_REPORT_HELP: MetricDefinition[] = [
   {
     name: 'Composite Score',
-    description: 'Weighted average of all dimension scores, rated 0–100. Higher is better.',
+    description:
+      'Weighted average of all dimension scores, rated 0–100. Weights: Delivery Rate 25%, Lead Time 20%, Scope Stability 15%, CFR 10%, MTTR 10%, Roadmap Coverage 10%, Deployment Frequency 10%. When a dimension has no data it is excluded and its weight is redistributed proportionally across the remaining dimensions — a ~ indicator is shown when any dimension is excluded.',
   },
   {
     name: 'Delivery Rate',
-    description: 'Percentage of committed issues completed by sprint end.',
-    formula: 'completed ÷ commitment × 100',
+    description: 'Percentage of the final sprint scope (commitment + added − removed) that was completed by sprint end. Scored on a piecewise scale: ≥100% → 100pts, ≥80% → 75–100pts, ≥50% → 25–75pts, <50% → 0–25pts.',
+    formula: 'completed ÷ (commitment + added − removed) × 100',
   },
   {
     name: 'Scope Stability',
-    description: 'Inverse of scope change — a high score means the sprint plan stayed stable.',
-    formula: '100 − scope change %',
+    description:
+      'Scored from how much the sprint scope changed relative to commitment. ≤10% change → 100pts, 25% change → 75pts, 50% change → 50pts, 100% change → 0pts. Piecewise-linear between breakpoints.',
+    formula: 'score derived from (added + removed) ÷ commitment',
   },
   {
     name: 'Roadmap Coverage',
-    description: 'Percentage of sprint issues linked to a JPD roadmap item.',
+    description: 'Percentage of sprint issues linked to a JPD roadmap item. Scored: ≥80% → 100pts, 50% → 50pts, 0% → 0pts. Piecewise-linear between breakpoints.',
     formula: 'roadmap-linked issues ÷ total sprint issues × 100',
   },
   {
     name: 'Lead Time',
-    description: 'Median working days from issue creation to Done for issues completed in this sprint. Weekends are excluded.',
+    description:
+      'Maps directly from the DORA Lead Time band for this sprint period. Elite → 100pts, High → 75pts, Medium → 50pts, Low → 25pts. Median working days from first in-progress transition to Done. Weekends excluded.',
   },
   {
     name: 'Deployment Frequency',
-    description: 'Number of releases or done-status transitions in this sprint period.',
+    description:
+      'Maps directly from the DORA Deployment Frequency band for this sprint period. Elite → 100pts, High → 75pts, Medium → 50pts, Low → 25pts. Counts released fix versions and done-status fallback events.',
   },
   {
     name: 'Change Failure Rate',
-    description: 'Percentage of deployments in the sprint that resulted in a failure issue.',
-    formula: 'failure issues ÷ deployments × 100',
+    description:
+      'Maps directly from the DORA CFR band for this sprint period. Elite → 100pts, High → 75pts, Medium → 50pts, Low → 25pts.',
+    formula: 'failure issues ÷ deployment events × 100',
   },
   {
     name: 'MTTR',
-    description: 'Median calendar hours to recover from failures that occurred during the sprint. Weekends are included — production incidents are not bounded by working hours.',
+    description:
+      'Maps directly from the DORA MTTR band for this sprint period. Elite → 100pts, High → 75pts, Medium → 50pts, Low → 25pts. Median wall-clock hours from first active transition to recovery status. Weekends are included.',
   },
 ]
 

@@ -213,20 +213,20 @@ fragile/
 
 ### Lead Time for Changes
 
-- **Calculation:** `issue.createdAt` → first transition to done/released (from changelog); if fixVersion present, use `releaseDate` as endpoint. Output: median and p95 in days. Weekend days excluded (ADR 0024).
-- **Bands:** Elite = <1 day, High = 1 day–1 week, Medium = 1 week–1 month, Low = >1 month
+- **Calculation:** first in-progress transition (`inProgressStatusNames`) → done/released transition (from changelog); if fixVersion present, use `releaseDate` as endpoint. Output: median (p50) and p95 in working days. Weekend days excluded (ADR 0024). Issues with no in-progress transition are anomalies and excluded from the median.
+- **Bands (strict less-than, ADR 0054):** Elite = <1 day, High = <7 days, Medium = <30 days, Low = ≥30 days
 
 ### Change Failure Rate (CFR)
 
-- **Calculation:** `(failure issues / total deployments) * 100`
+- **Calculation:** `(failure issues / total deployment events) * 100`. Denominator is the same event list as Deployment Frequency (ADR 0051). Failure issues matched by issue type OR label, with optional AND-gate on causal link type.
 - **Configurable per board (`BoardConfig`):** `failureIssueTypes`, `failureLinkTypes`, `failureLabels`
-- **Bands:** Elite = 0–5%, High = 5–10%, Medium = 10–15%, Low = >15%
+- **Bands (strict less-than, ADR 0054):** Elite = <5%, High = <10%, Medium = <15%, Low = ≥15%
 
 ### MTTR
 
-- **Calculation:** median of `(recoveryDate − failureCreatedDate)` across failure issues in period; uses **calendar hours** (not working hours) per ADR 0025
-- **Configurable per board:** `incidentIssueTypes`, `recoveryStatusName`, `incidentLabels`
-- **Bands:** Elite = <1 hr, High = <1 day, Medium = <1 week, Low = >1 week
+- **Calculation:** median of `(recoveryDate − firstInProgressTransition)` across incident issues in period; falls back to `createdAt` when no in-progress transition exists. Uses **wall-clock hours** (not working hours) per ADR 0025.
+- **Configurable per board:** `incidentIssueTypes`, `recoveryStatusNames`, `incidentLabels`, `incidentPriorities`
+- **Bands:** Elite = <1 hr, High = <24 hrs, Medium = <168 hrs (7 days), Low = ≥168 hrs
 
 ### DORA Snapshots
 
@@ -402,9 +402,23 @@ See the `architect` and `decision-log` skills for the exact proposal and ADR for
 | 0033 | CloudFront as sole public entry point                                                       |
 | 0034 | CloudFront WAF IP allowlist as primary access control mechanism                             |
 | 0036 | Sync endpoint is fire-and-forget — returns HTTP 202 immediately                             |
+| 0039 | Carry-over sprint issues from immediately prior closed sprint classified as committed        |
 | 0040 | Lambda invoked post-sync for DORA snapshot computation                                      |
 | 0041 | Postgres advisory lock used to serialise concurrent sync runs                               |
 | 0043 | ECS Fargate replaces App Runner for compute                                                 |
+| 0044 | Roadmap coverage via direct Jira issue links with per-board `roadmapLinkTypes` allowlist    |
+| 0045 | Support ticket report with per-board classification, cycle time, and MCP tools              |
+| 0048 | Sync includes cancelled issues; multi-sprint membership persisted                           |
+| 0049 | Single `SprintMembershipService` owns all sprint membership reconstruction                  |
+| 0051 | CFR denominator: deployment events list shared with Deployment Frequency via `deriveDeploymentEvents` |
+| 0052 | Disjoint removed-set semantics: `committedRemovedKeys` + `addedRemovedKeys` via `summariseMembership()` |
+| 0053 | Sprint Report N/A propagation: excluded dimensions redistribute weight; nullable `compositeScore` |
+| 0054 | DORA band boundaries: strict less-than (`<`) for upper-bound bands (LT, CFR, MTTR)          |
+| 0055 | Roadmap idea↔epic conflict resolution: earliest target date wins; configurable per board    |
+| 0056 | Cycle time reopen handling: shared `extractCycles` helper; representative = latest completed cycle |
+| 0057 | Custom Reports: `custom-reports` NestJS domain, REST CRUD, 13 MCP tools, frontend `/reports` |
+| 0059 | Custom Report Layout Schema: typed `ReportLayout` in JSONB; Zod-backed validator; `colSpan` per widget |
+| 0060 | DORA Aggregate: quarter parameter for historical quarters; `elapsedDays`/`totalDays`/`partial` on period |
 
 ---
 

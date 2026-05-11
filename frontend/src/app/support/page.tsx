@@ -34,16 +34,17 @@ const SUPPORT_HELP: MetricDefinition[] = [
   {
     name: 'Support Load',
     description:
-      'The percentage of completed issues in the period that are classified as support work. Issues are matched by label (supportLabels) or by issue link type (supportLinkType + triageBoardKey), configured per board in Settings.',
+      'Percentage of issues in the period classified as support work. Issues are matched by epic, label, or issue link type pointing to a triage board — configured per board in Settings. For sprint or current-quarter periods the denominator includes all active issues; for past quarters only issues with a completion in the period are counted.',
   },
   {
     name: 'Cycle Time (support)',
     description:
-      'Time from when work started (first transition to In Progress) to Done for support issues only. Working days, weekends excluded. Epics and Sub-tasks not included.',
+      'Time from first active-work transition (In Progress or equivalent) to Done for support issues only. Consecutive in-progress sub-statuses are treated as one continuous cycle. Working days, weekends excluded. Epics and Sub-tasks not included.',
   },
   {
     name: 'P50 / P95',
-    description: 'P50 is the median support cycle time; P95 is the 95th percentile (worst 5% of cases).',
+    description:
+      'P50 is the median support cycle time; P95 is the 95th percentile (only 5% of support issues took longer). Both use linear interpolation across sorted observations.',
   },
 ]
 

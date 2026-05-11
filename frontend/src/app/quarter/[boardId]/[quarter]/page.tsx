@@ -22,7 +22,8 @@ import { PriorityBadge } from '@/components/ui/priority-badge'
 const QUARTER_HELP: MetricDefinition[] = [
   {
     name: 'Commitment',
-    description: 'Issues active (In Progress or waiting) at the start of the quarter, based on changelog reconstruction.',
+    description:
+      'Issues in active work (in-progress or later statuses) at the start of the quarter, reconstructed from Jira Sprint-field and status changelog entries.',
   },
   {
     name: 'Completed',
@@ -35,8 +36,9 @@ const QUARTER_HELP: MetricDefinition[] = [
   },
   {
     name: 'Completion Rate',
-    description: 'Percentage of final quarter scope completed.',
-    formula: 'completed ÷ (commitment + added − removed) × 100',
+    description:
+      'Percentage of the final quarter membership completed. The denominator is the actual final issue set for the quarter — not a derived commitment ± added − removed calculation.',
+    formula: 'completed ÷ final quarter membership × 100',
   },
 ]
 

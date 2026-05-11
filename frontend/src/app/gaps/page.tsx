@@ -18,15 +18,18 @@ import { MetricHelp, type MetricDefinition } from '@/components/ui/metric-help'
 const GAPS_HELP: MetricDefinition[] = [
   {
     name: 'No Epic Link',
-    description: 'Open issues (non-Done status) that are not linked to a parent epic. These issues cannot be tracked against roadmap goals.',
+    description:
+      'Open issues in active sprints that are not linked to a parent epic. Applies to all board types. Issues in Done or cancelled statuses are excluded. These issues cannot be tracked against roadmap goals.',
   },
   {
     name: 'No Story Points',
-    description: 'Open issues without a story point estimate. These issues cannot be included in velocity or capacity calculations.',
+    description:
+      'Open issues in active sprints without a story point estimate. Scrum boards only — not reported for Kanban. These issues cannot be included in velocity or capacity calculations.',
   },
   {
     name: 'Unplanned Done',
-    description: 'Issues that were completed during the sprint but were not part of the sprint commitment at the start date. These indicate unplanned reactive work.',
+    description:
+      'Issues completed in the period that were never part of a sprint at resolution time. For Scrum boards: an issue is planned if it was in a sprint when it resolved (reconstructed from Sprint-field changelog). For Kanban boards: an issue is planned if it had a board entry date before it resolved.',
   },
 ]
 
