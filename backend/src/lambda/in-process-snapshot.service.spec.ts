@@ -30,7 +30,7 @@ function mockBoardConfigRepo(boardIds = ['ACC']): jest.Mocked<Repository<BoardCo
 
 function mockOrgDoraResult(): OrgDoraResult {
   return {
-    period: { label: '2026-Q1', start: '2026-01-01T00:00:00.000Z', end: '2026-03-31T23:59:59.999Z' },
+    period: { label: '2026-Q1', start: '2026-01-01T00:00:00.000Z', end: '2026-03-31T23:59:59.999Z', totalDays: 90, elapsedDays: 90, partial: false },
     orgDeploymentFrequency: { totalDeployments: 5, deploymentsPerDay: 0.05, band: 'low', periodDays: 90, contributingBoards: 1 },
     orgLeadTime: { medianDays: 3, p95Days: 10, band: 'high', sampleSize: 10, contributingBoards: 1, anomalyCount: 0 },
     orgChangeFailureRate: { totalDeployments: 5, failureCount: 0, changeFailureRate: 0, band: 'elite', contributingBoards: 1, anyBoardUsingDefaultConfig: false, boardsUsingDefaultConfig: [] },

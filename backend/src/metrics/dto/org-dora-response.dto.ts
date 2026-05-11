@@ -47,7 +47,30 @@ export interface OrgMttrResult {
 }
 
 export interface OrgDoraResult {
-  period: { label: string; start: string; end: string };
+  period: {
+    label: string;
+    start: string;
+    end: string;
+    /**
+     * Full calendar length of the period in days (clamped to >= 1).
+     * Optional for backward compatibility — older snapshots may not include this field.
+     */
+    totalDays?: number;
+    /**
+     * Days elapsed from period start to min(now, end).
+     * Equals totalDays for completed periods.
+     * Optional for backward compatibility — older snapshots may not include this field.
+     */
+    elapsedDays?: number;
+    /**
+     * true when now < period end — i.e. the quarter is still in progress.
+     * When partial is true, deploymentsPerDay uses totalDays as its denominator
+     * (full period), not elapsedDays. Use totalDeployments / elapsedDays for
+     * the current pace.
+     * Optional for backward compatibility — older snapshots may not include this field.
+     */
+    partial?: boolean;
+  };
   orgDeploymentFrequency: OrgDeploymentFrequencyResult;
   orgLeadTime: OrgLeadTimeResult;
   orgChangeFailureRate: OrgCfrResult;

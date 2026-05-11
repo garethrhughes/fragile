@@ -385,6 +385,52 @@ describe('MetricsService', () => {
       expect(result.period.start).toMatch(/^\d{4}-\d{2}-\d{2}T/);
       expect(result.period.label).toMatch(/^\d{4}-Q\d$/);
     });
+
+    it('period has elapsedDays, totalDays, and partial fields', async () => {
+      const result = await service.getDoraAggregate({ boardId: 'ACC' });
+      expect(typeof result.period.elapsedDays).toBe('number');
+      expect(typeof result.period.totalDays).toBe('number');
+      expect(typeof result.period.partial).toBe('boolean');
+      expect(result.period.elapsedDays).toBeGreaterThan(0);
+      expect(result.period.totalDays).toBeGreaterThan(0);
+      expect(result.period.elapsedDays!).toBeLessThanOrEqual(result.period.totalDays!);
+    });
+
+    it('period.partial is false for a completed quarter', async () => {
+      // 2020-Q1 is entirely in the past
+      const result = await service.getDoraAggregate({ boardId: 'ACC', quarter: '2020-Q1' });
+      expect(result.period.partial).toBe(false);
+      expect(result.period.elapsedDays).toBe(result.period.totalDays);
+    });
+
+    it('period.partial is true for the current in-progress quarter', async () => {
+      // Freeze time to 2025-02-15 — guaranteed mid-Q1 (never at a quarter boundary)
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2025-02-15T12:00:00.000Z').getTime());
+
+      try {
+        const result = await service.getDoraAggregate({ boardId: 'ACC' });
+        expect(result.period.partial).toBe(true);
+        expect(result.period.elapsedDays!).toBeLessThanOrEqual(result.period.totalDays!);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('boardBreakdowns[0].period has elapsedDays, totalDays, and partial fields', async () => {
+      const result = await service.getDoraAggregate({ boardId: 'ACC' });
+      const bp = result.boardBreakdowns[0]?.period;
+      expect(bp).toBeDefined();
+      expect(typeof bp?.elapsedDays).toBe('number');
+      expect(typeof bp?.totalDays).toBe('number');
+      expect(typeof bp?.partial).toBe('boolean');
+    });
+
+    it('boardBreakdowns[0].period.partial is false for a completed quarter', async () => {
+      const result = await service.getDoraAggregate({ boardId: 'ACC', quarter: '2020-Q1' });
+      expect(result.boardBreakdowns[0]?.period.partial).toBe(false);
+      expect(result.boardBreakdowns[0]?.period.elapsedDays).toBe(result.boardBreakdowns[0]?.period.totalDays);
+    });
   });
 
   // -------------------------------------------------------------------------

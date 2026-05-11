@@ -39,7 +39,7 @@ import { TrendDataLoader, type TrendDataSlice } from './trend-data-loader.servic
 
 export interface DoraMetricsResult {
   boardId: string;
-  period: { start: string; end: string };
+  period: { start: string; end: string; totalDays?: number; elapsedDays?: number; partial?: boolean };
   deploymentFrequency: DeploymentFrequencyResult;
   leadTime: LeadTimeResult;
   changeFailureRate: CfrResult;
@@ -108,11 +108,21 @@ export class MetricsService {
           this.mttrService.calculate(boardId, startDate, endDate),
         ]);
 
+      const now = new Date();
+      const periodMs = endDate.getTime() - startDate.getTime();
+      const totalDays = Math.max(Math.round(periodMs / (1000 * 60 * 60 * 24)), 1);
+      const effectiveEnd = endDate < now ? endDate : now;
+      const elapsedDays = Math.max(Math.round((effectiveEnd.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)), 1);
+      const partial = now < endDate;
+
       results.push({
         boardId,
         period: {
           start: startDate.toISOString(),
           end: endDate.toISOString(),
+          totalDays,
+          elapsedDays,
+          partial,
         },
         deploymentFrequency,
         leadTime,
@@ -700,6 +710,12 @@ export class MetricsService {
     const totalIncidents = allMttrObs.length;
 
     // --- Per-board breakdowns (RC-4: include boardType)
+    // Compute partial-period fields once, shared across org result and board breakdowns.
+    const now = new Date();
+    const effectiveEnd = endDate < now ? endDate : now;
+    const elapsedDays = Math.max(Math.round((effectiveEnd.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)), 1);
+    const partial = now < endDate;
+
     const boardBreakdowns: DoraMetricsBoardBreakdown[] = boardResults.map((r) => {
       const rawBoardType = r.boardConfig?.boardType ?? 'scrum';
       const boardType: 'scrum' | 'kanban' =
@@ -709,6 +725,9 @@ export class MetricsService {
         period: {
           start: startDate.toISOString(),
           end: endDate.toISOString(),
+          totalDays: Math.round(periodDays),
+          elapsedDays,
+          partial,
         },
         deploymentFrequency: r.df,
         leadTime: r.lt,
@@ -723,6 +742,9 @@ export class MetricsService {
         label,
         start: startDate.toISOString(),
         end: endDate.toISOString(),
+        totalDays: Math.round(periodDays),
+        elapsedDays,
+        partial,
       },
       orgDeploymentFrequency: {
         totalDeployments,

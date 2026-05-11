@@ -26,29 +26,33 @@ import { PriorityBadge } from '@/components/ui/priority-badge'
 const SPRINT_HELP: MetricDefinition[] = [
   {
     name: 'Commitment',
-    description: 'Issues in the sprint at the start date, reconstructed from Jira changelog.',
+    description:
+      'Issues in the sprint at the start date (plus a 5-minute grace window). Reconstructed from Jira Sprint-field changelog entries. Carry-overs from immediately prior closed sprints are included.',
   },
   {
     name: 'Added',
-    description: 'Issues added to the sprint after the start date.',
+    description: 'Issues added to the sprint after the start date (mid-sprint scope increases).',
   },
   {
     name: 'Removed',
-    description: 'Issues removed from the sprint before it ended.',
+    description:
+      'Committed issues (present at start date) that were removed before the sprint ended. Issues added mid-sprint and then removed are tracked separately and are not counted here.',
   },
   {
     name: 'Completed',
-    description: 'Issues that reached a Done status by sprint end.',
+    description:
+      'Issues that reached a Done status within the sprint window. A 5-minute grace window is applied at both boundaries for closed sprints.',
   },
   {
     name: 'Scope Change %',
-    description: 'Relative change in sprint scope from the original commitment.',
-    formula: '(added + removed) ÷ commitment × 100',
+    description: 'Relative change in sprint scope from the original commitment — counts both additions and removals of committed issues.',
+    formula: '(added + committed-removed) ÷ commitment × 100',
   },
   {
     name: 'Completion Rate',
-    description: 'Percentage of final sprint scope completed.',
-    formula: 'completed ÷ (commitment + added − removed) × 100',
+    description:
+      'Percentage of the final sprint membership completed. The denominator is the actual final sprint set (live snapshot), not a derived commitment ± added − removed calculation.',
+    formula: 'completed ÷ final sprint membership × 100',
   },
 ]
 

@@ -24,7 +24,7 @@ describe('DORA tools', () => {
 
   describe('get_dora_metrics', () => {
     it('returns JSON text content from the API response', async () => {
-      const data = { period: '2026-Q1', deploymentFrequency: { band: 'elite' } };
+      const data = { period: { label: '2026-Q1', partial: false, elapsedDays: 91, totalDays: 91 }, deploymentFrequency: { band: 'elite' } };
       mockApiGet.mockResolvedValueOnce(mockSuccess(data));
 
       const server = makeServer();
@@ -57,6 +57,56 @@ describe('DORA tools', () => {
       const server = makeServer();
       await callTool(server, 'get_dora_metrics', {});
       expect(mockApiGet).toHaveBeenCalledWith('/api/metrics/dora/aggregate', {});
+    });
+
+    it('prepends partial-period annotation when period.partial is true', async () => {
+      const data = {
+        period: { label: '2026-Q2', partial: true, elapsedDays: 41, totalDays: 91 },
+        orgDeploymentFrequency: { deploymentsPerDay: 0.04, totalDeployments: 4, periodDays: 91 },
+      };
+      mockApiGet.mockResolvedValueOnce(mockSuccess(data));
+
+      const server = makeServer();
+      const result = await callTool(server, 'get_dora_metrics', { quarter: '2026-Q2' });
+
+      // Should have 2 content blocks: annotation + JSON
+      expect(result.content).toHaveLength(2);
+      expect(result.content[0]?.type).toBe('text');
+      expect(result.content[0]?.text).toContain('2026-Q2');
+      expect(result.content[0]?.text).toContain('41');
+      expect(result.content[0]?.text).toContain('91');
+      // The annotation should explain the denominator semantics
+      expect(result.content[0]?.text).toContain('deploymentsPerDay');
+      // Second block is the raw JSON
+      expect(result.content[1]?.type).toBe('text');
+      expect(JSON.parse(result.content[1]?.text ?? '')).toEqual(data);
+    });
+
+    it('does NOT prepend annotation when period.partial is false', async () => {
+      const data = {
+        period: { label: '2025-Q4', partial: false, elapsedDays: 92, totalDays: 92 },
+        orgDeploymentFrequency: { deploymentsPerDay: 0.1, totalDeployments: 9, periodDays: 92 },
+      };
+      mockApiGet.mockResolvedValueOnce(mockSuccess(data));
+
+      const server = makeServer();
+      const result = await callTool(server, 'get_dora_metrics', { quarter: '2025-Q4' });
+
+      // Only the JSON block — no annotation
+      expect(result.content).toHaveLength(1);
+      expect(result.content[0]?.type).toBe('text');
+      expect(JSON.parse(result.content[0]?.text ?? '')).toEqual(data);
+    });
+
+    it('does NOT prepend annotation when period metadata is absent (legacy response)', async () => {
+      const data = { orgDeploymentFrequency: { deploymentsPerDay: 0.05 } };
+      mockApiGet.mockResolvedValueOnce(mockSuccess(data));
+
+      const server = makeServer();
+      const result = await callTool(server, 'get_dora_metrics', {});
+
+      expect(result.content).toHaveLength(1);
+      expect(JSON.parse(result.content[0]?.text ?? '')).toEqual(data);
     });
   });
 
