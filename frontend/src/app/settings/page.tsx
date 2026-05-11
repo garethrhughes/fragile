@@ -608,21 +608,11 @@ export default function SettingsPage() {
                   value={config.supportLabels ?? []}
                   onChange={(v) => updateField('supportLabels', v)}
                 />
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium">Support Link Type</label>
-                  <input
-                    type="text"
-                    value={config.supportLinkType ?? ''}
-                    onChange={(e) =>
-                      updateField('supportLinkType', e.target.value.trim() || null)
-                    }
-                    placeholder="e.g. clones"
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm placeholder:text-muted focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
-                  <p className="mt-1 text-xs text-muted">
-                    Jira link type name used to link tickets to the triage board.
-                  </p>
-                </div>
+                <CsvField
+                  label="Support Link Types"
+                  value={config.supportLinkTypes ?? []}
+                  onChange={(v) => updateField('supportLinkTypes', v)}
+                />
                 <div>
                   <label className="mb-1.5 block text-sm font-medium">Triage Board Key</label>
                   <input

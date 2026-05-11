@@ -67,7 +67,7 @@ export class SupportService {
 
     return Promise.all(
       boardIds.map((boardId) =>
-        this.getSupportResultForBoard(boardId, startDate, endDate, isSprint, sprintName, isCurrentPeriod),
+        this.getSupportResultForBoard(boardId, startDate, endDate, isSprint, sprintName, isCurrentPeriod, query.matchReason),
       ),
     );
   }
@@ -112,10 +112,11 @@ export class SupportService {
     isSprint: boolean = false,
     sprintName?: string,
     isCurrentPeriod: boolean = false,
+    matchReasonFilter?: 'link' | 'label' | 'epic',
   ): Promise<SupportResult> {
     const config = await this.boardConfigRepo.findOne({ where: { boardId } });
     const supportLabels: string[] = config?.supportLabels ?? [];
-    const supportLinkType: string | null = config?.supportLinkType ?? null;
+    const supportLinkTypes: string[] = config?.supportLinkTypes ?? [];
     const triageBoardKey: string | null = config?.triageBoardKey ?? null;
     const supportEpics: string[] = (config?.supportEpics ?? []).map((e) =>
       e.toUpperCase(),
@@ -277,7 +278,7 @@ export class SupportService {
 
     // Step 3: Bulk-load issue links for link-based classification
     const linksByIssue = new Map<string, JiraIssueLink[]>();
-    if (supportLinkType && triageBoardKey) {
+    if (supportLinkTypes.length > 0 && triageBoardKey) {
       const links = await this.issueLinkRepo
         .createQueryBuilder('lnk')
         .where('lnk.sourceIssueKey IN (:...keys)', { keys: issueKeys })
@@ -461,11 +462,11 @@ export class SupportService {
         (issue.labels as string[]).some((l) => supportLabels.includes(l));
 
       const linkMatch =
-        supportLinkType !== null &&
+        supportLinkTypes.length > 0 &&
         triagePrefix !== null &&
         (linksByIssue.get(issue.key) ?? []).some(
           (lnk) =>
-            lnk.linkTypeName === supportLinkType &&
+            supportLinkTypes.includes(lnk.linkTypeName) &&
             lnk.targetIssueKey.startsWith(triagePrefix),
         );
 
@@ -509,20 +510,26 @@ export class SupportService {
     }
 
     // Step 7: Percentiles across support tickets with cycle time
-    const cycleTimes = tickets
+    // Apply matchReason filter if requested — totalIssues (denominator) is
+    // intentionally kept as the full period count regardless of the filter.
+    const filteredTickets = matchReasonFilter
+      ? tickets.filter((t) => t.matchReason.split('+').includes(matchReasonFilter))
+      : tickets;
+
+    const cycleTimes = filteredTickets
       .map((t) => t.cycleTimeDays)
       .filter((d): d is number => d !== null)
       .sort((a, b) => a - b);
 
-    const supportIssues = tickets.length;
-    const reopenedIssueCount = tickets.filter((t) => t.isReopen).length;
+    const supportIssues = filteredTickets.length;
+    const reopenedIssueCount = filteredTickets.filter((t) => t.isReopen).length;
     const supportPercentage =
       totalIssues > 0 ? round2((supportIssues / totalIssues) * 100) : 0;
     const p50Days = round2(percentile(cycleTimes, 50));
     const p95Days = round2(percentile(cycleTimes, 95));
 
     // Sort tickets: completed first (most recent first), then unresolved
-    tickets.sort((a, b) => {
+    filteredTickets.sort((a, b) => {
       if (a.completedAt && b.completedAt) {
         return new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime();
       }
@@ -531,7 +538,7 @@ export class SupportService {
       return a.issueKey.localeCompare(b.issueKey);
     });
 
-    return { boardId, totalIssues, supportIssues, supportPercentage, p50Days, p95Days, reopenedIssueCount, tickets };
+    return { boardId, totalIssues, supportIssues, supportPercentage, p50Days, p95Days, reopenedIssueCount, tickets: filteredTickets };
   }
 
   // ---------------------------------------------------------------------------

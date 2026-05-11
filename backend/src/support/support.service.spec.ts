@@ -86,7 +86,7 @@ function makeConfig(overrides: Partial<BoardConfig> = {}): BoardConfig {
     doneStatusNames: ['Done'],
     inProgressStatusNames: ['In Progress'],
     supportLabels: [],
-    supportLinkType: null,
+    supportLinkTypes: [],
     triageBoardKey: null,
     supportEpics: [],
     ...overrides,
@@ -262,7 +262,7 @@ describe('SupportService', () => {
   // ── Link classification ───────────────────────────────────────────────────
 
   it('classifies a ticket as support when link type and triage board key match', async () => {
-    const config = makeConfig({ supportLinkType: 'clones', triageBoardKey: 'TTB' });
+    const config = makeConfig({ supportLinkTypes: ['clones'], triageBoardKey: 'TTB' });
     boardConfigRepo.findOne.mockResolvedValue(config);
     issueRepo.find.mockResolvedValue([makeIssue({ key: 'ACC-1', labels: [] })]);
     changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
@@ -280,7 +280,7 @@ describe('SupportService', () => {
   });
 
   it('does not classify a ticket when link type matches but triage board key does not', async () => {
-    const config = makeConfig({ supportLinkType: 'clones', triageBoardKey: 'TTB' });
+    const config = makeConfig({ supportLinkTypes: ['clones'], triageBoardKey: 'TTB' });
     boardConfigRepo.findOne.mockResolvedValue(config);
     issueRepo.find.mockResolvedValue([makeIssue({ key: 'ACC-1', labels: [] })]);
     changelogRepo.createQueryBuilder().getMany.mockResolvedValue([]);
@@ -294,7 +294,7 @@ describe('SupportService', () => {
   });
 
   it('does not classify when triage board key matches but link type does not', async () => {
-    const config = makeConfig({ supportLinkType: 'clones', triageBoardKey: 'TTB' });
+    const config = makeConfig({ supportLinkTypes: ['clones'], triageBoardKey: 'TTB' });
     boardConfigRepo.findOne.mockResolvedValue(config);
     issueRepo.find.mockResolvedValue([makeIssue({ key: 'ACC-1', labels: [] })]);
     changelogRepo.createQueryBuilder().getMany.mockResolvedValue([]);
@@ -310,7 +310,7 @@ describe('SupportService', () => {
   // ── Both criteria ─────────────────────────────────────────────────────────
 
   it('reports matchReason=label+link when ticket matches label AND link', async () => {
-    const config = makeConfig({ supportLabels: ['support'], supportLinkType: 'clones', triageBoardKey: 'TTB' });
+    const config = makeConfig({ supportLabels: ['support'], supportLinkTypes: ['clones'], triageBoardKey: 'TTB' });
     boardConfigRepo.findOne.mockResolvedValue(config);
     issueRepo.find.mockResolvedValue([makeIssue({ key: 'ACC-1', labels: ['support'] })]);
     changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
@@ -536,7 +536,7 @@ describe('SupportService', () => {
   it('sprint mode: includes in-progress support tickets (no completion gate)', async () => {
     const sprint = makeSprint();
     sprintRepo.findOne.mockResolvedValue(sprint);
-    const config = makeConfig({ boardId: 'SPS', supportLinkType: 'clones', triageBoardKey: 'TTB' });
+    const config = makeConfig({ boardId: 'SPS', supportLinkTypes: ['clones'], triageBoardKey: 'TTB' });
     boardConfigRepo.findOne.mockResolvedValue(config);
     // Issue is in the sprint (sprintId matches) but not done
     issueRepo.find.mockResolvedValue([
@@ -990,7 +990,7 @@ describe('SupportService', () => {
   });
 
   it('reports matchReason=epic+link when ticket matches epic AND link', async () => {
-    const config = makeConfig({ supportEpics: ['PROJ-1'], supportLinkType: 'clones', triageBoardKey: 'TTB' });
+    const config = makeConfig({ supportEpics: ['PROJ-1'], supportLinkTypes: ['clones'], triageBoardKey: 'TTB' });
     boardConfigRepo.findOne.mockResolvedValue(config);
     issueRepo.find.mockResolvedValue([
       makeIssue({ key: 'ACC-1', epicKey: 'PROJ-1', labels: [] }),
@@ -1010,7 +1010,7 @@ describe('SupportService', () => {
   });
 
   it('reports matchReason=epic+label+link when all three signals match', async () => {
-    const config = makeConfig({ supportEpics: ['PROJ-1'], supportLabels: ['support'], supportLinkType: 'clones', triageBoardKey: 'TTB' });
+    const config = makeConfig({ supportEpics: ['PROJ-1'], supportLabels: ['support'], supportLinkTypes: ['clones'], triageBoardKey: 'TTB' });
     boardConfigRepo.findOne.mockResolvedValue(config);
     issueRepo.find.mockResolvedValue([
       makeIssue({ key: 'ACC-1', epicKey: 'PROJ-1', labels: ['support'] }),
@@ -1027,5 +1027,120 @@ describe('SupportService', () => {
     const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
     expect(result.supportIssues).toBe(1);
     expect(result.tickets[0].matchReason).toBe('epic+label+link');
+  });
+
+  // ── Plural link types ─────────────────────────────────────────────────────
+
+  it('classifies a ticket as support when its link type matches any of multiple supportLinkTypes', async () => {
+    const config = makeConfig({ supportLinkTypes: ['clones', 'is caused by'], triageBoardKey: 'TTB' });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([makeIssue({ key: 'ACC-1', labels: [] })]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', STARTED_AT),
+      makeChangelog('ACC-1', 'In Progress', 'Done', DONE_AT),
+    ]);
+    issueLinkRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeLink('ACC-1', 'TTB-55', 'is caused by'),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
+    expect(result.supportIssues).toBe(1);
+    expect(result.tickets[0].matchReason).toBe('link');
+  });
+
+  it('does not classify a ticket when link type is not in supportLinkTypes array', async () => {
+    const config = makeConfig({ supportLinkTypes: ['clones', 'is caused by'], triageBoardKey: 'TTB' });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([makeIssue({ key: 'ACC-1', labels: [] })]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([]);
+    issueLinkRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeLink('ACC-1', 'TTB-55', 'relates to'),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
+    expect(result.supportIssues).toBe(0);
+  });
+
+  it('does not load issue links when supportLinkTypes is empty', async () => {
+    const config = makeConfig({ supportLinkTypes: [], triageBoardKey: 'TTB' });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([makeIssue({ key: 'ACC-1', labels: [] })]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([]);
+    versionRepo.find.mockResolvedValue([]);
+
+    await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
+    // issueLinkRepo.createQueryBuilder should not be called when no link types configured
+    expect(issueLinkRepo.createQueryBuilder).not.toHaveBeenCalled();
+  });
+
+  // ── matchReason filter ────────────────────────────────────────────────────
+
+  it('matchReason=link filter: returns only link-matched tickets', async () => {
+    const config = makeConfig({ supportLabels: ['support'], supportLinkTypes: ['clones'], triageBoardKey: 'TTB' });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', labels: ['support'] }),  // label only
+      makeIssue({ key: 'ACC-2', labels: [] }),            // link only
+    ]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', STARTED_AT),
+      makeChangelog('ACC-1', 'In Progress', 'Done', DONE_AT),
+      makeChangelog('ACC-2', 'To Do', 'In Progress', STARTED_AT),
+      makeChangelog('ACC-2', 'In Progress', 'Done', DONE_AT),
+    ]);
+    issueLinkRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeLink('ACC-2', 'TTB-10', 'clones'),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1', matchReason: 'link' });
+    expect(result.totalIssues).toBe(2);
+    expect(result.supportIssues).toBe(1);
+    expect(result.tickets).toHaveLength(1);
+    expect(result.tickets[0].issueKey).toBe('ACC-2');
+  });
+
+  it('matchReason=link filter: includes tickets with combined reasons containing link', async () => {
+    const config = makeConfig({ supportLabels: ['support'], supportLinkTypes: ['clones'], triageBoardKey: 'TTB' });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', labels: ['support'] }),  // label+link
+    ]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', STARTED_AT),
+      makeChangelog('ACC-1', 'In Progress', 'Done', DONE_AT),
+    ]);
+    issueLinkRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeLink('ACC-1', 'TTB-10', 'clones'),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1', matchReason: 'link' });
+    expect(result.supportIssues).toBe(1);
+    expect(result.tickets[0].matchReason).toBe('label+link');
+  });
+
+  it('matchReason filter absent: returns all classified tickets (no filter applied)', async () => {
+    const config = makeConfig({ supportLabels: ['support'], supportLinkTypes: ['clones'], triageBoardKey: 'TTB' });
+    boardConfigRepo.findOne.mockResolvedValue(config);
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'ACC-1', labels: ['support'] }),
+      makeIssue({ key: 'ACC-2', labels: [] }),
+    ]);
+    changelogRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeChangelog('ACC-1', 'To Do', 'In Progress', STARTED_AT),
+      makeChangelog('ACC-1', 'In Progress', 'Done', DONE_AT),
+      makeChangelog('ACC-2', 'To Do', 'In Progress', STARTED_AT),
+      makeChangelog('ACC-2', 'In Progress', 'Done', DONE_AT),
+    ]);
+    issueLinkRepo.createQueryBuilder().getMany.mockResolvedValue([
+      makeLink('ACC-2', 'TTB-10', 'clones'),
+    ]);
+    versionRepo.find.mockResolvedValue([]);
+
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
+    expect(result.supportIssues).toBe(2);
   });
 });

@@ -108,22 +108,23 @@ export class UpdateBoardConfigDto {
   supportLabels?: string[];
 
   @ApiPropertyOptional({
-    type: String,
-    example: 'clones',
+    type: [String],
+    example: ['clones', 'is caused by'],
     description:
-      'Jira issue link type name whose target points to the triage board ' +
-      '(e.g. "clones"). Null disables link-based classification. (ADR 0045)',
+      'Jira issue link type names whose target points to the triage board ' +
+      '(e.g. ["clones", "is caused by"]). Empty array disables link-based classification. (ADR 0045, ADR 0061)',
   })
   @IsOptional()
-  @IsString()
-  supportLinkType?: string | null;
+  @IsArray()
+  @IsString({ each: true })
+  supportLinkTypes?: string[];
 
   @ApiPropertyOptional({
     type: String,
     example: 'TTB',
     description:
       'Project key prefix for the triage board (e.g. "TTB"). ' +
-      'Used with supportLinkType to identify support tickets via issue links. (ADR 0045)',
+      'Used with supportLinkTypes to identify support tickets via issue links. (ADR 0045)',
   })
   @IsOptional()
   @IsString()
