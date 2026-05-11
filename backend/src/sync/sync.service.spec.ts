@@ -16,10 +16,27 @@ import {
 } from '../database/entities/index.js';
 import { SprintReportService } from '../sprint-report/sprint-report.service.js';
 import { LambdaInvokerService } from '../lambda/lambda-invoker.service.js';
+import { ConfigService } from '@nestjs/config';
+import { SchedulerRegistry } from '@nestjs/schedule';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function mockConfigService(timezone = 'Australia/Sydney'): jest.Mocked<ConfigService> {
+  return {
+    get: jest.fn().mockImplementation((key: string, fallback?: unknown) => {
+      if (key === 'TIMEZONE') return timezone;
+      return fallback;
+    }),
+  } as unknown as jest.Mocked<ConfigService>;
+}
+
+function mockSchedulerRegistry(): jest.Mocked<SchedulerRegistry> {
+  return {
+    addCronJob: jest.fn(),
+  } as unknown as jest.Mocked<SchedulerRegistry>;
+}
 
 function mockRepo<T extends object>(): jest.Mocked<Repository<T>> {
   return {
@@ -107,6 +124,8 @@ describe('SyncService', () => {
   let jiraFieldConfigRepo: jest.Mocked<Repository<JiraFieldConfig>>;
   let lambdaInvoker: jest.Mocked<LambdaInvokerService>;
   let dataSource: jest.Mocked<DataSource>;
+  let configService: jest.Mocked<ConfigService>;
+  let schedulerRegistry: jest.Mocked<SchedulerRegistry>;
 
   beforeEach(() => {
     jiraClient = mockJiraClient();
@@ -131,6 +150,8 @@ describe('SyncService', () => {
       invokeOrgSnapshot: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<LambdaInvokerService>;
     dataSource = mockDataSource();
+    configService = mockConfigService();
+    schedulerRegistry = mockSchedulerRegistry();
 
     service = new SyncService(
       jiraClient,
@@ -148,6 +169,8 @@ describe('SyncService', () => {
       jiraFieldConfigRepo,
       lambdaInvoker,
       dataSource,
+      configService,
+      schedulerRegistry,
     );
   });
 
@@ -164,6 +187,38 @@ describe('SyncService', () => {
 
       // If syncAll ran, it would have called boardConfigRepo.find
       expect(boardConfigRepo.find).toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // onModuleInit — cron registration
+  // -------------------------------------------------------------------------
+
+  describe('onModuleInit', () => {
+    it('registers a midnight cron job using the configured TIMEZONE', () => {
+      service.onModuleInit();
+
+      expect(schedulerRegistry.addCronJob).toHaveBeenCalledTimes(1);
+      const [name, job] = (schedulerRegistry.addCronJob as jest.Mock).mock.calls[0] as [string, { cronTime: { source: string; timeZone: string } }];
+      expect(name).toBe('jira-sync');
+      expect(job.cronTime.source).toBe('0 0 * * *');
+      expect(job.cronTime.timeZone).toBe('Australia/Sydney');
+    });
+
+    it('falls back to UTC when TIMEZONE is not configured', () => {
+      const utcConfigService = mockConfigService('UTC');
+      const utcScheduler = mockSchedulerRegistry();
+      const utcService = new SyncService(
+        jiraClient, sprintRepo, issueRepo, issueSprintRepo, changelogRepo,
+        versionRepo, syncLogRepo, boardConfigRepo, roadmapConfigRepo,
+        jpdIdeaRepo, issueLinkRepo, sprintReportService, jiraFieldConfigRepo,
+        lambdaInvoker, dataSource, utcConfigService, utcScheduler,
+      );
+
+      utcService.onModuleInit();
+
+      const [, job] = (utcScheduler.addCronJob as jest.Mock).mock.calls[0] as [string, { cronTime: { timeZone: string } }];
+      expect(job.cronTime.timeZone).toBe('UTC');
     });
   });
 
