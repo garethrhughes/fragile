@@ -22,7 +22,8 @@ import { PriorityBadge } from '@/components/ui/priority-badge'
 const WEEK_HELP: MetricDefinition[] = [
   {
     name: 'Pulled In',
-    description: 'Issues that entered the board (transitioned from backlog/to-do to in-progress or beyond) during this week.',
+    description:
+      'Issues that entered active work (first transition to an in-progress status such as In Progress, In Review, QA, etc.) during this week.',
   },
   {
     name: 'Completed',
@@ -30,19 +31,23 @@ const WEEK_HELP: MetricDefinition[] = [
   },
   {
     name: 'Cycle Time (Median)',
-    description: 'Median working days from first In Progress transition to Done for issues completed this week. Excludes weekends.',
+    description:
+      'Median working days from first active-work transition to Done for issues completed this week. Consecutive in-progress sub-statuses are treated as one continuous cycle. Excludes weekends.',
   },
   {
     name: 'Roadmap-Linked',
-    description: 'Issues linked to a roadmap idea (via epic or direct link). Green = delivered on time; amber = linked but not yet delivered on time.',
+    description:
+      'Issues linked to a roadmap idea via direct link or via their parent epic. Green = the roadmap target date was met; amber = linked but the target date was not met.',
   },
   {
     name: 'Incidents',
-    description: 'Issues matching the incident issue types, labels, or priorities configured for this board.',
+    description:
+      'Issues matching the incident issue types, labels, or priorities configured for this board.',
   },
   {
     name: 'Failures',
-    description: 'Issues matching the failure issue types or labels configured for this board.',
+    description:
+      'Issues matching the failure issue types, labels, or causal link type configured for this board.',
   },
 ]
 

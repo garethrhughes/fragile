@@ -60,3 +60,4 @@
 | [0056](0056-custom-reports.md) | Custom Reports | Accepted | 2026-05-08 |
 | [0057](0057-custom-report-table-and-stat-graphs.md) | Custom Report Widgets: Table, Stat, and Widget Rename | Accepted | 2026-05-08 |
 | [0058](0058-custom-report-layout-configuration.md) | Custom Report Layout Configuration | Accepted | 2026-05-08 |
+| [0059](0059-dora-aggregate-quarter-selection-and-partial-period.md) | DORA Aggregate: Quarter Selection and Partial-Period Awareness | Accepted | 2026-05-11 |

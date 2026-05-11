@@ -141,46 +141,50 @@ function TrendChart({ title, data, unit, color }: TrendChartProps) {
 const DORA_HELP: MetricDefinition[] = [
   {
     name: 'Deployment Frequency',
-    description: 'How often the team releases to production. Uses fix versions with a release date as the primary signal; falls back to transitions to a done status.',
-    formula: 'deployments ÷ days in period',
+    description:
+      'How often the team releases to production. Primary signal: released fix versions with a release date in the period. Fallback for issues without a fix version: first transition to a done status. Each distinct release event counts as one deployment.',
+    formula: 'deployment events ÷ days in period',
     bands: [
-      { label: 'Elite', threshold: 'Multiple deploys per day' },
-      { label: 'High', threshold: 'Between once per day and once per week' },
-      { label: 'Medium', threshold: 'Between once per week and once per month' },
+      { label: 'Elite', threshold: '≥ 1 per day (daily or on-demand)' },
+      { label: 'High', threshold: '≥ 1 per week (but less than daily)' },
+      { label: 'Medium', threshold: '≥ 1 per month (but less than weekly)' },
       { label: 'Low', threshold: 'Less than once per month' },
     ],
   },
   {
     name: 'Lead Time for Changes',
-    description: 'Median time from issue creation to first transition to a done/released status. When a fix version is present, the version release date is used as the endpoint. Weekends are excluded by default — values are in working days. Epics and Sub-tasks are excluded.',
-    formula: 'median(doneDate − createdAt) across issues in period',
+    description:
+      'Median time from first in-progress transition to done. Start: first transition to an active-work status (In Progress, In Review, QA, etc.). End: transition to a done status, or fix version release date when present. Weekends are excluded — values are in working days. Epics and Sub-tasks are excluded.',
+    formula: 'median(doneDate − firstInProgressDate) across issues in period',
     bands: [
       { label: 'Elite', threshold: 'Less than 1 working day' },
-      { label: 'High', threshold: '1 working day – 1 working week' },
-      { label: 'Medium', threshold: '1 working week – 1 working month' },
-      { label: 'Low', threshold: 'More than 1 working month' },
+      { label: 'High', threshold: '1 day to less than 7 days' },
+      { label: 'Medium', threshold: '7 days to less than 30 days' },
+      { label: 'Low', threshold: '30 days or more' },
     ],
   },
   {
     name: 'Change Failure Rate',
-    description: 'Percentage of deployments that result in a failure requiring remediation. Failure issues are identified by issue type, labels, or link type as configured per board.',
-    formula: 'failure issues ÷ total deployments × 100',
+    description:
+      'Percentage of deployment events that include a failure issue. Failure issues are identified by issue type, labels, or a configured causal link type — all criteria are per board. The denominator matches the Deployment Frequency event count exactly.',
+    formula: 'failure issues ÷ total deployment events × 100',
     bands: [
-      { label: 'Elite', threshold: '0 – 5%' },
-      { label: 'High', threshold: '5 – 10%' },
-      { label: 'Medium', threshold: '10 – 15%' },
-      { label: 'Low', threshold: 'More than 15%' },
+      { label: 'Elite', threshold: 'Less than 5%' },
+      { label: 'High', threshold: '5% to less than 10%' },
+      { label: 'Medium', threshold: '10% to less than 15%' },
+      { label: 'Low', threshold: '15% or more' },
     ],
   },
   {
     name: 'Mean Time to Recovery',
-    description: 'Median time to recover from a failure. Measured from incident creation to transition to the configured recovery status. Uses calendar hours (weekends are included) — production incidents are not bounded by working hours.',
-    formula: 'median(recoveryDate − failureCreatedAt) across incidents',
+    description:
+      'Median time to recover from an incident. Start: first in-progress transition of the incident issue (falls back to creation time). End: transition to the configured recovery status. Uses wall-clock hours — weekends are included because production incidents are not bounded by working hours. Epics and Sub-tasks are excluded.',
+    formula: 'median(recoveryDate − firstActiveTransition) across incidents in period',
     bands: [
       { label: 'Elite', threshold: 'Less than 1 hour' },
-      { label: 'High', threshold: '1 hour – 1 day' },
-      { label: 'Medium', threshold: '1 day – 1 week' },
-      { label: 'Low', threshold: 'More than 1 week' },
+      { label: 'High', threshold: '1 hour to less than 24 hours' },
+      { label: 'Medium', threshold: '24 hours to less than 168 hours (7 days)' },
+      { label: 'Low', threshold: '168 hours (7 days) or more' },
     ],
   },
 ]

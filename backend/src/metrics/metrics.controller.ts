@@ -10,6 +10,7 @@ import { DoraAggregateQueryDto } from './dto/dora-aggregate-query.dto.js';
 import { DoraTrendQueryDto } from './dto/dora-trend-query.dto.js';
 import type { OrgDoraResult, TrendResponse } from './dto/org-dora-response.dto.js';
 import { ORG_SNAPSHOT_KEY } from '../lambda/in-process-snapshot.service.js';
+import { listRecentQuarters } from './period-utils.js';
 import { BoardConfig } from '../database/entities/index.js';
 
 @ApiTags('metrics')
@@ -37,6 +38,14 @@ export class MetricsController {
   ): Promise<OrgDoraResult | { status: string; message: string }> {
     // Sprint-scoped aggregate: bypass snapshot and compute live for the sprint window.
     if (query.sprintId) {
+      return this.metricsService.getDoraAggregate(query);
+    }
+
+    // Historical quarter: bypass snapshot and compute live (snapshot only holds the
+    // current quarter). The service layer respects query.quarter and the in-memory
+    // DoraCacheService (60s TTL) covers repeated requests efficiently.
+    const currentQuarter = listRecentQuarters(1)[0].label;
+    if (query.quarter && query.quarter !== currentQuarter) {
       return this.metricsService.getDoraAggregate(query);
     }
 

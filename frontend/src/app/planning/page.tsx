@@ -236,33 +236,39 @@ function renderDeliveryRate(value: unknown) {
 const PLANNING_HELP: MetricDefinition[] = [
   {
     name: 'Commitment',
-    description: 'Number of issues in the sprint at the sprint start date. Reconstructed from Jira changelog entries — not the current sprint field.',
+    description:
+      'Issues in the sprint at the sprint start date (plus a 5-minute grace window). Reconstructed from Jira Sprint-field changelog entries — not the current sprint field. Carry-overs from immediately prior closed sprints are included.',
   },
   {
     name: 'Added',
-    description: 'Issues added to the sprint after the start date.',
+    description: 'Issues added to the sprint after the start date (mid-sprint scope increases). Includes issues that were added and then removed.',
   },
   {
     name: 'Removed',
-    description: 'Issues removed from the sprint before it ended.',
+    description:
+      'Committed issues (present at start date) that were removed before the sprint ended. Issues that were added mid-sprint and then removed are tracked separately and are not double-counted here.',
   },
   {
     name: 'Completed',
-    description: 'Issues that reached a Done status by the end of the sprint.',
+    description:
+      'Issues that reached a Done status within the sprint window. For closed sprints, a 5-minute grace window is applied at both boundaries to tolerate near-boundary transitions.',
   },
   {
     name: 'Scope Change %',
-    description: 'How much the sprint scope changed relative to the original commitment.',
-    formula: '(added + removed) ÷ commitment × 100',
+    description: 'How much the sprint scope changed relative to the original commitment — counts both additions and removals of committed issues.',
+    formula: '(added + committed-removed) ÷ commitment × 100',
   },
   {
     name: 'Completion Rate',
-    description: 'Percentage of the final sprint scope that was completed.',
-    formula: 'completed ÷ (commitment + added − removed) × 100',
+    description:
+      'Percentage of the final sprint membership that was completed. The denominator is the actual final sprint set (live sprint membership snapshot), which avoids distortion from add-then-remove churn.',
+    formula: 'completed ÷ final sprint membership × 100',
   },
   {
     name: 'Planning Accuracy',
-    description: 'Composite score combining scope stability and completion rate. Higher is better.',
+    description:
+      'Percentage of originally committed story points (or issue count when no points exist) that were completed. Measures how well the team delivered on its opening commitment — additions and removals do not affect the denominator.',
+    formula: 'completed committed points ÷ committed points × 100 (falls back to issue count)',
   },
 ]
 
