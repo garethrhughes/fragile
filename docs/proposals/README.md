@@ -62,3 +62,4 @@
 | [0058](0058-custom-report-layout-configuration.md) | Custom Report Layout Configuration | Accepted | 2026-05-08 |
 | [0059](0059-dora-aggregate-quarter-selection-and-partial-period.md) | DORA Aggregate: Quarter Selection and Partial-Period Awareness | Accepted | 2026-05-11 |
 | [0060](0060-support-report-ttb-filter-and-plural-link-types.md) | Support Report: TTB Filter and Plural Link Types | Accepted | 2026-05-12 |
+| [0061](0061-timezone-aware-sync-schedule.md) | Timezone-Aware Sync Schedule | Accepted | 2026-05-12 |
