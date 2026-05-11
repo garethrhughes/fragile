@@ -47,7 +47,25 @@ export interface OrgMttrResult {
 }
 
 export interface OrgDoraResult {
-  period: { label: string; start: string; end: string };
+  period: {
+    label: string;
+    start: string;
+    end: string;
+    /** Full calendar length of the period in days. */
+    totalDays: number;
+    /**
+     * Days elapsed from period start to min(now, end).
+     * Equals totalDays for completed periods.
+     */
+    elapsedDays: number;
+    /**
+     * true when now < period end — i.e. the quarter is still in progress.
+     * When partial is true, deploymentsPerDay uses totalDays as its denominator
+     * (full period), not elapsedDays. Use totalDeployments / elapsedDays for
+     * the current pace.
+     */
+    partial: boolean;
+  };
   orgDeploymentFrequency: OrgDeploymentFrequencyResult;
   orgLeadTime: OrgLeadTimeResult;
   orgChangeFailureRate: OrgCfrResult;

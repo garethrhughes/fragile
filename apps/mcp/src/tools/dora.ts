@@ -28,14 +28,30 @@ export function registerDoraTools(server: McpServer): void {
         };
       }
 
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify(result.data, null, 2),
-          },
-        ],
-      };
+      const data = result.data as Record<string, unknown> | null | undefined;
+      const period = data?.period as { label?: string; partial?: boolean; elapsedDays?: number; totalDays?: number } | undefined;
+
+      const blocks: Array<{ type: 'text'; text: string }> = [];
+
+      // Annotate partial quarters so AI consumers understand the rate is conservative.
+      // deploymentsPerDay is always divided by the full period (totalDays), not elapsedDays.
+      if (period?.partial === true) {
+        blocks.push({
+          type: 'text' as const,
+          text:
+            `Note: ${period.label ?? 'current quarter'} is in progress ` +
+            `(${period.elapsedDays}/${period.totalDays} days elapsed). ` +
+            `deploymentsPerDay is divided by the full ${period.totalDays}-day period, not elapsed days. ` +
+            `For the actual current pace use: totalDeployments / elapsedDays.`,
+        });
+      }
+
+      blocks.push({
+        type: 'text' as const,
+        text: JSON.stringify(data, null, 2),
+      });
+
+      return { content: blocks };
     },
   );
 

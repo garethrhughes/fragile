@@ -723,6 +723,14 @@ export class MetricsService {
         label,
         start: startDate.toISOString(),
         end: endDate.toISOString(),
+        totalDays: Math.round(periodDays),
+        elapsedDays: (() => {
+          const now = new Date();
+          const effectiveEnd = endDate < now ? endDate : now;
+          const elapsedMs = effectiveEnd.getTime() - startDate.getTime();
+          return Math.max(Math.round(elapsedMs / (1000 * 60 * 60 * 24)), 1);
+        })(),
+        partial: new Date() < endDate,
       },
       orgDeploymentFrequency: {
         totalDeployments,

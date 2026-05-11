@@ -16,13 +16,23 @@ import type { SnapshotResult, BoardSnapshotStatus } from './dora-snapshot-read.s
 import type { OrgDoraResult, TrendResponse } from './dto/org-dora-response.dto.js';
 import type { DoraAggregateQueryDto } from './dto/dora-aggregate-query.dto.js';
 import type { DoraTrendQueryDto } from './dto/dora-trend-query.dto.js';
+import { listRecentQuarters } from './period-utils.js';
 import { Repository } from 'typeorm';
 import { BoardConfig } from '../database/entities/index.js';
 
 function mockMetricsService(): jest.Mocked<MetricsService> {
   return {
     getDora: jest.fn(),
-    getDoraAggregate: jest.fn(),
+    getDoraAggregate: jest.fn().mockResolvedValue({
+      period: { label: '2025-Q4', start: '2025-10-01T00:00:00.000Z', end: '2025-12-31T23:59:59.999Z', elapsedDays: 92, totalDays: 92, partial: false },
+      orgDeploymentFrequency: { totalDeployments: 5, deploymentsPerDay: 0.05, band: 'low', periodDays: 92, contributingBoards: 1 },
+      orgLeadTime: { medianDays: 5, p95Days: 10, band: 'high', sampleSize: 3, contributingBoards: 1, anomalyCount: 0 },
+      orgChangeFailureRate: { totalDeployments: 5, failureCount: 0, changeFailureRate: 0, band: 'elite', contributingBoards: 1, anyBoardUsingDefaultConfig: false, boardsUsingDefaultConfig: [] },
+      orgMttr: { medianHours: 1, band: 'elite', incidentCount: 0, contributingBoards: 0 },
+      boardBreakdowns: [],
+      anyBoardUsingDefaultConfig: false,
+      boardsUsingDefaultConfig: [],
+    } as OrgDoraResult),
     getDoraTrend: jest.fn(),
     getDeploymentFrequency: jest.fn(),
     getLeadTime: jest.fn(),
@@ -108,6 +118,72 @@ describe('MetricsController — snapshot-aware endpoints', () => {
 
       expect(res.setHeader).toHaveBeenCalledWith('X-Snapshot-Stale', 'true');
       expect(res.setHeader).toHaveBeenCalledWith('X-Snapshot-Age', '7200');
+    });
+
+    it('routes historical quarter to live compute — bypasses snapshot', async () => {
+      let metricsSvc!: jest.Mocked<MetricsService>;
+      metricsSvc = mockMetricsService();
+      const ctrl = new MetricsController(metricsSvc, snapshotSvc, mockBoardConfigRepo());
+      const res = mockRes();
+
+      // Use a quarter guaranteed to be in the past relative to any test run
+      await ctrl.getDoraAggregate({ boardId: 'ACC', quarter: '2020-Q1' } as DoraAggregateQueryDto, res as never);
+
+      expect(snapshotSvc.getSnapshot).not.toHaveBeenCalled();
+      expect(metricsSvc.getDoraAggregate).toHaveBeenCalledWith(
+        expect.objectContaining({ quarter: '2020-Q1' }),
+      );
+    });
+
+    it('routes current quarter (no quarter param) through snapshot fast-path', async () => {
+      const snapshot: SnapshotResult = {
+        payload: { period: { label: '2026-Q2' } } as unknown as OrgDoraResult,
+        ageSeconds: 30,
+        stale: false,
+      };
+      snapshotSvc.getSnapshot.mockResolvedValue(snapshot);
+      let metricsSvc!: jest.Mocked<MetricsService>;
+      metricsSvc = mockMetricsService();
+      const ctrl = new MetricsController(metricsSvc, snapshotSvc, mockBoardConfigRepo());
+      const res = mockRes();
+
+      await ctrl.getDoraAggregate({ boardId: 'ACC' } as DoraAggregateQueryDto, res as never);
+
+      expect(snapshotSvc.getSnapshot).toHaveBeenCalled();
+      expect(metricsSvc.getDoraAggregate).not.toHaveBeenCalled();
+    });
+
+    it('routes explicit current quarter through snapshot fast-path', async () => {
+      const currentQuarter = listRecentQuarters(1)[0].label;
+      const snapshot: SnapshotResult = {
+        payload: { period: { label: currentQuarter } } as unknown as OrgDoraResult,
+        ageSeconds: 30,
+        stale: false,
+      };
+      snapshotSvc.getSnapshot.mockResolvedValue(snapshot);
+      let metricsSvc!: jest.Mocked<MetricsService>;
+      metricsSvc = mockMetricsService();
+      const ctrl = new MetricsController(metricsSvc, snapshotSvc, mockBoardConfigRepo());
+      const res = mockRes();
+
+      await ctrl.getDoraAggregate({ boardId: 'ACC', quarter: currentQuarter } as DoraAggregateQueryDto, res as never);
+
+      expect(snapshotSvc.getSnapshot).toHaveBeenCalled();
+      expect(metricsSvc.getDoraAggregate).not.toHaveBeenCalled();
+    });
+
+    it('routes sprint query to live compute regardless of quarter', async () => {
+      let metricsSvc!: jest.Mocked<MetricsService>;
+      metricsSvc = mockMetricsService();
+      const ctrl = new MetricsController(metricsSvc, snapshotSvc, mockBoardConfigRepo());
+      const res = mockRes();
+
+      await ctrl.getDoraAggregate({ boardId: 'ACC', sprintId: '123' } as DoraAggregateQueryDto, res as never);
+
+      expect(snapshotSvc.getSnapshot).not.toHaveBeenCalled();
+      expect(metricsSvc.getDoraAggregate).toHaveBeenCalledWith(
+        expect.objectContaining({ sprintId: '123' }),
+      );
     });
   });
 
