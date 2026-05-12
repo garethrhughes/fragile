@@ -1100,6 +1100,67 @@ describe('WeekDetailService', () => {
       expect(result.issues[0].roadmapLinkSource).toBe('epic');
     });
 
+    it('returns roadmapStatus=in-scope (Condition B) for in-flight issue on active week with future targetDate', async () => {
+      // Mirrors sprint Condition B: in-progress + active week + target not passed → green
+      const now = new Date();
+      // Build the ISO week key for the current week (YYYY-Www)
+      const jan4 = new Date(Date.UTC(now.getUTCFullYear(), 0, 4));
+      const jan4Day = jan4.getUTCDay();
+      const daysToMon = jan4Day === 0 ? -6 : 1 - jan4Day;
+      const mondayW1 = new Date(jan4);
+      mondayW1.setUTCDate(jan4.getUTCDate() + daysToMon);
+      const daysSinceMondayW1 = Math.floor((now.getTime() - mondayW1.getTime()) / (7 * 86400000));
+      const currentWeekNum = daysSinceMondayW1 + 1;
+      const currentWeekKey = `${now.getUTCFullYear()}-W${String(currentWeekNum).padStart(2, '0')}`;
+      // Current week start (Monday)
+      const currentWeekStart = new Date(mondayW1);
+      currentWeekStart.setUTCDate(mondayW1.getUTCDate() + (currentWeekNum - 1) * 7);
+
+      boardConfigRepo.findOne.mockResolvedValue(
+        kanbanConfig({ cancelledStatusNames: ['Cancelled', "Won't Do"], roadmapLinkTypes: [] }),
+      );
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', epicKey: 'EPIC-1', status: 'In Progress', createdAt: new Date('2025-12-01T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        // Board entry changelog — transition into the current week
+        getMany: jest.fn().mockResolvedValue([
+          makeChangelog({ issueKey: 'PLAT-1', fromValue: 'Backlog', toValue: 'To Do', changedAt: currentWeekStart }),
+          makeChangelog({ issueKey: 'PLAT-1', field: 'status', fromValue: 'To Do', toValue: 'In Progress', changedAt: currentWeekStart }),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([
+        { id: 1, jpdKey: 'JPD-1', description: null, startDateFieldId: null, targetDateFieldId: null, createdAt: new Date() } as RoadmapConfig,
+      ]);
+      // Target is 60 days in the future — well beyond today
+      const futureTarget = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+      jpdIdeaRepo.find.mockResolvedValue([
+        { key: 'IDEA-1', jpdKey: 'JPD-1', deliveryIssueKeys: ['EPIC-1'], targetDate: futureTarget } as unknown as JpdIdea,
+      ]);
+      issueLinkRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([]),
+      });
+
+      const result = await service.getDetail('PLAT', currentWeekKey);
+      expect(result.issues[0].roadmapStatus).toBe('in-scope');
+    });
+
+    it('returns roadmapStatus=linked for in-flight issue when targetDate already passed', async () => {
+      setupRoadmapScenario({
+        issueStatus: 'In Progress',
+        completedAt: null,
+        targetDate: new Date('2026-01-01T00:00:00Z'), // past target — Condition B does not apply
+      });
+      const result = await service.getDetail('PLAT', WEEK);
+      expect(result.issues[0].roadmapStatus).toBe('linked');
+    });
+
     it('gives epic link priority over direct link (AC3 — epic wins)', async () => {
       // Issue has both an epicKey covered by an idea AND a direct link to a different idea.
       // Epic should win: roadmapLinkSource = 'epic'.

@@ -125,6 +125,8 @@ describe('extractCycles', () => {
   it('merges Done→IP (no reset) into one cycle — premature close pattern (ACC-1 regression)', () => {
     // Done → In Progress without an intervening reset means the "Done" was
     // premature. The cycle clock should continue from the original start.
+    // The merged cycle is still a visible reopen (isReopen: true) even though
+    // it is represented as a single continuous measurement window.
     const t1 = new Date('2026-02-24T04:12:36Z'); // In Progress (original)
     const t2 = new Date('2026-04-13T07:02:48Z'); // Done (premature)
     const t3 = new Date('2026-04-14T03:32:50Z'); // In Progress (reopen, no reset)
@@ -152,7 +154,8 @@ describe('extractCycles', () => {
     expect(result!.cycles).toHaveLength(1);
     expect(result!.cycles[0].start).toEqual(t1);
     expect(result!.cycles[0].end).toEqual(t4);
-    expect(result!.cycles[0].isReopen).toBe(false);
+    // The issue was Done and then work continued — this is a visible reopen
+    expect(result!.cycles[0].isReopen).toBe(true);
   });
 
   it('counts unmatched IP at end as anomaly: IP -> Done -> Backlog -> IP (no terminal Done)', () => {

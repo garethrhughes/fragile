@@ -43,8 +43,9 @@ import {
 // on a kanban board so that all four services can be exercised on the same
 // canonical cycle):
 //
-//   IP   2026-01-06 09:00 UTC  →  Done 2026-01-08 17:00 UTC   [first cycle]
-//   IP   2026-01-13 09:00 UTC  →  Done 2026-01-15 17:00 UTC   [reopen — representative]
+//   IP   2026-01-06 09:00 UTC  →  Done     2026-01-08 17:00 UTC   [first cycle]
+//   Reopened  2026-01-10 09:00 UTC  (reset — keeps cycles independent)
+//   IP   2026-01-13 09:00 UTC  →  Done     2026-01-15 17:00 UTC   [reopen — representative]
 //
 // Latest cycle duration  = (15 17:00 − 13 09:00) = 2 days + 8 hours
 //                        = 2.333…  →  round2 →  2.33
@@ -86,7 +87,11 @@ function makeReopenLogs(issueKey: string): JiraChangelog[] {
   return [
     statusChangelog(issueKey, 'In Progress', '2026-01-06T09:00:00.000Z'),
     statusChangelog(issueKey, 'Done', '2026-01-08T17:00:00.000Z', 'In Progress'),
-    statusChangelog(issueKey, 'In Progress', '2026-01-13T09:00:00.000Z', 'Done'),
+    // 'Reopened' is a cycle-reset status (in DEFAULT_RESET_NAMES) but NOT a
+    // board-entry status — keeps the two cycles independent without shifting
+    // the Kanban board-entry date used by WeekDetailService.
+    statusChangelog(issueKey, 'Reopened', '2026-01-10T09:00:00.000Z', 'Done'),
+    statusChangelog(issueKey, 'In Progress', '2026-01-13T09:00:00.000Z', 'Reopened'),
     statusChangelog(issueKey, 'Done', '2026-01-15T17:00:00.000Z', 'In Progress'),
   ];
 }

@@ -58,8 +58,9 @@ export interface QuarterDetailIssue {
 
   /**
    * Roadmap delivery status:
-   *   in-scope = linked to idea AND delivered on or before targetDate
-   *   linked   = linked to idea AND not yet delivered on time
+   *   in-scope = linked to idea AND (delivered on or before targetDate [Condition A]
+   *              OR in-flight on an active quarter with target not yet passed [Condition B])
+   *   linked   = linked to idea AND not in-scope
    *   none     = no roadmap link, or issue is cancelled
    */
   roadmapStatus: 'in-scope' | 'linked' | 'none';
@@ -351,10 +352,11 @@ export class QuarterDetailService {
       // addedMidQuarter: boardEntryDate is strictly after quarterStart
       const addedMidQuarter = boardEntryDate > quarterStart;
 
-      // roadmapStatus — Condition A only (no sprint state for quarter view)
-      //   in-scope = linked AND delivered on or before targetDate
-      //   linked   = linked AND not yet delivered on time
-      //   none     = no link, or cancelled
+      // roadmapStatus — mirrors sprint Condition A + B logic
+      //   in-scope = linked AND (delivered on or before targetDate [A]
+      //              OR in-flight on an active quarter with target not yet passed [B])
+      //   linked   = linked AND not in-scope
+      //   none     = no roadmap link, or issue is cancelled
       let roadmapStatus: 'in-scope' | 'linked' | 'none' = 'none';
       let roadmapLinkSource: 'direct' | 'epic' | null = null;
 
@@ -374,8 +376,17 @@ export class QuarterDetailService {
                 doneStatuses.includes(cl.toValue),
             );
             const resolvedDate = doneTransition?.changedAt ?? null;
+            // Condition A: delivered on time
             const deliveredOnTime = resolvedDate !== null && resolvedDate <= targetEndOfDay;
-            roadmapStatus = deliveredOnTime ? 'in-scope' : 'linked';
+            // Condition B: in-flight on an active quarter with target not yet passed.
+            // Quarter is active when today is before quarterEnd.
+            const today = new Date();
+            const isInFlight =
+              today <= quarterEnd &&
+              idea.targetDate >= today &&
+              resolvedDate === null &&
+              !cancelledStatusNames.includes(issue.status);
+            roadmapStatus = (deliveredOnTime || isInFlight) ? 'in-scope' : 'linked';
           } else {
             roadmapStatus = 'linked';
           }

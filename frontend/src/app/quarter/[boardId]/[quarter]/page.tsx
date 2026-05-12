@@ -159,11 +159,18 @@ function buildColumns(): Column<QuarterDetailIssue>[] {
         const Icon = isDirect ? Link2 : GitBranch
         const isInScope = value === 'in-scope'
         const colorClass = isInScope ? 'text-green-600' : 'text-amber-600'
-        const tooltip = isInScope
-          ? isDirect ? 'On roadmap (direct link)' : 'On roadmap (via epic)'
-          : isDirect
-            ? 'Linked to roadmap (direct) — not in window'
-            : 'Linked to roadmap (via epic) — not in window'
+        let tooltip: string
+        if (isInScope) {
+          tooltip = isDirect ? 'On roadmap (direct link)' : 'On roadmap (via epic)'
+        } else if (row.completedInQuarter) {
+          tooltip = isDirect
+            ? 'Linked to roadmap (direct) — delivered late'
+            : 'Linked to roadmap (via epic) — delivered late'
+        } else {
+          tooltip = isDirect
+            ? 'Linked to roadmap (direct) — not yet delivered'
+            : 'Linked to roadmap (via epic) — not yet delivered'
+        }
         return (
           <span title={tooltip} aria-label={tooltip} className={`inline-flex items-center gap-1 font-semibold ${colorClass}`}>
             <Icon size={14} aria-hidden="true" />
