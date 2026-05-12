@@ -1,7 +1,9 @@
-import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
 import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, QueryRunner, Repository } from 'typeorm';
-import { Cron } from '@nestjs/schedule';
+import { SchedulerRegistry } from '@nestjs/schedule';
+import { CronJob } from 'cron';
+import { ConfigService } from '@nestjs/config';
 import { JiraClientService } from '../jira/jira-client.service.js';
 import {
   JiraSprint,
@@ -50,7 +52,7 @@ const DEFAULT_FIELD_CONFIG: FieldConfig = {
 };
 
 @Injectable()
-export class SyncService {
+export class SyncService implements OnModuleInit {
   private readonly logger = new Logger(SyncService.name);
 
   /**
@@ -94,7 +96,30 @@ export class SyncService {
     private readonly lambdaInvoker: LambdaInvokerService,
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly configService: ConfigService,
+    private readonly schedulerRegistry: SchedulerRegistry,
   ) {}
+
+  onModuleInit(): void {
+    const timezone = this.configService.get<string>('TIMEZONE', 'UTC');
+    const job = new CronJob(
+      '0 0 * * *',
+      () => {
+        this.handleCron().catch((err: unknown) => {
+          this.logger.error('Scheduled sync failed', err instanceof Error ? err.stack : String(err));
+        });
+      },
+      null,
+      false,      // start=false — start explicitly after registering
+      timezone,
+      null,       // context
+      false,      // runOnInit
+      null,       // utcOffset
+      true,       // unrefTimeout — allows Jest / process to exit cleanly
+    );
+    this.schedulerRegistry.addCronJob('jira-sync', job);
+    job.start();
+  }
 
   /**
    * Attempt to acquire the Postgres advisory lock for sync.
@@ -143,7 +168,6 @@ export class SyncService {
     }
   }
 
-  @Cron('0 0 * * *')
   async handleCron(): Promise<void> {
     this.logger.log('Scheduled sync triggered');
     await this.syncAll();
