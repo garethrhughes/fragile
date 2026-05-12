@@ -206,7 +206,9 @@ describe('SyncService', () => {
     });
 
     it('falls back to UTC when TIMEZONE is not configured', () => {
-      const utcConfigService = mockConfigService('UTC');
+      const utcConfigService = {
+        get: jest.fn().mockImplementation((_key: string, fallback?: unknown) => fallback),
+      } as unknown as jest.Mocked<ConfigService>;
       const utcScheduler = mockSchedulerRegistry();
       const utcService = new SyncService(
         jiraClient, sprintRepo, issueRepo, issueSprintRepo, changelogRepo,
@@ -1114,6 +1116,8 @@ describe('SyncService', () => {
         jiraFieldConfigRepo,
         lambdaInvoker,
         dataSource,
+        configService,
+        schedulerRegistry,
       );
 
       boardConfigRepo.findOne.mockResolvedValue({

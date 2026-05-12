@@ -104,12 +104,21 @@ export class SyncService implements OnModuleInit {
     const timezone = this.configService.get<string>('TIMEZONE', 'UTC');
     const job = new CronJob(
       '0 0 * * *',
-      () => { void this.handleCron(); },
+      () => {
+        this.handleCron().catch((err: unknown) => {
+          this.logger.error('Scheduled sync failed', err instanceof Error ? err.stack : String(err));
+        });
+      },
       null,
-      true,
+      false,      // start=false — start explicitly after registering
       timezone,
+      null,       // context
+      false,      // runOnInit
+      null,       // utcOffset
+      true,       // unrefTimeout — allows Jest / process to exit cleanly
     );
     this.schedulerRegistry.addCronJob('jira-sync', job);
+    job.start();
   }
 
   /**
