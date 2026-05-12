@@ -414,12 +414,16 @@ export class WeekDetailService {
             // Condition A: delivered on time
             const deliveredOnTime = resolvedDate !== null && resolvedDate <= targetEndOfDay;
             // Condition B: in-flight on an active week with target not yet passed.
-            // Week is active when today is before weekEnd.
-            const today = new Date();
+            // Use UTC midnight so the comparison is stable regardless of time-of-day.
+            // Week is active when todayStart falls within [weekStart, weekEnd].
+            const todayStart = new Date();
+            todayStart.setUTCHours(0, 0, 0, 0);
             const isInFlight =
-              today <= weekEnd &&
-              idea.targetDate >= today &&
+              todayStart >= weekStart &&
+              todayStart <= weekEnd &&
+              idea.targetDate >= todayStart &&
               resolvedDate === null &&
+              !doneStatuses.includes(issue.status) &&
               !cancelledStatusNames.includes(issue.status);
             roadmapStatus = (deliveredOnTime || isInFlight) ? 'in-scope' : 'linked';
           } else {

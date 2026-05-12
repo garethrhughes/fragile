@@ -379,12 +379,16 @@ export class QuarterDetailService {
             // Condition A: delivered on time
             const deliveredOnTime = resolvedDate !== null && resolvedDate <= targetEndOfDay;
             // Condition B: in-flight on an active quarter with target not yet passed.
-            // Quarter is active when today is before quarterEnd.
-            const today = new Date();
+            // Use UTC midnight so the comparison is stable regardless of time-of-day.
+            // Quarter is active when todayStart falls within [quarterStart, quarterEnd].
+            const todayStart = new Date();
+            todayStart.setUTCHours(0, 0, 0, 0);
             const isInFlight =
-              today <= quarterEnd &&
-              idea.targetDate >= today &&
+              todayStart >= quarterStart &&
+              todayStart <= quarterEnd &&
+              idea.targetDate >= todayStart &&
               resolvedDate === null &&
+              !doneStatuses.includes(issue.status) &&
               !cancelledStatusNames.includes(issue.status);
             roadmapStatus = (deliveredOnTime || isInFlight) ? 'in-scope' : 'linked';
           } else {

@@ -15,7 +15,21 @@ export interface CycleObservation {
   start: Date;
   /** Timestamp of the matching transition into a done status. */
   end: Date;
-  /** True for any cycle after the first completed cycle for this issue. */
+  /**
+   * True when this cycle represents a reopened work item.
+   *
+   * A cycle is a reopen when:
+   * - it is not the first cycle AND the issue passed through a reset status
+   *   (e.g. To Do / Backlog) before re-entering In Progress, **or**
+   * - it is the merged continuation of a premature-close pattern (Done → In
+   *   Progress without an intervening reset), where the merged cycle is marked
+   *   as a visible reopen via the `isPoppedContinuation` flag so callers can
+   *   surface the reopen in UI annotations.
+   *
+   * In other words: `isReopen` is `true` for any cycle that is either after
+   * the first genuine completed cycle OR is the result of merging a
+   * premature-close continuation.
+   */
   isReopen: boolean;
 }
 
