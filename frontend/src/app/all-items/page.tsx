@@ -1,11 +1,11 @@
 'use client'
 
 /**
- * All Items — bespoke MyPass weekly cross-board activity report.
+ * Pulse — bespoke MyPass weekly cross-board activity report.
  * Feature 0012 / Proposal 0062. Not for upstreaming.
  */
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useReplaceParams } from '@/hooks/use-page-params'
 import {
@@ -23,7 +23,6 @@ import {
 /** Returns current ISO week as YYYY-Www */
 function currentIsoWeek(): string {
   const now = new Date()
-  // Jan 4 is always in ISO week 1
   const jan4 = new Date(Date.UTC(now.getUTCFullYear(), 0, 4))
   const jan4Dow = jan4.getUTCDay() === 0 ? 7 : jan4.getUTCDay()
   const week1Mon = new Date(jan4)
@@ -47,7 +46,6 @@ function formatWeekLabel(week: string): string {
   return `W${m[2]} '${m[1].slice(2)}`
 }
 
-/** Returns previous week key */
 function prevWeek(week: string): string {
   const m = week.match(/^(\d{4})-W(\d{2})$/)
   if (!m) return week
@@ -57,7 +55,6 @@ function prevWeek(week: string): string {
   return `${year - 1}-W52`
 }
 
-/** Returns next week key */
 function nextWeek(week: string): string {
   const m = week.match(/^(\d{4})-W(\d{2})$/)
   if (!m) return week
@@ -79,6 +76,35 @@ const ALL_FILTERS: { key: AllItemsFilter; label: string }[] = [
   { key: 'support', label: 'Support' },
   { key: 'ttb-support', label: 'TTB support' },
 ]
+
+// ---------------------------------------------------------------------------
+// Tooltip
+// ---------------------------------------------------------------------------
+
+function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
+  const [visible, setVisible] = useState(false)
+  const ref = useRef<HTMLSpanElement>(null)
+
+  return (
+    <span
+      ref={ref}
+      className="relative inline-flex cursor-help"
+      onMouseEnter={() => setVisible(true)}
+      onMouseLeave={() => setVisible(false)}
+      onFocus={() => setVisible(true)}
+      onBlur={() => setVisible(false)}
+    >
+      {children}
+      {visible && (
+        <span className="absolute bottom-full left-1/2 z-50 mb-2 w-56 -translate-x-1/2 rounded-lg border border-border bg-card px-3 py-2 text-left text-xs text-foreground shadow-lg">
+          {text}
+          {/* Arrow */}
+          <span className="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-border" />
+        </span>
+      )}
+    </span>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Health score badge
@@ -117,7 +143,9 @@ function BoardCard({ board }: { board: AllItemsBoardResult }) {
           </span>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-muted">Health</span>
+          <Tooltip text="Overall health score: average of Roadmap alignment and Stability. Higher is better. Support burden is shown separately but does not affect this score.">
+            <span className="text-xs text-muted underline decoration-dotted">Health</span>
+          </Tooltip>
           <HealthBadge score={healthScore.overall} />
         </div>
       </div>
@@ -139,19 +167,23 @@ function BoardCard({ board }: { board: AllItemsBoardResult }) {
         ))}
       </div>
 
-      {/* Health score breakdown */}
-      <div className="grid grid-cols-3 divide-x divide-border border-b border-border text-xs">
+      {/* Health score breakdown — roadmap + stability only */}
+      <div className="grid grid-cols-2 divide-x divide-border border-b border-border text-xs">
         <div className="px-3 py-2 text-center">
-          <div className="font-medium">{healthScore.roadmapAlignmentScore}</div>
-          <div className="text-muted">Roadmap</div>
+          <Tooltip text="Roadmap alignment: percentage of completed items that were delivered on or before their roadmap idea's target date. 100% when nothing was completed this week.">
+            <span className="font-medium underline decoration-dotted">
+              {healthScore.roadmapAlignmentScore}%
+            </span>
+          </Tooltip>
+          <div className="mt-0.5 text-muted">Roadmap</div>
         </div>
         <div className="px-3 py-2 text-center">
-          <div className="font-medium">{healthScore.supportBurdenScore}</div>
-          <div className="text-muted">Support burden</div>
-        </div>
-        <div className="px-3 py-2 text-center">
-          <div className="font-medium">{healthScore.stabilityScore}</div>
-          <div className="text-muted">Stability</div>
+          <Tooltip text="Stability: percentage of sprint items that were committed at sprint start (not added mid-sprint). 100% when no items were added mid-sprint.">
+            <span className="font-medium underline decoration-dotted">
+              {healthScore.stabilityScore}%
+            </span>
+          </Tooltip>
+          <div className="mt-0.5 text-muted">Stability</div>
         </div>
       </div>
 
@@ -262,7 +294,6 @@ function AllItemsPageInner() {
   const searchParams = useSearchParams()
   const replaceParams = useReplaceParams()
 
-  // Stable reference for the current week — computed once per mount
   const thisWeek = useMemo(() => currentIsoWeek(), [])
 
   const weekParam = searchParams.get('week') ?? thisWeek
@@ -278,7 +309,6 @@ function AllItemsPageInner() {
   const [retryKey, setRetryKey] = useState(0)
   const reload = useCallback(() => setRetryKey((k) => k + 1), [])
 
-  // Ensure week is in URL on initial load
   useEffect(() => {
     if (!searchParams.get('week')) {
       replaceParams({ week: thisWeek })
@@ -286,7 +316,6 @@ function AllItemsPageInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Fetch data when week or filters change
   useEffect(() => {
     if (!weekParam.match(/^\d{4}-W\d{2}$/)) return
 
@@ -431,14 +460,16 @@ function AllItemsPageInner() {
         <>
           {/* Overall score + totals bar */}
           <div className="flex items-stretch gap-3">
-            {/* Overall score — prominent card on the left */}
-            <div className="flex min-w-[120px] flex-col items-center justify-center rounded-xl border border-border bg-card p-4 shadow-sm">
-              <div className="text-xs font-medium uppercase tracking-wide text-muted">Overall</div>
-              <div className="mt-1">
-                <HealthBadge score={pageState.data.overallScore} large />
+            {/* Overall score */}
+            <Tooltip text="Average health score across all boards for this week. Calculated as the mean of each board's health score, which is the average of Roadmap alignment % and Stability %.">
+              <div className="flex min-w-[120px] cursor-help flex-col items-center justify-center rounded-xl border border-border bg-card p-4 shadow-sm">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted">Overall</div>
+                <div className="mt-1">
+                  <HealthBadge score={pageState.data.overallScore} large />
+                </div>
+                <div className="mt-1 text-xs text-muted">avg health</div>
               </div>
-              <div className="mt-1 text-xs text-muted">avg health</div>
-            </div>
+            </Tooltip>
 
             {/* Count totals */}
             <div className="grid flex-1 grid-cols-3 gap-3 sm:grid-cols-7">
