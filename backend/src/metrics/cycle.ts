@@ -15,7 +15,21 @@ export interface CycleObservation {
   start: Date;
   /** Timestamp of the matching transition into a done status. */
   end: Date;
-  /** True for any cycle after the first completed cycle for this issue. */
+  /**
+   * True when this cycle represents a reopened work item.
+   *
+   * A cycle is a reopen when:
+   * - it is not the first cycle AND the issue passed through a reset status
+   *   (e.g. To Do / Backlog) before re-entering In Progress, **or**
+   * - it is the merged continuation of a premature-close pattern (Done → In
+   *   Progress without an intervening reset), where the merged cycle is marked
+   *   as a visible reopen via the `isPoppedContinuation` flag so callers can
+   *   surface the reopen in UI annotations.
+   *
+   * In other words: `isReopen` is `true` for any cycle that is either after
+   * the first genuine completed cycle OR is the result of merging a
+   * premature-close continuation.
+   */
   isReopen: boolean;
 }
 
@@ -81,6 +95,13 @@ export function extractCycles(
   // Required to distinguish Done→Reset→IP (real reopen) from Done→IP
   // (premature close — the work continued without going back to the backlog).
   let hadResetSinceDone = true;
+  // Set to true when we pop a premature-Done cycle and re-open it. Both the
+  // premature-close (Done→IP, no reset) and the genuine-reopen (Done→reset→IP)
+  // patterns are visible reopens from the user's perspective: the issue was
+  // Done and then work continued. This flag carries the reopen signal through
+  // the pop so `isReopen` is set correctly on the merged cycle even though
+  // `cycles` is temporarily empty after the pop.
+  let isPoppedContinuation = false;
 
   for (const log of statusLogs) {
     const to = (log.toValue ?? '').toLowerCase();
@@ -93,8 +114,10 @@ export function extractCycles(
           // Re-open the previous cycle's start so the clock continues from the
           // original in-progress entry rather than starting fresh.
           openStart = cycles.pop()!.start;
+          isPoppedContinuation = true;
         } else {
           openStart = log.changedAt;
+          isPoppedContinuation = false;
         }
       }
       // Consecutive IP→IP (e.g. In Progress → In Review → QA): leave
@@ -105,9 +128,10 @@ export function extractCycles(
           issueKey,
           start: openStart,
           end: log.changedAt,
-          isReopen: cycles.length > 0,
+          isReopen: cycles.length > 0 || isPoppedContinuation,
         });
         openStart = null;
+        isPoppedContinuation = false;
         hadResetSinceDone = false;
       }
       // Leading Done before any IP is ignored.
@@ -115,6 +139,7 @@ export function extractCycles(
       // Reset clears any open cycle (issue went back to backlog without
       // completing) and marks that a genuine reset has occurred.
       openStart = null;
+      isPoppedContinuation = false;
       hadResetSinceDone = true;
     }
     // Other statuses leave state unchanged.

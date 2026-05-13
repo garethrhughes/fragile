@@ -840,6 +840,79 @@ describe('QuarterDetailService', () => {
       expect(result.issues[0].roadmapLinkSource).toBe('epic');
     });
 
+    it('returns roadmapStatus=in-scope (Condition B) for in-flight issue on active quarter with future targetDate', async () => {
+      // Mirrors sprint Condition B: in-progress + active quarter + target not passed → green.
+      // Pin "today" to 2026-05-07 so the test is deterministic regardless of when it runs.
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-05-07T10:00:00Z').getTime());
+      try {
+        boardConfigRepo.findOne.mockResolvedValue({
+          boardType: 'kanban',
+          doneStatusNames: ['Done'],
+          cancelledStatusNames: ["Won't Do"],
+          incidentIssueTypes: [],
+          incidentLabels: [],
+          incidentPriorities: [],
+          failureIssueTypes: [],
+          failureLabels: [],
+          failureLinkTypes: [],
+          roadmapLinkTypes: [],
+          backlogStatusIds: [],
+          dataStartDate: null,
+        } as unknown as BoardConfig);
+        issueRepo.find.mockResolvedValue([
+          makeIssue({ key: 'PLAT-1', boardId: 'PLAT', epicKey: 'EPIC-1', status: 'In Progress', createdAt: new Date('2026-05-07T01:11:00Z') }),
+        ]);
+        changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          orderBy: jest.fn().mockReturnThis(),
+          getMany: jest.fn().mockResolvedValue([
+            // Board entry (from 'To Do') — used by quarter detail for Kanban board entry
+            makeChangelog({ issueKey: 'PLAT-1', field: 'status', fromValue: 'To Do', toValue: 'In Progress', changedAt: new Date('2026-05-07T01:11:00Z') }),
+          ]),
+        });
+        roadmapConfigRepo.find.mockResolvedValue([
+          { id: 1, jpdKey: 'PT', description: null, startDateFieldId: null, targetDateFieldId: null, createdAt: new Date() } as RoadmapConfig,
+        ]);
+        // targetDate is 2026-06-15 — within the active 2026-Q2 window and after today
+        jpdIdeaRepo.find.mockResolvedValue([
+          { key: 'PT-1', jpdKey: 'PT', deliveryIssueKeys: ['EPIC-1'], targetDate: new Date('2026-06-15T00:00:00Z') } as unknown as JpdIdea,
+        ]);
+
+        // Fixed quarter 2026-Q2 (Apr 1 – Jun 30); today (2026-05-07) falls within it
+        const result = await service.getDetail('PLAT', '2026-Q2');
+        expect(result.issues[0].roadmapStatus).toBe('in-scope');
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('returns roadmapStatus=linked when in-flight but targetDate already passed', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(null);
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'ACC-1', epicKey: 'EPIC-1', status: 'In Progress', createdAt: new Date('2026-01-05T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeSprintCl('ACC-1', new Date('2026-01-05T09:00:00Z')),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([
+        { id: 1, jpdKey: 'JPD-1', description: null, startDateFieldId: null, targetDateFieldId: null, createdAt: new Date() } as RoadmapConfig,
+      ]);
+      // targetDate in the past — Condition B does not apply
+      jpdIdeaRepo.find.mockResolvedValue([
+        { key: 'IDEA-1', jpdKey: 'JPD-1', deliveryIssueKeys: ['EPIC-1'], targetDate: new Date('2025-12-31T00:00:00Z') } as unknown as JpdIdea,
+      ]);
+
+      const result = await service.getDetail('ACC', '2026-Q1');
+      expect(result.issues[0].roadmapStatus).toBe('linked');
+    });
+
     it('summary.roadmapLinkedCount counts issues with roadmapStatus != none', async () => {
       boardConfigRepo.findOne.mockResolvedValue(null);
       issueRepo.find.mockResolvedValue([
