@@ -379,6 +379,7 @@ export class AllItemsService {
     return this.sprintRepo
       .createQueryBuilder('s')
       .where('s.boardId = :boardId', { boardId })
+      .andWhere("s.state IN ('active', 'closed')")
       .andWhere('s.startDate <= :weekEnd', { weekEnd })
       .andWhere(
         "(s.endDate >= :weekStart OR s.state = 'active')",

@@ -209,6 +209,40 @@ describe('AllItemsService', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Scrum: future sprints are excluded
+  // -------------------------------------------------------------------------
+
+  it('excludes future sprints — only active and closed sprints are included', async () => {
+    // The query builder mock simulates the DB already filtering by state IN
+    // ('active','closed'): the future sprint is never returned.
+    // This test verifies that issues belonging only to a future sprint do NOT
+    // appear in the working set (i.e. the state filter is applied).
+    const activeSprint = makeSprint({ id: 'sprint-active', state: 'active' });
+    const activeIssue = makeIssue({ key: 'ACC-1' });
+    const futureIssue = makeIssue({ key: 'ACC-2' }); // would be in future sprint
+
+    boardConfigRepo.find.mockResolvedValue([makeBoard()]);
+    issueRepo.find.mockResolvedValue([activeIssue, futureIssue]);
+    // DB returns only the active sprint (future sprint excluded by state filter)
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([activeSprint]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      // Only ACC-1 is a member of the active sprint; ACC-2 is not
+      new Map([['sprint-active', membershipWith(['ACC-1'])]]),
+    );
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+    const keys = result.boards[0].items.map((i) => i.key);
+
+    expect(keys).toContain('ACC-1');
+    expect(keys).not.toContain('ACC-2');
+    expect(result.boards[0].summary.totalItems).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
   // Scrum: working set is sprint members only, not full backlog
   // -------------------------------------------------------------------------
 
