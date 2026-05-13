@@ -554,7 +554,9 @@ export class AllItemsService {
     const supportBurdenScore = Math.round((1 - supportCount / totalItems) * 100);
     const stabilityScore = Math.round((1 - addedMidSprintCount / totalItems) * 100);
 
-    const overall = Math.round((roadmapAlignmentScore + supportBurdenScore + stabilityScore) / 3);
+    // Support burden is informational only — excluded from overall to avoid
+    // penalising teams for support work they have no control over.
+    const overall = Math.round((roadmapAlignmentScore + stabilityScore) / 2);
 
     return { overall, roadmapAlignmentScore, supportBurdenScore, stabilityScore };
   }

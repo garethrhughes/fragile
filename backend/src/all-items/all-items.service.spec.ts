@@ -748,7 +748,9 @@ describe('AllItemsService', () => {
     const result = await service.getAllItems('2026-W20', undefined);
     // 1 of 2 is support: supportBurdenScore = (1 - 0.5) * 100 = 50
     expect(result.boards[0].healthScore.supportBurdenScore).toBe(50);
-    expect(result.boards[0].healthScore.overall).toBeLessThan(100);
+    // overall is now roadmap + stability only — support no longer penalises the score
+    // no completions → roadmapAlignmentScore=100; no mid-sprint adds → stabilityScore=100
+    expect(result.boards[0].healthScore.overall).toBe(100);
   });
 
   // -------------------------------------------------------------------------

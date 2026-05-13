@@ -88,11 +88,15 @@ export interface AllItemsBoardSummary {
 }
 
 export interface BoardHealthScore {
-  /** 0-100 composite score */
+  /**
+   * 0-100 composite score: average of roadmapAlignmentScore and stabilityScore.
+   * supportBurdenScore is intentionally excluded — teams should not be penalised
+   * for support work they do not control.
+   */
   overall: number;
   /** 0-100: completedOnRoadmap / totalCompleted * 100. 100 when nothing completed. */
   roadmapAlignmentScore: number;
-  /** 0-100: (1 - supportCount / totalItems) * 100. 100 when no support items. */
+  /** 0-100: (1 - supportCount / totalItems) * 100. Informational only — not in overall. */
   supportBurdenScore: number;
   /** 0-100: (1 - addedMidSprintCount / totalItems) * 100. 100 when no mid-sprint adds. */
   stabilityScore: number;
