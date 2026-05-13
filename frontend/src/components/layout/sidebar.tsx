@@ -20,7 +20,7 @@ const MAIN_NAV_ITEMS: NavItem[] = [
   { label: 'Roadmap', href: '/roadmap', icon: <Map className="h-5 w-5" /> },
   { label: 'Gaps', href: '/gaps', icon: <AlertCircle className="h-5 w-5" /> },
   { label: 'Reports', href: '/reports', icon: <FileBarChart2 className="h-5 w-5" /> },
-  { label: 'Pulse', href: '/all-items', icon: <Activity className="h-5 w-5" /> },
+  { label: 'Pulse (beta)', href: '/all-items', icon: <Activity className="h-5 w-5" /> },
 ]
 
 const SETTINGS_ITEM: NavItem = {
