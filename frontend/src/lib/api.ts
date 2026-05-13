@@ -1400,6 +1400,8 @@ export interface AllItemsResponse {
   weekEnd: string
   boards: AllItemsBoardResult[]
   totals: AllItemsTotals
+  /** Mean of all boards' healthScore.overall. 100 when no boards. */
+  overallScore: number
 }
 
 export type AllItemsFilter = 'added-mid-sprint' | 'not-on-roadmap' | 'support' | 'ttb-support'

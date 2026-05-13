@@ -84,7 +84,7 @@ const ALL_FILTERS: { key: AllItemsFilter; label: string }[] = [
 // Health score badge
 // ---------------------------------------------------------------------------
 
-function HealthBadge({ score }: { score: number }) {
+function HealthBadge({ score, large = false }: { score: number; large?: boolean }) {
   const colour =
     score >= 80
       ? 'bg-green-100 text-green-800 border-green-200'
@@ -92,7 +92,7 @@ function HealthBadge({ score }: { score: number }) {
         ? 'bg-yellow-100 text-yellow-800 border-yellow-200'
         : 'bg-red-100 text-red-800 border-red-200'
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-sm font-semibold ${colour}`}>
+    <span className={`inline-flex items-center rounded-full border font-semibold ${large ? 'px-4 py-1 text-2xl' : 'px-2.5 py-0.5 text-sm'} ${colour}`}>
       {score}
     </span>
   )
@@ -429,22 +429,34 @@ function AllItemsPageInner() {
       {/* Ready */}
       {pageState.status === 'ready' && (
         <>
-          {/* Totals bar */}
-          <div className="grid grid-cols-3 gap-3 sm:grid-cols-7">
-            {[
-              { label: 'Total items', value: pageState.data.totals.totalItems },
-              { label: 'Started', value: pageState.data.totals.startedCount },
-              { label: 'Added mid-sprint', value: pageState.data.totals.addedMidSprintCount },
-              { label: 'Completed', value: pageState.data.totals.completedCount },
-              { label: 'On roadmap', value: pageState.data.totals.onRoadmapCount },
-              { label: 'Support', value: pageState.data.totals.supportCount },
-              { label: 'TTB support', value: pageState.data.totals.ttbSupportCount },
-            ].map(({ label, value }) => (
-              <div key={label} className="rounded-xl border border-border bg-card p-3 text-center shadow-sm">
-                <div className="text-2xl font-bold">{value}</div>
-                <div className="mt-0.5 text-xs text-muted">{label}</div>
+          {/* Overall score + totals bar */}
+          <div className="flex items-stretch gap-3">
+            {/* Overall score — prominent card on the left */}
+            <div className="flex min-w-[120px] flex-col items-center justify-center rounded-xl border border-border bg-card p-4 shadow-sm">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted">Overall</div>
+              <div className="mt-1">
+                <HealthBadge score={pageState.data.overallScore} large />
               </div>
-            ))}
+              <div className="mt-1 text-xs text-muted">avg health</div>
+            </div>
+
+            {/* Count totals */}
+            <div className="grid flex-1 grid-cols-3 gap-3 sm:grid-cols-7">
+              {[
+                { label: 'Total items', value: pageState.data.totals.totalItems },
+                { label: 'Started', value: pageState.data.totals.startedCount },
+                { label: 'Added mid-sprint', value: pageState.data.totals.addedMidSprintCount },
+                { label: 'Completed', value: pageState.data.totals.completedCount },
+                { label: 'On roadmap', value: pageState.data.totals.onRoadmapCount },
+                { label: 'Support', value: pageState.data.totals.supportCount },
+                { label: 'TTB support', value: pageState.data.totals.ttbSupportCount },
+              ].map(({ label, value }) => (
+                <div key={label} className="rounded-xl border border-border bg-card p-3 text-center shadow-sm">
+                  <div className="text-2xl font-bold">{value}</div>
+                  <div className="mt-0.5 text-xs text-muted">{label}</div>
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* Per-board cards */}

@@ -89,6 +89,7 @@ export class AllItemsService {
         weekEnd: weekEnd.toISOString(),
         boards: [],
         totals: { totalItems: 0, startedCount: 0, addedMidSprintCount: 0, completedCount: 0, onRoadmapCount: 0, supportCount: 0, ttbSupportCount: 0 },
+        overallScore: 100,
       };
     }
 
@@ -103,6 +104,7 @@ export class AllItemsService {
     );
 
     const totals = this.aggregateTotals(boardResults);
+    const overallScore = this.calculateOverallScore(boardResults);
 
     return {
       week,
@@ -110,6 +112,7 @@ export class AllItemsService {
       weekEnd: weekEnd.toISOString(),
       boards: boardResults,
       totals,
+      overallScore,
     };
   }
 
@@ -580,6 +583,17 @@ export class AllItemsService {
       totals.ttbSupportCount += board.summary.ttbSupportCount;
     }
     return totals;
+  }
+
+  /**
+   * Mean of all boards' health scores for the period.
+   * Boards with no items contribute 100 (healthy by default — no signal).
+   * Returns 100 when there are no boards.
+   */
+  private calculateOverallScore(boards: AllItemsBoardResult[]): number {
+    if (boards.length === 0) return 100;
+    const sum = boards.reduce((acc, b) => acc + b.healthScore.overall, 0);
+    return Math.round(sum / boards.length);
   }
 
   // ---------------------------------------------------------------------------

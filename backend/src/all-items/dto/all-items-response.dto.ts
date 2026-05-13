@@ -122,4 +122,9 @@ export interface AllItemsResponse {
   weekEnd: string;
   boards: AllItemsBoardResult[];
   totals: AllItemsTotals;
+  /**
+   * Mean of all boards' healthScore.overall values for the period.
+   * 100 when there are no boards with data.
+   */
+  overallScore: number;
 }
