@@ -170,9 +170,9 @@ function BoardCard({ board }: { board: AllItemsBoardResult }) {
       {/* Health score breakdown — roadmap + stability only */}
       <div className="grid grid-cols-2 divide-x divide-border border-b border-border text-xs">
         <div className="px-3 py-2 text-center">
-          <Tooltip text="Roadmap alignment: percentage of completed items that were delivered on or before their roadmap idea's target date. 100% when nothing was completed this week.">
+          <Tooltip text="Roadmap alignment: percentage of completed items that were delivered on or before their roadmap idea's target date. n/a when nothing was completed this week.">
             <span className="font-medium underline decoration-dotted">
-              {healthScore.roadmapAlignmentScore}%
+              {summary.completedCount === 0 ? 'n/a' : `${healthScore.roadmapAlignmentScore}%`}
             </span>
           </Tooltip>
           <div className="mt-0.5 text-muted">Roadmap</div>
