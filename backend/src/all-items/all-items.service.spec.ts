@@ -1,7 +1,7 @@
 /**
  * Unit tests for AllItemsService
  *
- * NOTE: Bespoke MyPass-only report (feature 0012, proposal 0062).
+ * NOTE: Bespoke MyPass-only report (feature 0012, proposals 0062/0063).
  * Tests are isolated — no shared mutable state, all repos mocked.
  */
 import { Test, TestingModule } from '@nestjs/testing';
@@ -84,7 +84,7 @@ function makeSprint(overrides: Partial<JiraSprint> = {}): JiraSprint {
   s.name = 'Sprint 1';
   s.state = 'active';
   s.boardId = 'ACC';
-  s.startDate = new Date('2026-05-11T00:00:00Z');
+  s.startDate = new Date('2026-05-11T00:00:00Z'); // Monday of W20
   s.endDate = new Date('2026-05-24T23:59:59Z');
   return Object.assign(s, overrides);
 }
@@ -96,6 +96,17 @@ function emptyMembership(): SprintMembership {
     committedRemovedKeys: new Set(),
     addedRemovedKeys: new Set(),
     currentMemberKeys: new Set(),
+    logsByIssue: new Map(),
+  };
+}
+
+function membershipWith(committed: string[], added: string[] = []): SprintMembership {
+  return {
+    committedKeys: new Set(committed),
+    addedKeys: new Set(added),
+    committedRemovedKeys: new Set(),
+    addedRemovedKeys: new Set(),
+    currentMemberKeys: new Set([...committed, ...added]),
     logsByIssue: new Map(),
   };
 }
@@ -178,14 +189,14 @@ describe('AllItemsService', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Returns empty board result when board has no issues
+  // Scrum: returns empty when no sprints overlap the week
   // -------------------------------------------------------------------------
 
-  it('returns empty board result when board has no work items', async () => {
+  it('returns empty scrum board result when no sprints overlap the week', async () => {
     boardConfigRepo.find.mockResolvedValue([makeBoard()]);
-    issueRepo.find.mockResolvedValue([]);
-    sprintRepo.find.mockResolvedValue([]);
-    sprintMembership.reconstructMany.mockResolvedValue(new Map());
+    issueRepo.find.mockResolvedValue([makeIssue()]);
+    // Sprint query builder returns nothing — no overlap
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
     roadmapConfigRepo.find.mockResolvedValue([]);
     changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
     issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
@@ -193,9 +204,67 @@ describe('AllItemsService', () => {
 
     const result = await service.getAllItems('2026-W20', undefined);
 
-    expect(result.boards).toHaveLength(1);
     expect(result.boards[0].items).toHaveLength(0);
-    expect(result.boards[0].healthScore.overall).toBe(100);
+    expect(result.boards[0].summary.totalItems).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // Scrum: working set is sprint members only, not full backlog
+  // -------------------------------------------------------------------------
+
+  it('includes only sprint-member issues for scrum boards, not full backlog', async () => {
+    const sprint = makeSprint();
+    // 3 issues on board, but only 2 are sprint members
+    const sprintIssue1 = makeIssue({ key: 'ACC-1' });
+    const sprintIssue2 = makeIssue({ key: 'ACC-2' });
+    const backlogIssue = makeIssue({ key: 'ACC-3' });
+
+    boardConfigRepo.find.mockResolvedValue([makeBoard()]);
+    issueRepo.find.mockResolvedValue([sprintIssue1, sprintIssue2, backlogIssue]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprint]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      new Map([['sprint-1', membershipWith(['ACC-1', 'ACC-2'])]]),
+    );
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+    const keys = result.boards[0].items.map((i) => i.key);
+
+    expect(keys).toContain('ACC-1');
+    expect(keys).toContain('ACC-2');
+    expect(keys).not.toContain('ACC-3');
+    expect(result.boards[0].summary.totalItems).toBe(2);
+  });
+
+  // -------------------------------------------------------------------------
+  // Scrum: total items matches sprint working set, not board backlog
+  // -------------------------------------------------------------------------
+
+  it('totalItems reflects sprint working set size, not full board backlog', async () => {
+    const sprint = makeSprint();
+    // Board has 10 issues, sprint only has 3
+    const boardIssues = Array.from({ length: 10 }, (_, i) =>
+      makeIssue({ key: `ACC-${i + 1}` }),
+    );
+    const sprintKeys = ['ACC-1', 'ACC-2', 'ACC-3'];
+
+    boardConfigRepo.find.mockResolvedValue([makeBoard()]);
+    issueRepo.find.mockResolvedValue(boardIssues);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprint]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      new Map([['sprint-1', membershipWith(sprintKeys)]]),
+    );
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    expect(result.boards[0].summary.totalItems).toBe(3);
   });
 
   // -------------------------------------------------------------------------
@@ -203,14 +272,19 @@ describe('AllItemsService', () => {
   // -------------------------------------------------------------------------
 
   it('excludes epics and subtasks from results', async () => {
+    const sprint = makeSprint();
     const epic = makeIssue({ key: 'ACC-0', issueType: 'Epic' });
     const subtask = makeIssue({ key: 'ACC-2', issueType: 'Sub-task' });
     const story = makeIssue({ key: 'ACC-1', issueType: 'Story' });
 
     boardConfigRepo.find.mockResolvedValue([makeBoard()]);
+    // isWorkItem filters happen before sprint membership — all three load but
+    // only story passes the filter
     issueRepo.find.mockResolvedValue([epic, subtask, story]);
-    sprintRepo.find.mockResolvedValue([]);
-    sprintMembership.reconstructMany.mockResolvedValue(new Map());
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprint]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      new Map([['sprint-1', membershipWith(['ACC-1'])]]),
+    );
     roadmapConfigRepo.find.mockResolvedValue([]);
     changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
     issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
@@ -221,14 +295,75 @@ describe('AllItemsService', () => {
     const keys = result.boards[0].items.map((i) => i.key);
     expect(keys).not.toContain('ACC-0');
     expect(keys).not.toContain('ACC-2');
+    expect(keys).toContain('ACC-1');
   });
 
   // -------------------------------------------------------------------------
-  // Detects started flag (first in-progress transition in week)
+  // Scrum: addedMidSprint flag
+  // -------------------------------------------------------------------------
+
+  it('marks addedMidSprint=true for issues in addedKeys, false for committedKeys', async () => {
+    const sprint = makeSprint();
+    const committed = makeIssue({ key: 'ACC-1' });
+    const added = makeIssue({ key: 'ACC-2' });
+
+    boardConfigRepo.find.mockResolvedValue([makeBoard()]);
+    issueRepo.find.mockResolvedValue([committed, added]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprint]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      new Map([['sprint-1', membershipWith(['ACC-1'], ['ACC-2'])]]),
+    );
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+    const committedItem = result.boards[0].items.find((i) => i.key === 'ACC-1');
+    const addedItem = result.boards[0].items.find((i) => i.key === 'ACC-2');
+
+    expect(committedItem?.addedMidSprint).toBe(false);
+    expect(addedItem?.addedMidSprint).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Scrum: deduplicates issues across two overlapping sprints
+  // -------------------------------------------------------------------------
+
+  it('deduplicates issues that appear in multiple overlapping sprints', async () => {
+    const sprint1 = makeSprint({ id: 'sprint-1', name: 'Sprint 1' });
+    const sprint2 = makeSprint({ id: 'sprint-2', name: 'Sprint 2' });
+    const issue = makeIssue({ key: 'ACC-1' });
+
+    boardConfigRepo.find.mockResolvedValue([makeBoard()]);
+    issueRepo.find.mockResolvedValue([issue]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprint1, sprint2]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      new Map([
+        ['sprint-1', membershipWith(['ACC-1'])],
+        ['sprint-2', membershipWith(['ACC-1'])],
+      ]),
+    );
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    // Should appear exactly once
+    const keys = result.boards[0].items.map((i) => i.key);
+    expect(keys.filter((k) => k === 'ACC-1')).toHaveLength(1);
+    expect(result.boards[0].summary.totalItems).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Scrum: started flag
   // -------------------------------------------------------------------------
 
   it('marks started=true when first in-progress transition occurs within the week', async () => {
-    const issue = makeIssue({ key: 'ACC-1', issueType: 'Story', status: 'In Progress' });
+    const sprint = makeSprint();
+    const issue = makeIssue({ key: 'ACC-1', status: 'In Progress' });
     const cl = makeChangelog({
       issueKey: 'ACC-1',
       field: 'status',
@@ -239,8 +374,10 @@ describe('AllItemsService', () => {
 
     boardConfigRepo.find.mockResolvedValue([makeBoard()]);
     issueRepo.find.mockResolvedValue([issue]);
-    sprintRepo.find.mockResolvedValue([]);
-    sprintMembership.reconstructMany.mockResolvedValue(new Map());
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprint]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      new Map([['sprint-1', membershipWith(['ACC-1'])]]),
+    );
     roadmapConfigRepo.find.mockResolvedValue([]);
     changelogRepo.createQueryBuilder.mockReturnValue(makeQb([cl]));
     issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
@@ -253,7 +390,8 @@ describe('AllItemsService', () => {
   });
 
   it('marks started=false when in-progress transition is before the week', async () => {
-    const issue = makeIssue({ key: 'ACC-1', issueType: 'Story', status: 'In Progress' });
+    const sprint = makeSprint();
+    const issue = makeIssue({ key: 'ACC-1', status: 'In Progress' });
     const cl = makeChangelog({
       issueKey: 'ACC-1',
       field: 'status',
@@ -264,8 +402,10 @@ describe('AllItemsService', () => {
 
     boardConfigRepo.find.mockResolvedValue([makeBoard()]);
     issueRepo.find.mockResolvedValue([issue]);
-    sprintRepo.find.mockResolvedValue([]);
-    sprintMembership.reconstructMany.mockResolvedValue(new Map());
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprint]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      new Map([['sprint-1', membershipWith(['ACC-1'])]]),
+    );
     roadmapConfigRepo.find.mockResolvedValue([]);
     changelogRepo.createQueryBuilder.mockReturnValue(makeQb([cl]));
     issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
@@ -277,12 +417,41 @@ describe('AllItemsService', () => {
     expect(item?.started).toBe(false);
   });
 
+  it('marks started=false for committed sprint issue with no changelog activity in the week', async () => {
+    const sprint = makeSprint();
+    const issue = makeIssue({ key: 'ACC-1', status: 'To Do' });
+    // No changelogs at all
+
+    boardConfigRepo.find.mockResolvedValue([makeBoard()]);
+    issueRepo.find.mockResolvedValue([issue]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprint]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      new Map([['sprint-1', membershipWith(['ACC-1'])]]),
+    );
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+    const item = result.boards[0].items.find((i) => i.key === 'ACC-1');
+
+    // Issue is in the working set (committed) but has no activity — counts in
+    // totalItems but not in startedCount or completedCount
+    expect(item).toBeDefined();
+    expect(item?.started).toBe(false);
+    expect(item?.completed).toBe(false);
+    expect(result.boards[0].summary.totalItems).toBe(1);
+    expect(result.boards[0].summary.startedCount).toBe(0);
+  });
+
   // -------------------------------------------------------------------------
-  // Detects completed flag
+  // Scrum: completed flag
   // -------------------------------------------------------------------------
 
   it('marks completed=true when done transition occurs within the week', async () => {
-    const issue = makeIssue({ key: 'ACC-1', issueType: 'Story', status: 'Done' });
+    const sprint = makeSprint();
+    const issue = makeIssue({ key: 'ACC-1', status: 'Done' });
     const cl = makeChangelog({
       issueKey: 'ACC-1',
       field: 'status',
@@ -293,8 +462,10 @@ describe('AllItemsService', () => {
 
     boardConfigRepo.find.mockResolvedValue([makeBoard()]);
     issueRepo.find.mockResolvedValue([issue]);
-    sprintRepo.find.mockResolvedValue([]);
-    sprintMembership.reconstructMany.mockResolvedValue(new Map());
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprint]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      new Map([['sprint-1', membershipWith(['ACC-1'])]]),
+    );
     roadmapConfigRepo.find.mockResolvedValue([]);
     changelogRepo.createQueryBuilder.mockReturnValue(makeQb([cl]));
     issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
@@ -307,63 +478,62 @@ describe('AllItemsService', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Detects addedMidSprint flag (scrum)
+  // Kanban: working set is board-entry-in-week only
   // -------------------------------------------------------------------------
 
-  it('marks addedMidSprint=true for scrum issue added to sprint after sprint start', async () => {
-    const sprint = makeSprint({
-      id: 'sprint-1',
-      startDate: new Date('2026-05-11T00:00:00Z'),
-      endDate: new Date('2026-05-24T23:59:59Z'),
+  it('includes only kanban issues whose board-entry date is within the week', async () => {
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
+    // 3 issues: one entered this week, one entered last week, one has no entry transition
+    const inWeek = makeIssue({ key: 'PLAT-1', boardId: 'PLAT' });
+    const priorWeek = makeIssue({ key: 'PLAT-2', boardId: 'PLAT' });
+    const noEntry = makeIssue({ key: 'PLAT-3', boardId: 'PLAT' });
+
+    const clInWeek = makeChangelog({
+      issueKey: 'PLAT-1',
+      field: 'status',
+      fromValue: null,
+      toValue: 'To Do',
+      changedAt: new Date('2026-05-12T08:00:00Z'), // W20
     });
-    const issue = makeIssue({ key: 'ACC-1', issueType: 'Story' });
+    const clPriorWeek = makeChangelog({
+      issueKey: 'PLAT-2',
+      field: 'status',
+      fromValue: null,
+      toValue: 'To Do',
+      changedAt: new Date('2026-05-05T08:00:00Z'), // W19
+    });
 
-    const membership: SprintMembership = {
-      committedKeys: new Set(),
-      addedKeys: new Set(['ACC-1']),
-      committedRemovedKeys: new Set(),
-      addedRemovedKeys: new Set(),
-      currentMemberKeys: new Set(['ACC-1']),
-      logsByIssue: new Map(),
-    };
-
-    boardConfigRepo.find.mockResolvedValue([makeBoard()]);
-    issueRepo.find.mockResolvedValue([issue]);
-    sprintRepo.find.mockResolvedValue([sprint]);
-    sprintMembership.reconstructMany.mockResolvedValue(
-      new Map([['sprint-1', membership]]),
-    );
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue([inWeek, priorWeek, noEntry]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
     roadmapConfigRepo.find.mockResolvedValue([]);
-    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([clInWeek, clPriorWeek]));
     issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
     jpdIdeaRepo.find.mockResolvedValue([]);
 
     const result = await service.getAllItems('2026-W20', undefined);
-    const item = result.boards[0].items.find((i) => i.key === 'ACC-1');
+    const keys = result.boards[0].items.map((i) => i.key);
 
-    expect(item?.addedMidSprint).toBe(true);
-    expect(item?.kanbanAdd).toBe(false);
+    expect(keys).toContain('PLAT-1');
+    expect(keys).not.toContain('PLAT-2');  // prior week
+    expect(keys).not.toContain('PLAT-3');  // no entry transition
+    expect(result.boards[0].summary.totalItems).toBe(1);
   });
 
-  // -------------------------------------------------------------------------
-  // Detects kanbanAdd flag
-  // -------------------------------------------------------------------------
-
-  it('marks kanbanAdd=true for kanban issue whose board-entry date is within the week', async () => {
+  it('marks kanbanAdd=true for all kanban working-set items', async () => {
     const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
-    const issue = makeIssue({ key: 'PLAT-1', issueType: 'Story', boardId: 'PLAT' });
+    const issue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT' });
     const cl = makeChangelog({
       issueKey: 'PLAT-1',
       field: 'status',
       fromValue: null,
       toValue: 'To Do',
-      changedAt: new Date('2026-05-12T08:00:00Z'), // 2026-W20
+      changedAt: new Date('2026-05-12T08:00:00Z'), // W20
     });
 
     boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
     issueRepo.find.mockResolvedValue([issue]);
-    sprintRepo.find.mockResolvedValue([]);
-    sprintMembership.reconstructMany.mockResolvedValue(new Map());
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
     roadmapConfigRepo.find.mockResolvedValue([]);
     changelogRepo.createQueryBuilder.mockReturnValue(makeQb([cl]));
     issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
@@ -376,35 +546,66 @@ describe('AllItemsService', () => {
     expect(item?.addedMidSprint).toBe(false);
   });
 
+  it('returns empty kanban board when no issues enter the board in the week', async () => {
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
+    // 980 issues on board but all entered in prior weeks
+    const issues = Array.from({ length: 5 }, (_, i) =>
+      makeIssue({ key: `PLAT-${i + 1}`, boardId: 'PLAT' }),
+    );
+    // All changelogs are from prior weeks
+    const priorCls = issues.map((iss, i) =>
+      makeChangelog({
+        id: i + 1,
+        issueKey: iss.key,
+        field: 'status',
+        toValue: 'To Do',
+        changedAt: new Date('2026-04-01T08:00:00Z'), // well before W20
+      }),
+    );
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue(issues);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb(priorCls));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    expect(result.boards[0].items).toHaveLength(0);
+    expect(result.boards[0].summary.totalItems).toBe(0);
+    expect(result.boards[0].healthScore.overall).toBe(100);
+  });
+
   // -------------------------------------------------------------------------
   // Support detection
   // -------------------------------------------------------------------------
 
   it('marks isSupport=true when issue has a support label', async () => {
+    const sprint = makeSprint();
     const board = makeBoard({ supportLabels: ['support'] });
-    const issue = makeIssue({ key: 'ACC-1', issueType: 'Story', labels: ['support'] });
+    const issue = makeIssue({ key: 'ACC-1', labels: ['support'] });
 
     boardConfigRepo.find.mockResolvedValue([board]);
     issueRepo.find.mockResolvedValue([issue]);
-    sprintRepo.find.mockResolvedValue([]);
-    sprintMembership.reconstructMany.mockResolvedValue(new Map());
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprint]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      new Map([['sprint-1', membershipWith(['ACC-1'])]]),
+    );
     roadmapConfigRepo.find.mockResolvedValue([]);
     changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
     issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
     jpdIdeaRepo.find.mockResolvedValue([]);
 
     const result = await service.getAllItems('2026-W20', undefined);
-    const item = result.boards[0].items.find((i) => i.key === 'ACC-1');
-
-    expect(item?.isSupport).toBe(true);
+    expect(result.boards[0].items[0]?.isSupport).toBe(true);
   });
 
   it('marks isTtbSupport=true when issue has a TTB triage link', async () => {
-    const board = makeBoard({
-      supportLinkTypes: ['clones'],
-      triageBoardKey: 'TTB',
-    });
-    const issue = makeIssue({ key: 'ACC-1', issueType: 'Story' });
+    const sprint = makeSprint();
+    const board = makeBoard({ supportLinkTypes: ['clones'], triageBoardKey: 'TTB' });
+    const issue = makeIssue({ key: 'ACC-1' });
     const link = Object.assign(new JiraIssueLink(), {
       id: 1,
       sourceIssueKey: 'ACC-1',
@@ -414,8 +615,10 @@ describe('AllItemsService', () => {
 
     boardConfigRepo.find.mockResolvedValue([board]);
     issueRepo.find.mockResolvedValue([issue]);
-    sprintRepo.find.mockResolvedValue([]);
-    sprintMembership.reconstructMany.mockResolvedValue(new Map());
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprint]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      new Map([['sprint-1', membershipWith(['ACC-1'])]]),
+    );
     roadmapConfigRepo.find.mockResolvedValue([]);
     changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
     issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([link]));
@@ -432,25 +635,16 @@ describe('AllItemsService', () => {
   // Filter: added-mid-sprint
   // -------------------------------------------------------------------------
 
-  it('filter=added-mid-sprint returns only items with addedMidSprint=true', async () => {
+  it('filter=added-mid-sprint returns only addedMidSprint items', async () => {
     const sprint = makeSprint();
-    const addedIssue = makeIssue({ key: 'ACC-1', issueType: 'Story' });
-    const committedIssue = makeIssue({ key: 'ACC-2', issueType: 'Story' });
-
-    const membership: SprintMembership = {
-      committedKeys: new Set(['ACC-2']),
-      addedKeys: new Set(['ACC-1']),
-      committedRemovedKeys: new Set(),
-      addedRemovedKeys: new Set(),
-      currentMemberKeys: new Set(['ACC-1', 'ACC-2']),
-      logsByIssue: new Map(),
-    };
+    const addedIssue = makeIssue({ key: 'ACC-1' });
+    const committedIssue = makeIssue({ key: 'ACC-2' });
 
     boardConfigRepo.find.mockResolvedValue([makeBoard()]);
     issueRepo.find.mockResolvedValue([addedIssue, committedIssue]);
-    sprintRepo.find.mockResolvedValue([sprint]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprint]));
     sprintMembership.reconstructMany.mockResolvedValue(
-      new Map([['sprint-1', membership]]),
+      new Map([['sprint-1', membershipWith(['ACC-2'], ['ACC-1'])]]),
     );
     roadmapConfigRepo.find.mockResolvedValue([]);
     changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
@@ -469,14 +663,17 @@ describe('AllItemsService', () => {
   // -------------------------------------------------------------------------
 
   it('filter=support returns only isSupport=true items', async () => {
+    const sprint = makeSprint();
     const board = makeBoard({ supportLabels: ['support'] });
-    const supportIssue = makeIssue({ key: 'ACC-1', issueType: 'Story', labels: ['support'] });
-    const regularIssue = makeIssue({ key: 'ACC-2', issueType: 'Story', labels: [] });
+    const supportIssue = makeIssue({ key: 'ACC-1', labels: ['support'] });
+    const regularIssue = makeIssue({ key: 'ACC-2', labels: [] });
 
     boardConfigRepo.find.mockResolvedValue([board]);
     issueRepo.find.mockResolvedValue([supportIssue, regularIssue]);
-    sprintRepo.find.mockResolvedValue([]);
-    sprintMembership.reconstructMany.mockResolvedValue(new Map());
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprint]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      new Map([['sprint-1', membershipWith(['ACC-1', 'ACC-2'])]]),
+    );
     roadmapConfigRepo.find.mockResolvedValue([]);
     changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
     issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
@@ -494,11 +691,15 @@ describe('AllItemsService', () => {
   // -------------------------------------------------------------------------
 
   it('filter=not-on-roadmap returns only onRoadmap=false items', async () => {
-    const issue = makeIssue({ key: 'ACC-1', issueType: 'Story' });
+    const sprint = makeSprint();
+    const issue = makeIssue({ key: 'ACC-1' });
+
     boardConfigRepo.find.mockResolvedValue([makeBoard()]);
     issueRepo.find.mockResolvedValue([issue]);
-    sprintRepo.find.mockResolvedValue([]);
-    sprintMembership.reconstructMany.mockResolvedValue(new Map());
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprint]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      new Map([['sprint-1', membershipWith(['ACC-1'])]]),
+    );
     roadmapConfigRepo.find.mockResolvedValue([]);
     changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
     issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
@@ -506,19 +707,17 @@ describe('AllItemsService', () => {
 
     const result = await service.getAllItems('2026-W20', 'not-on-roadmap');
     // Issue has no roadmap link so onRoadmap=false — should appear
-    const keys = result.boards[0].items.map((i) => i.key);
-    expect(keys).toContain('ACC-1');
+    expect(result.boards[0].items.map((i) => i.key)).toContain('ACC-1');
   });
 
   // -------------------------------------------------------------------------
-  // Health score — empty board scores 100
+  // Health score
   // -------------------------------------------------------------------------
 
   it('health score is 100 for an empty board', async () => {
     boardConfigRepo.find.mockResolvedValue([makeBoard()]);
     issueRepo.find.mockResolvedValue([]);
-    sprintRepo.find.mockResolvedValue([]);
-    sprintMembership.reconstructMany.mockResolvedValue(new Map());
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
     roadmapConfigRepo.find.mockResolvedValue([]);
     changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
     issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
@@ -527,24 +726,20 @@ describe('AllItemsService', () => {
     const result = await service.getAllItems('2026-W20', undefined);
 
     expect(result.boards[0].healthScore.overall).toBe(100);
-    expect(result.boards[0].healthScore.roadmapAlignmentScore).toBe(100);
-    expect(result.boards[0].healthScore.supportBurdenScore).toBe(100);
-    expect(result.boards[0].healthScore.stabilityScore).toBe(100);
   });
 
-  // -------------------------------------------------------------------------
-  // Health score — support burden
-  // -------------------------------------------------------------------------
-
   it('reduces support burden score when board has support items', async () => {
+    const sprint = makeSprint();
     const board = makeBoard({ supportLabels: ['support'] });
-    const supportIssue = makeIssue({ key: 'ACC-1', issueType: 'Story', labels: ['support'] });
-    const regularIssue = makeIssue({ key: 'ACC-2', issueType: 'Story', labels: [] });
+    const supportIssue = makeIssue({ key: 'ACC-1', labels: ['support'] });
+    const regularIssue = makeIssue({ key: 'ACC-2', labels: [] });
 
     boardConfigRepo.find.mockResolvedValue([board]);
     issueRepo.find.mockResolvedValue([supportIssue, regularIssue]);
-    sprintRepo.find.mockResolvedValue([]);
-    sprintMembership.reconstructMany.mockResolvedValue(new Map());
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprint]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      new Map([['sprint-1', membershipWith(['ACC-1', 'ACC-2'])]]),
+    );
     roadmapConfigRepo.find.mockResolvedValue([]);
     changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
     issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
@@ -561,10 +756,12 @@ describe('AllItemsService', () => {
   // -------------------------------------------------------------------------
 
   it('aggregates totals across all boards', async () => {
-    const board1 = makeBoard({ boardId: 'ACC' });
-    const board2 = makeBoard({ boardId: 'BPT' });
-    const issue1 = makeIssue({ key: 'ACC-1', issueType: 'Story', boardId: 'ACC' });
-    const issue2 = makeIssue({ key: 'BPT-1', issueType: 'Story', boardId: 'BPT' });
+    const board1 = makeBoard({ boardId: 'ACC', boardType: 'scrum' });
+    const board2 = makeBoard({ boardId: 'BPT', boardType: 'scrum' });
+    const sprint1 = makeSprint({ id: 'sprint-acc', boardId: 'ACC' });
+    const sprint2 = makeSprint({ id: 'sprint-bpt', boardId: 'BPT' });
+    const issue1 = makeIssue({ key: 'ACC-1', boardId: 'ACC' });
+    const issue2 = makeIssue({ key: 'BPT-1', boardId: 'BPT' });
 
     boardConfigRepo.find.mockResolvedValue([board1, board2]);
     issueRepo.find.mockImplementation(({ where }: { where: { boardId: string } }) => {
@@ -572,8 +769,20 @@ describe('AllItemsService', () => {
       if (where.boardId === 'BPT') return Promise.resolve([issue2]);
       return Promise.resolve([]);
     });
-    sprintRepo.find.mockResolvedValue([]);
-    sprintMembership.reconstructMany.mockResolvedValue(new Map());
+    // Return the correct sprint for each board's query builder call
+    sprintRepo.createQueryBuilder
+      .mockReturnValueOnce(makeQb([sprint1]))  // ACC board
+      .mockReturnValueOnce(makeQb([sprint2])); // BPT board
+    sprintMembership.reconstructMany.mockImplementation(
+      ({ sprints }: { sprints: JiraSprint[] }) => {
+        const m = new Map<string, SprintMembership>();
+        for (const s of sprints) {
+          if (s.id === 'sprint-acc') m.set('sprint-acc', membershipWith(['ACC-1']));
+          if (s.id === 'sprint-bpt') m.set('sprint-bpt', membershipWith(['BPT-1']));
+        }
+        return Promise.resolve(m);
+      },
+    );
     roadmapConfigRepo.find.mockResolvedValue([]);
     changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
     issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));

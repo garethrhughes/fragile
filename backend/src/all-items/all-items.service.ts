@@ -1,7 +1,7 @@
 /**
  * AllItemsService — weekly cross-board activity report.
  *
- * NOTE: Bespoke MyPass-only report (feature 0012, proposal 0062).
+ * NOTE: Bespoke MyPass-only report (feature 0012, proposals 0062/0063).
  * This module is fully isolated. Do not modify existing services to support it.
  * It may be deleted without affecting any other module.
  */
@@ -119,7 +119,7 @@ export class AllItemsService {
 
   private async processBoardForWeek(
     config: BoardConfig,
-    week: string,
+    _week: string,
     weekStart: Date,
     weekEnd: Date,
     filters: Set<ActiveFilter>,
@@ -134,21 +134,35 @@ export class AllItemsService {
       (config.boardEntryStatuses ?? ['To Do']).map((s) => s.toLowerCase()),
     );
 
-    // --- Load work items ---
-    const allIssues = (await this.issueRepo.find({ where: { boardId } })).filter(
+    // -----------------------------------------------------------------------
+    // Step 1 — Determine the working set for this board + week
+    //
+    // Scrum: union of committedKeys ∪ addedKeys from sprints overlapping the
+    //        week window. An issue that is merely on the board but not in any
+    //        active/recent sprint is NOT included.
+    //
+    // Kanban: issues whose board-entry date falls within the week. Issues
+    //         boarded in a prior week are NOT included.
+    // -----------------------------------------------------------------------
+
+    // Load all board work items (needed by SprintMembershipService and for
+    // kanban board-entry detection).
+    const allBoardIssues = (await this.issueRepo.find({ where: { boardId } })).filter(
       (i) => isWorkItem(i.issueType),
     );
 
-    if (allIssues.length === 0) {
-      return this.emptyBoardResult(boardId, isKanban ? 'kanban' : 'scrum', filters);
+    if (allBoardIssues.length === 0) {
+      return this.emptyBoardResult(boardId, isKanban ? 'kanban' : 'scrum');
     }
 
-    const issueKeys = allIssues.map((i) => i.key);
+    const allBoardKeys = allBoardIssues.map((i) => i.key);
+    const issueByKey = new Map(allBoardIssues.map((i) => [i.key, i]));
 
-    // --- Load changelogs (status + Sprint fields) ---
+    // Load changelogs for all board issues — needed for kanban board-entry
+    // detection and for scrum status classification.
     const allChangelogs = await this.changelogRepo
       .createQueryBuilder('cl')
-      .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
+      .where('cl.issueKey IN (:...keys)', { keys: allBoardKeys })
       .andWhere('cl.field IN (:...fields)', { fields: ['status', 'Sprint'] })
       .orderBy('cl.changedAt', 'ASC')
       .getMany();
@@ -161,40 +175,68 @@ export class AllItemsService {
       statusChangelogsByIssue.set(cl.issueKey, list);
     }
 
-    // --- Sprint membership (scrum) ---
+    // --- Build the week-scoped working set ---
+    let workingSet: JiraIssue[];
     let addedMidSprintKeys = new Set<string>();
-    let allSprintMemberKeys = new Set<string>();
     let sprintNameByIssue = new Map<string, string>();
 
-    if (!isKanban) {
-      const sprints = await this.sprintRepo.find({ where: { boardId } });
-      const activeSprints = sprints.filter((s) => s.state === 'active' || s.state === 'closed');
+    if (isKanban) {
+      // Kanban: include only issues whose board-entry date is within the week.
+      workingSet = allBoardIssues.filter((issue) => {
+        const statusLogs = statusChangelogsByIssue.get(issue.key) ?? [];
+        const entryDate = this.detectBoardEntryDate(statusLogs, boardEntryStatuses);
+        return entryDate !== null && entryDate >= weekStart && entryDate <= weekEnd;
+      });
+    } else {
+      // Scrum: find sprints that overlap the week window, reconstruct
+      // membership, and take the union of committedKeys ∪ addedKeys.
+      const overlappingSprints = await this.findSprintsOverlappingWeek(
+        boardId,
+        weekStart,
+        weekEnd,
+      );
 
-      if (activeSprints.length > 0) {
-        const membershipMap = await this.sprintMembership.reconstructMany({
-          sprints: activeSprints,
-          boardId,
-          boardIssues: allIssues,
-        });
+      if (overlappingSprints.length === 0) {
+        return this.emptyBoardResult(boardId, 'scrum');
+      }
 
-        for (const sprint of activeSprints) {
-          const m = membershipMap.get(sprint.id);
-          if (!m) continue;
-          for (const key of m.addedKeys) {
-            addedMidSprintKeys.add(key);
-            sprintNameByIssue.set(key, sprint.name);
-          }
-          for (const key of [...m.committedKeys, ...m.addedKeys, ...m.currentMemberKeys]) {
-            allSprintMemberKeys.add(key);
-            if (!sprintNameByIssue.has(key)) {
-              sprintNameByIssue.set(key, sprint.name);
-            }
-          }
+      const membershipMap = await this.sprintMembership.reconstructMany({
+        sprints: overlappingSprints,
+        boardId,
+        boardIssues: allBoardIssues,
+      });
+
+      const workingSetKeys = new Set<string>();
+      for (const sprint of overlappingSprints) {
+        const m = membershipMap.get(sprint.id);
+        if (!m) continue;
+        // Population = committed + added (issues that were ever a member during
+        // the sprint's overlap with this week). Do not double-count.
+        for (const key of m.committedKeys) {
+          workingSetKeys.add(key);
+          if (!sprintNameByIssue.has(key)) sprintNameByIssue.set(key, sprint.name);
+        }
+        for (const key of m.addedKeys) {
+          workingSetKeys.add(key);
+          addedMidSprintKeys.add(key);
+          sprintNameByIssue.set(key, sprint.name); // latest sprint wins for display
         }
       }
+
+      workingSet = [...workingSetKeys]
+        .map((k) => issueByKey.get(k))
+        .filter((i): i is JiraIssue => i !== undefined);
     }
 
-    // --- Support classification ---
+    if (workingSet.length === 0) {
+      return this.emptyBoardResult(boardId, isKanban ? 'kanban' : 'scrum');
+    }
+
+    const workingSetKeys = workingSet.map((i) => i.key);
+
+    // -----------------------------------------------------------------------
+    // Step 2 — Load support links for the working set only
+    // -----------------------------------------------------------------------
     const supportLabels: string[] = config.supportLabels ?? [];
     const supportLinkTypes: string[] = config.supportLinkTypes ?? [];
     const supportEpics: string[] = (config.supportEpics ?? []).map((e) => e.toUpperCase());
@@ -205,7 +247,7 @@ export class AllItemsService {
     if (supportLinkTypes.length > 0 && triageBoardKey) {
       const links = await this.issueLinkRepo
         .createQueryBuilder('lnk')
-        .where('lnk.sourceIssueKey IN (:...keys)', { keys: issueKeys })
+        .where('lnk.sourceIssueKey IN (:...keys)', { keys: workingSetKeys })
         .getMany();
       for (const lnk of links) {
         const list = linksByIssue.get(lnk.sourceIssueKey) ?? [];
@@ -214,29 +256,30 @@ export class AllItemsService {
       }
     }
 
-    // --- Roadmap ideas (passed in from caller — loaded once for all boards) ---
-    // Filter ideas to those overlapping the week window
+    // -----------------------------------------------------------------------
+    // Step 3 — Roadmap coverage for the working set
+    // -----------------------------------------------------------------------
     const epicIdeaMap = this.filterIdeasForWindow(allIdeas, weekStart, weekEnd, ruleByJpdKey);
 
-    // Direct-link roadmap coverage (ADR 0044)
     const roadmapLinkTypes: string[] = config.roadmapLinkTypes ?? [];
     const directLinkIdeaMap = await buildDirectLinkIdeaMap(
       this.issueLinkRepo,
-      issueKeys,
+      workingSetKeys,
       allIdeas,
       roadmapLinkTypes,
       ruleByJpdKey,
     );
 
-    // --- Classify each issue ---
+    // -----------------------------------------------------------------------
+    // Step 4 — Classify each issue in the working set
+    // -----------------------------------------------------------------------
     const items: AllItemsIssue[] = [];
 
-    for (const issue of allIssues) {
+    for (const issue of workingSet) {
       const statusLogs = statusChangelogsByIssue.get(issue.key) ?? [];
 
-      // --- started flag ---
+      // started: first in-progress (scrum) or board-entry (kanban) within week
       const started = this.detectStarted(
-        issue,
         statusLogs,
         inProgressStatuses,
         boardEntryStatuses,
@@ -245,33 +288,19 @@ export class AllItemsService {
         weekEnd,
       );
 
-      // --- completed flag ---
+      // completed: transitioned to a done status within the week
       const completedAt = this.detectCompletionDate(statusLogs, doneStatuses, weekStart, weekEnd);
       const completed = completedAt !== null;
 
-      // --- addedMidSprint / kanbanAdd ---
-      let addedMidSprint = false;
-      let kanbanAdd = false;
+      // addedMidSprint (scrum) / kanbanAdd (kanban)
+      const addedMidSprint = !isKanban && addedMidSprintKeys.has(issue.key);
+      // kanbanAdd: issue is in working set because its board-entry date is in the week
+      const kanbanAdd = isKanban;
 
-      if (!isKanban) {
-        addedMidSprint = addedMidSprintKeys.has(issue.key);
-      } else {
-        // kanbanAdd: first board-entry transition is within the week
-        const entryDate = this.detectBoardEntryDate(issue, statusLogs, boardEntryStatuses);
-        if (entryDate !== null && entryDate >= weekStart && entryDate <= weekEnd) {
-          kanbanAdd = true;
-        }
-      }
+      // onRoadmap: completed within roadmap idea target date
+      const onRoadmap = this.classifyRoadmap(issue, completedAt, epicIdeaMap, directLinkIdeaMap);
 
-      // --- onRoadmap flag ---
-      const onRoadmap = this.classifyRoadmap(
-        issue,
-        completedAt,
-        epicIdeaMap,
-        directLinkIdeaMap,
-      );
-
-      // --- support flags ---
+      // support flags
       const epicMatch =
         supportEpics.length > 0 &&
         issue.epicKey != null &&
@@ -317,11 +346,9 @@ export class AllItemsService {
       });
     }
 
-    // --- Apply filters ---
+    // Apply filters and build summary from the full (unfiltered) working set
     const filteredItems = this.applyFilters(items, filters);
-
-    // --- Summaries and health score ---
-    const summary = this.buildSummary(items); // always from unfiltered set
+    const summary = this.buildSummary(items);
     const healthScore = this.calculateHealthScore(summary);
 
     return {
@@ -334,11 +361,34 @@ export class AllItemsService {
   }
 
   // ---------------------------------------------------------------------------
+  // Sprint overlap query
+  //
+  // Returns sprints for a board whose window overlaps [weekStart, weekEnd]:
+  //   sprint.startDate <= weekEnd
+  //   AND (sprint.endDate >= weekStart OR sprint.state = 'active')
+  // ---------------------------------------------------------------------------
+
+  private async findSprintsOverlappingWeek(
+    boardId: string,
+    weekStart: Date,
+    weekEnd: Date,
+  ): Promise<JiraSprint[]> {
+    return this.sprintRepo
+      .createQueryBuilder('s')
+      .where('s.boardId = :boardId', { boardId })
+      .andWhere('s.startDate <= :weekEnd', { weekEnd })
+      .andWhere(
+        "(s.endDate >= :weekStart OR s.state = 'active')",
+        { weekStart },
+      )
+      .getMany();
+  }
+
+  // ---------------------------------------------------------------------------
   // Classification helpers
   // ---------------------------------------------------------------------------
 
   private detectStarted(
-    issue: JiraIssue,
     statusLogs: JiraChangelog[],
     inProgressStatuses: Set<string>,
     boardEntryStatuses: Set<string>,
@@ -347,14 +397,15 @@ export class AllItemsService {
     weekEnd: Date,
   ): boolean {
     if (isKanban) {
-      // For kanban: first transition to a board-entry status within the week
-      const entryDate = this.detectBoardEntryDate(issue, statusLogs, boardEntryStatuses);
+      // Kanban working set is already filtered to issues with board-entry in
+      // the week, so the board-entry transition itself IS the "started" event.
+      const entryDate = this.detectBoardEntryDate(statusLogs, boardEntryStatuses);
       return entryDate !== null && entryDate >= weekStart && entryDate <= weekEnd;
     }
 
-    // For scrum: first in-progress transition ever is within the week
-    const firstInProgress = statusLogs.find((cl) =>
-      cl.toValue !== null && inProgressStatuses.has(cl.toValue),
+    // Scrum: first ever in-progress transition is within the week
+    const firstInProgress = statusLogs.find(
+      (cl) => cl.toValue !== null && inProgressStatuses.has(cl.toValue),
     );
     if (!firstInProgress) return false;
     return firstInProgress.changedAt >= weekStart && firstInProgress.changedAt <= weekEnd;
@@ -379,20 +430,15 @@ export class AllItemsService {
   }
 
   private detectBoardEntryDate(
-    issue: JiraIssue,
     statusLogs: JiraChangelog[],
     boardEntryStatuses: Set<string>,
   ): Date | null {
-    // First transition to a board-entry status (case-insensitive)
     const entry = statusLogs.find(
       (cl) =>
         cl.toValue !== null &&
         boardEntryStatuses.has(cl.toValue.toLowerCase()),
     );
-    if (entry) return entry.changedAt;
-    // Fallback: if there are status logs but no entry-status match, use createdAt
-    if (statusLogs.length > 0) return null;
-    return null;
+    return entry?.changedAt ?? null;
   }
 
   private classifyRoadmap(
@@ -401,18 +447,16 @@ export class AllItemsService {
     epicIdeaMap: Map<string, { targetDate: Date }>,
     directLinkIdeaMap: Map<string, { targetDate: Date }>,
   ): boolean {
-    // Only mark onRoadmap=true for completed items that were delivered on time
+    // Only mark onRoadmap=true for items completed on or before the idea target date
     if (completedAt === null) return false;
 
     const epicIdea = issue.epicKey ? epicIdeaMap.get(issue.epicKey) : undefined;
     const directIdea = directLinkIdeaMap.get(issue.key);
     const idea = epicIdea ?? directIdea;
-
     if (!idea) return false;
 
     const targetEndOfDay = new Date(idea.targetDate.getTime());
     targetEndOfDay.setUTCHours(23, 59, 59, 999);
-
     return completedAt <= targetEndOfDay;
   }
 
@@ -609,13 +653,12 @@ export class AllItemsService {
   }
 
   // ---------------------------------------------------------------------------
-  // Empty result builders
+  // Empty result builder
   // ---------------------------------------------------------------------------
 
   private emptyBoardResult(
     boardId: string,
     boardType: 'scrum' | 'kanban',
-    _filters: Set<ActiveFilter>,
   ): AllItemsBoardResult {
     const summary: AllItemsBoardSummary = {
       totalItems: 0,
