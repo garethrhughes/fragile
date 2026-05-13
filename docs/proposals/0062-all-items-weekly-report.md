@@ -159,11 +159,10 @@ New nav item in `sidebar.tsx`:
 ### Isolation Strategy
 
 This module:
-- **Imports existing services** (`SprintMembershipService`, `RoadmapService`, `SupportService`, etc.) to reuse proven classification logic — no duplication
+- **Imports `SprintMembershipService`** to reuse sprint membership reconstruction — no duplication of that logic
+- **Re-implements** support detection and roadmap windowing locally using the same algorithms and underlying entities; `SupportService` and `RoadmapService` are not imported directly, keeping the dependency surface minimal
 - **Does NOT modify** any existing service, entity, migration, controller, or test
-- Uses existing services in a **read-only, call-only** manner — no new methods added, no existing method signatures changed
-- Orchestrates existing service outputs into the weekly view and health score via its own `AllItemsService`
-- Can be deleted entirely (remove module + frontend page) without affecting any other module
+- Can be deleted entirely (remove module + frontend page + nav entry) without affecting any other module
 
 ```mermaid
 flowchart LR

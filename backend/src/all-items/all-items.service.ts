@@ -213,16 +213,28 @@ export class AllItemsService {
       for (const sprint of overlappingSprints) {
         const m = membershipMap.get(sprint.id);
         if (!m) continue;
-        // Population = committed + added (issues that were ever a member during
-        // the sprint's overlap with this week). Do not double-count.
         for (const key of m.committedKeys) {
           workingSetKeys.add(key);
           if (!sprintNameByIssue.has(key)) sprintNameByIssue.set(key, sprint.name);
         }
         for (const key of m.addedKeys) {
           workingSetKeys.add(key);
-          addedMidSprintKeys.add(key);
-          sprintNameByIssue.set(key, sprint.name); // latest sprint wins for display
+          sprintNameByIssue.set(key, sprint.name);
+
+          // Only mark addedMidSprint if the Sprint-field changelog that added
+          // this issue to the sprint falls within the selected week window.
+          // This prevents an issue added in W19 from appearing as "added" in W20.
+          const sprintLogs = m.logsByIssue.get(key) ?? [];
+          const addedAt = sprintLogs.find(
+            (cl) =>
+              cl.toId != null
+                ? cl.toId.split(',').map((s) => s.trim()).includes(sprint.id)
+                : cl.toValue?.split(',').map((s) => s.trim()).includes(sprint.name) ?? false,
+          )?.changedAt;
+
+          if (addedAt !== undefined && addedAt >= weekStart && addedAt <= weekEnd) {
+            addedMidSprintKeys.add(key);
+          }
         }
       }
 
@@ -251,6 +263,9 @@ export class AllItemsService {
       const links = await this.issueLinkRepo
         .createQueryBuilder('lnk')
         .where('lnk.sourceIssueKey IN (:...keys)', { keys: workingSetKeys })
+        .andWhere('LOWER(lnk.linkTypeName) IN (:...types)', {
+          types: supportLinkTypes.map((t) => t.toLowerCase()),
+        })
         .getMany();
       for (const lnk of links) {
         const list = linksByIssue.get(lnk.sourceIssueKey) ?? [];

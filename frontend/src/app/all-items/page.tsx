@@ -20,23 +20,49 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Returns current ISO week as YYYY-Www */
-function currentIsoWeek(): string {
-  const now = new Date()
-  const jan4 = new Date(Date.UTC(now.getUTCFullYear(), 0, 4))
+/**
+ * Convert a Date to an ISO week key (YYYY-Www) using proper ISO week-year
+ * arithmetic. Handles week 53 and year-boundary edge cases correctly.
+ */
+function dateToIsoWeekKey(date: Date): string {
+  // Work in UTC calendar dates
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+  // ISO day of week: Mon=1 … Sun=7
+  const dow = d.getUTCDay() === 0 ? 7 : d.getUTCDay()
+  // Thursday of the same week (ISO week belongs to the year of its Thursday)
+  const thursday = new Date(d)
+  thursday.setUTCDate(d.getUTCDate() + (4 - dow))
+  const isoYear = thursday.getUTCFullYear()
+  // Week 1 is the week containing Jan 4
+  const jan4 = new Date(Date.UTC(isoYear, 0, 4))
   const jan4Dow = jan4.getUTCDay() === 0 ? 7 : jan4.getUTCDay()
   const week1Mon = new Date(jan4)
   week1Mon.setUTCDate(jan4.getUTCDate() - (jan4Dow - 1))
+  const weekNum = Math.round((thursday.getTime() - week1Mon.getTime()) / (7 * 86_400_000)) + 1
+  return `${isoYear}-W${String(weekNum).padStart(2, '0')}`
+}
 
-  const dayOfWeek = now.getUTCDay() === 0 ? 7 : now.getUTCDay()
-  const thisWeekMon = new Date(now)
-  thisWeekMon.setUTCDate(now.getUTCDate() - (dayOfWeek - 1))
-  thisWeekMon.setUTCHours(0, 0, 0, 0)
+/** Returns current ISO week as YYYY-Www */
+function currentIsoWeek(): string {
+  return dateToIsoWeekKey(new Date())
+}
 
-  const diff = thisWeekMon.getTime() - week1Mon.getTime()
-  const weekNum = Math.round(diff / (7 * 86400000)) + 1
-
-  return `${now.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`
+/**
+ * Parse a YYYY-Www key to the UTC Date of Monday of that week.
+ * Uses Jan-4 anchor so week 53 and year boundaries work correctly.
+ */
+function isoWeekToMonday(week: string): Date | null {
+  const m = week.match(/^(\d{4})-W(\d{2})$/)
+  if (!m) return null
+  const isoYear = parseInt(m[1], 10)
+  const weekNum = parseInt(m[2], 10)
+  const jan4 = new Date(Date.UTC(isoYear, 0, 4))
+  const jan4Dow = jan4.getUTCDay() === 0 ? 7 : jan4.getUTCDay()
+  const week1Mon = new Date(jan4)
+  week1Mon.setUTCDate(jan4.getUTCDate() - (jan4Dow - 1))
+  const monday = new Date(week1Mon)
+  monday.setUTCDate(week1Mon.getUTCDate() + (weekNum - 1) * 7)
+  return monday
 }
 
 /** Formats YYYY-Www as "W20 '26" */
@@ -46,22 +72,20 @@ function formatWeekLabel(week: string): string {
   return `W${m[2]} '${m[1].slice(2)}`
 }
 
+/** Returns the previous week key using date arithmetic (handles week 53). */
 function prevWeek(week: string): string {
-  const m = week.match(/^(\d{4})-W(\d{2})$/)
-  if (!m) return week
-  const year = parseInt(m[1], 10)
-  const num = parseInt(m[2], 10)
-  if (num > 1) return `${year}-W${String(num - 1).padStart(2, '0')}`
-  return `${year - 1}-W52`
+  const monday = isoWeekToMonday(week)
+  if (!monday) return week
+  monday.setUTCDate(monday.getUTCDate() - 7)
+  return dateToIsoWeekKey(monday)
 }
 
+/** Returns the next week key using date arithmetic (handles week 53). */
 function nextWeek(week: string): string {
-  const m = week.match(/^(\d{4})-W(\d{2})$/)
-  if (!m) return week
-  const year = parseInt(m[1], 10)
-  const num = parseInt(m[2], 10)
-  if (num < 52) return `${year}-W${String(num + 1).padStart(2, '0')}`
-  return `${year + 1}-W01`
+  const monday = isoWeekToMonday(week)
+  if (!monday) return week
+  monday.setUTCDate(monday.getUTCDate() + 7)
+  return dateToIsoWeekKey(monday)
 }
 
 type PageState =

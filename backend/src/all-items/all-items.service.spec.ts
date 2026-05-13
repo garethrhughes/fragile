@@ -100,15 +100,31 @@ function emptyMembership(): SprintMembership {
   };
 }
 
-function membershipWith(committed: string[], added: string[] = []): SprintMembership {
+function membershipWith(committed: string[], added: string[] = [], addedAt?: Date): SprintMembership {
+  // Build logsByIssue for added keys so the week-window timestamp check passes.
+  // Default addedAt falls within 2026-W20 (Mon 11 May – Sun 17 May).
+  const addedTimestamp = addedAt ?? new Date('2026-05-13T10:00:00Z')
+  const logsByIssue = new Map<string, JiraChangelog[]>()
+  for (const key of added) {
+    const cl = new JiraChangelog()
+    cl.id = Math.random()
+    cl.issueKey = key
+    cl.field = 'Sprint'
+    cl.fromValue = null
+    cl.toValue = 'Sprint 1'
+    cl.fromId = null
+    cl.toId = 'sprint-1'
+    cl.changedAt = addedTimestamp
+    logsByIssue.set(key, [cl])
+  }
   return {
     committedKeys: new Set(committed),
     addedKeys: new Set(added),
     committedRemovedKeys: new Set(),
     addedRemovedKeys: new Set(),
     currentMemberKeys: new Set([...committed, ...added]),
-    logsByIssue: new Map(),
-  };
+    logsByIssue,
+  }
 }
 
 // ---------------------------------------------------------------------------
