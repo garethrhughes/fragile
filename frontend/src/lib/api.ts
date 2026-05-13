@@ -1332,3 +1332,81 @@ export function replaceCustomReportData(
     { method: 'PUT', body: JSON.stringify(body) },
   )
 }
+
+// ---------------------------------------------------------------------------
+// All Items — bespoke MyPass weekly cross-board report (feature 0012)
+// NOTE: Not for upstreaming. Isolated to this project.
+// ---------------------------------------------------------------------------
+
+export interface AllItemsIssue {
+  key: string
+  summary: string
+  issueType: string
+  status: string
+  boardId: string
+  assignee: string | null
+  points: number | null
+  labels: string[]
+  jiraUrl: string
+  epicKey: string | null
+  sprintName: string | null
+  started: boolean
+  addedMidSprint: boolean
+  kanbanAdd: boolean
+  completed: boolean
+  onRoadmap: boolean
+  isSupport: boolean
+  isTtbSupport: boolean
+}
+
+export interface AllItemsBoardSummary {
+  totalItems: number
+  startedCount: number
+  addedMidSprintCount: number
+  completedCount: number
+  onRoadmapCount: number
+  supportCount: number
+  ttbSupportCount: number
+}
+
+export interface BoardHealthScore {
+  overall: number
+  roadmapAlignmentScore: number
+  supportBurdenScore: number
+  stabilityScore: number
+}
+
+export interface AllItemsBoardResult {
+  boardId: string
+  boardType: 'scrum' | 'kanban'
+  items: AllItemsIssue[]
+  summary: AllItemsBoardSummary
+  healthScore: BoardHealthScore
+}
+
+export interface AllItemsTotals {
+  totalItems: number
+  startedCount: number
+  addedMidSprintCount: number
+  completedCount: number
+  onRoadmapCount: number
+  supportCount: number
+  ttbSupportCount: number
+}
+
+export interface AllItemsResponse {
+  week: string
+  weekStart: string
+  weekEnd: string
+  boards: AllItemsBoardResult[]
+  totals: AllItemsTotals
+}
+
+export type AllItemsFilter = 'added-mid-sprint' | 'not-on-roadmap' | 'support' | 'ttb-support'
+
+export function getAllItems(week: string, filters?: AllItemsFilter[]): Promise<AllItemsResponse> {
+  const filterParam = filters && filters.length > 0 ? filters.join('|') : undefined
+  return apiFetch<AllItemsResponse>(
+    `/api/all-items${toQueryString({ week, filter: filterParam })}`,
+  )
+}
