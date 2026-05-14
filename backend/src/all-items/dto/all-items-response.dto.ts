@@ -98,7 +98,11 @@ export interface BoardHealthScore {
   roadmapAlignmentScore: number;
   /** 0-100: (1 - supportCount / totalItems) * 100. Informational only — not in overall. */
   supportBurdenScore: number;
-  /** 0-100: (1 - addedMidSprintCount / totalItems) * 100. 100 when no mid-sprint adds. */
+  /**
+   * 0-100:
+   * Scrum  — (1 - addedMidSprintCount / totalItems) * 100. 100 when no mid-sprint additions.
+   * Kanban — min(completedCount / totalItems, 1) * 100. 100 when throughput >= intake (ADR 0062).
+   */
   stabilityScore: number;
 }
 

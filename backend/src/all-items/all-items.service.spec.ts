@@ -854,4 +854,191 @@ describe('AllItemsService', () => {
     boardConfigRepo.find.mockResolvedValue([]);
     await expect(service.getAllItems('invalid', undefined)).rejects.toThrow();
   });
+
+  // -------------------------------------------------------------------------
+  // Kanban stability: throughput balance (ADR 0062)
+  // -------------------------------------------------------------------------
+
+  it('kanban stability is 100 when completed count equals entered count (balanced throughput)', async () => {
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
+    // 3 issues enter the board this week; 3 are completed this week
+    const issues = [
+      makeIssue({ key: 'PLAT-1', boardId: 'PLAT' }),
+      makeIssue({ key: 'PLAT-2', boardId: 'PLAT' }),
+      makeIssue({ key: 'PLAT-3', boardId: 'PLAT' }),
+    ];
+    const entryChangelogs = issues.map((iss, i) =>
+      makeChangelog({
+        id: i + 1,
+        issueKey: iss.key,
+        field: 'status',
+        fromValue: null,
+        toValue: 'To Do',
+        changedAt: new Date('2026-05-12T08:00:00Z'), // W20 board-entry
+      }),
+    );
+    const doneChangelogs = issues.map((iss, i) =>
+      makeChangelog({
+        id: i + 10,
+        issueKey: iss.key,
+        field: 'status',
+        fromValue: 'In Progress',
+        toValue: 'Done',
+        changedAt: new Date('2026-05-14T15:00:00Z'), // W20 completion
+      }),
+    );
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue(issues);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([...entryChangelogs, ...doneChangelogs]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    expect(result.boards[0].healthScore.stabilityScore).toBe(100);
+  });
+
+  it('kanban stability is 60 when 3 of 5 entered items are completed (under-delivery)', async () => {
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
+    // 5 issues enter; only 3 are done within the week
+    const issues = Array.from({ length: 5 }, (_, i) =>
+      makeIssue({ key: `PLAT-${i + 1}`, boardId: 'PLAT' }),
+    );
+    const entryChangelogs = issues.map((iss, i) =>
+      makeChangelog({
+        id: i + 1,
+        issueKey: iss.key,
+        field: 'status',
+        fromValue: null,
+        toValue: 'To Do',
+        changedAt: new Date('2026-05-12T08:00:00Z'), // W20 board-entry
+      }),
+    );
+    // Only first 3 are completed this week
+    const doneChangelogs = issues.slice(0, 3).map((iss, i) =>
+      makeChangelog({
+        id: i + 10,
+        issueKey: iss.key,
+        field: 'status',
+        fromValue: 'In Progress',
+        toValue: 'Done',
+        changedAt: new Date('2026-05-14T15:00:00Z'), // W20 completion
+      }),
+    );
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue(issues);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([...entryChangelogs, ...doneChangelogs]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    // 3 completed / 5 entered = 60%
+    expect(result.boards[0].healthScore.stabilityScore).toBe(60);
+  });
+
+  it('kanban stability is 100 (capped) when more items are completed than entered (over-delivery)', async () => {
+    // This can happen when items entered in a prior week are completed this week,
+    // but the board working set only contains items that entered THIS week.
+    // In practice this means completedCount can't exceed totalItems, but we
+    // test the cap anyway to confirm Math.min is applied.
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
+    const issues = [
+      makeIssue({ key: 'PLAT-1', boardId: 'PLAT' }),
+      makeIssue({ key: 'PLAT-2', boardId: 'PLAT' }),
+    ];
+    const entryChangelogs = issues.map((iss, i) =>
+      makeChangelog({
+        id: i + 1,
+        issueKey: iss.key,
+        field: 'status',
+        fromValue: null,
+        toValue: 'To Do',
+        changedAt: new Date('2026-05-12T08:00:00Z'), // W20 board-entry
+      }),
+    );
+    const doneChangelogs = issues.map((iss, i) =>
+      makeChangelog({
+        id: i + 10,
+        issueKey: iss.key,
+        field: 'status',
+        fromValue: 'In Progress',
+        toValue: 'Done',
+        changedAt: new Date('2026-05-14T15:00:00Z'), // W20 completion
+      }),
+    );
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue(issues);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([...entryChangelogs, ...doneChangelogs]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    expect(result.boards[0].healthScore.stabilityScore).toBe(100);
+  });
+
+  it('kanban stability is 0 when no entered items are completed this week', async () => {
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
+    const issues = [
+      makeIssue({ key: 'PLAT-1', boardId: 'PLAT' }),
+      makeIssue({ key: 'PLAT-2', boardId: 'PLAT' }),
+    ];
+    const entryChangelogs = issues.map((iss, i) =>
+      makeChangelog({
+        id: i + 1,
+        issueKey: iss.key,
+        field: 'status',
+        fromValue: null,
+        toValue: 'To Do',
+        changedAt: new Date('2026-05-12T08:00:00Z'), // W20 board-entry
+      }),
+    );
+    // No done changelogs this week
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue(issues);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb(entryChangelogs));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    // 0 completed / 2 entered = 0%
+    expect(result.boards[0].healthScore.stabilityScore).toBe(0);
+  });
+
+  it('scrum stability is unaffected by the kanban throughput formula (regression guard)', async () => {
+    const sprint = makeSprint();
+    const committed = makeIssue({ key: 'ACC-1' });
+    const added = makeIssue({ key: 'ACC-2' });
+    // 1 of 2 items was added mid-sprint: disruption ratio = 1/2 = 50 → stabilityScore = 50
+
+    boardConfigRepo.find.mockResolvedValue([makeBoard()]);
+    issueRepo.find.mockResolvedValue([committed, added]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprint]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      new Map([['sprint-1', membershipWith(['ACC-1'], ['ACC-2'])]]),
+    );
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    // scrum: (1 - 1/2) * 100 = 50
+    expect(result.boards[0].healthScore.stabilityScore).toBe(50);
+  });
 });

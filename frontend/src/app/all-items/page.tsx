@@ -202,7 +202,11 @@ function BoardCard({ board }: { board: AllItemsBoardResult }) {
           <div className="mt-0.5 text-muted">Roadmap</div>
         </div>
         <div className="px-3 py-2 text-center">
-          <Tooltip text="Stability: percentage of sprint items that were committed at sprint start (not added mid-sprint). 100% when no items were added mid-sprint.">
+          <Tooltip text={
+            board.boardType === 'kanban'
+              ? 'Stability (throughput balance): completed items ÷ items entered this week. 100% when the team completes as much as it pulls in.'
+              : 'Stability: percentage of sprint items that were committed at sprint start (not added mid-sprint). 100% when no items were added mid-sprint.'
+          }>
             <span className="font-medium underline decoration-dotted">
               {healthScore.stabilityScore}%
             </span>

@@ -367,7 +367,7 @@ export class AllItemsService {
     // Apply filters and build summary from the full (unfiltered) working set
     const filteredItems = this.applyFilters(items, filters);
     const summary = this.buildSummary(items);
-    const healthScore = this.calculateHealthScore(summary);
+    const healthScore = this.calculateHealthScore(summary, isKanban ? 'kanban' : 'scrum');
 
     return {
       boardId,
@@ -555,7 +555,10 @@ export class AllItemsService {
     };
   }
 
-  private calculateHealthScore(summary: AllItemsBoardSummary): BoardHealthScore {
+  private calculateHealthScore(
+    summary: AllItemsBoardSummary,
+    boardType: 'scrum' | 'kanban',
+  ): BoardHealthScore {
     const { totalItems, completedCount, onRoadmapCount, supportCount, addedMidSprintCount } = summary;
 
     if (totalItems === 0) {
@@ -568,7 +571,17 @@ export class AllItemsService {
         : Math.round((onRoadmapCount / completedCount) * 100);
 
     const supportBurdenScore = Math.round((1 - supportCount / totalItems) * 100);
-    const stabilityScore = Math.round((1 - addedMidSprintCount / totalItems) * 100);
+
+    // Stability:
+    // Scrum  — disruption ratio: penalises unplanned mid-sprint additions.
+    // Kanban — throughput balance: min(completed / entered, 1) * 100.
+    //          A kanban team is stable when it completes as much as it pulls in
+    //          (ADR 0062). Over-delivery is capped at 100 — clearing a backlog
+    //          is not penalised.
+    const stabilityScore =
+      boardType === 'kanban'
+        ? Math.round(Math.min(completedCount / totalItems, 1) * 100)
+        : Math.round((1 - addedMidSprintCount / totalItems) * 100);
 
     // Support burden is informational only — excluded from overall to avoid
     // penalising teams for support work they have no control over.
