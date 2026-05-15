@@ -69,4 +69,4 @@
 | [0065](0065-kanban-pulse-decouple-completed-from-entry-date.md) | Kanban Pulse Report: Decouple Completed Count from Working Set Entry Date | Accepted | 2026-05-15 |
 | [0066](0066-align-pulse-kanban-with-week-detail.md) | Align Pulse Kanban Metrics with Week Detail Report | Accepted | 2026-05-15 |
 | [0067](0067-kanban-backlog-membership-via-agile-api.md) | Kanban Backlog Membership via Jira Agile Backlog API | Accepted | 2026-05-15 |
-| [0068](0068-sync-deleted-jira-issues.md) | Sync Deleted Jira Issues: Reconcile DB Against JQL Response | Draft | 2026-05-15 |
+| [0068](0068-sync-deleted-jira-issues.md) | Sync Deleted Jira Issues: Reconcile DB Against JQL Response | Accepted | 2026-05-15 |

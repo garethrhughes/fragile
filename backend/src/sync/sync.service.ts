@@ -592,7 +592,6 @@ export class SyncService implements OnModuleInit {
    *
    * Without this guard, completed issues with no Sprint changelog were
    * falsely classified as "never boarded" once Jira stopped returning their
-   * sprint in the configured sprint field.
    * sprint in the configured sprint field (`sprintFieldId`).
    */
   private async persistIssueSprintMembership(

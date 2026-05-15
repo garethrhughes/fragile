@@ -603,8 +603,6 @@ export class PlanningService {
     const cancelledStatusesSet = new Set(
       (config.cancelledStatusNames ?? ['Cancelled', "Won't Do"]).map((s) => s.toLowerCase()),
     );
-    const backlogStatusIds: string[] = config.backlogStatusIds ?? [];
-
     // Shared board-entry status list (proposal 0066).
     const boardEntryStatuses: string[] = config.boardEntryStatuses ?? [...DEFAULT_BOARD_ENTRY_STATUSES];
     const boardEntryStatusSet = new Set(boardEntryStatuses.map((s) => s.toLowerCase()));
@@ -713,7 +711,6 @@ export class PlanningService {
         cancelledStatusesSet,
         boardEntryDateByKey,
         weekStart,
-        weekEnd,
       ).length;
 
       const deliveryRate =

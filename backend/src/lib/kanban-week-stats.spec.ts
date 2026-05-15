@@ -348,7 +348,6 @@ describe('getKanbanInFlight', () => {
       new Set(['cancelled']),
       boardEntryDateByKey,
       WEEK_START,
-      WEEK_END,
     );
 
     expect(result.map(i => i.key)).toEqual(['PLAT-1', 'PLAT-4']);
@@ -369,7 +368,6 @@ describe('getKanbanInFlight', () => {
       new Set(['cancelled']),
       entryDates,
       WEEK_START,
-      WEEK_END,
     );
 
     expect(result.map(i => i.key)).toEqual(['PLAT-1']); // PLAT-2 excluded — entered this week
@@ -385,7 +383,6 @@ describe('getKanbanInFlight', () => {
       new Set(['cancelled']),
       entryDates,
       WEEK_START,
-      WEEK_END,
     );
 
     expect(result).toHaveLength(0);
@@ -409,7 +406,6 @@ describe('getKanbanInFlight', () => {
       new Set(['cancelled']),
       entryDates,
       WEEK_START,
-      WEEK_END,
     );
 
     expect(result).toHaveLength(0);
@@ -433,7 +429,6 @@ describe('getKanbanInFlight', () => {
       new Set(['cancelled']),
       entryDates,
       WEEK_START,
-      WEEK_END,
     );
 
     expect(result).toHaveLength(3);

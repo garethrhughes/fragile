@@ -16,7 +16,6 @@ import {
 } from '../database/entities/index.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
-import { dateParts, startOfDayInTz } from '../metrics/tz-utils.js';
 import { isoWeekKeyToDates } from '../lib/iso-week.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
 import { extractCycles, resolveResetNames } from '../metrics/cycle.js';
@@ -560,13 +559,13 @@ export class WeekDetailService {
       cancelledStatusSet,
       boardEntryDateByKey,
       weekStart,
-      weekEnd,
     );
     const existingResultKeys = new Set(results.map((r) => r.key));
+    const resultsByKey = new Map(results.map((r) => [r.key, r]));
     for (const issue of inFlightIssues) {
       if (existingResultKeys.has(issue.key)) {
         // Mark the existing result as in-flight
-        const existing = results.find((r) => r.key === issue.key);
+        const existing = resultsByKey.get(issue.key);
         if (existing) existing.inFlight = true;
         continue;
       }

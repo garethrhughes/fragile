@@ -167,7 +167,6 @@ export function getKanbanInFlight(
   cancelledStatuses: Set<string>,    // must be pre-lowercased
   boardEntryDateByKey: Map<string, Date>,
   weekStart: Date,
-  weekEnd: Date,
 ): JiraIssue[] {
   return filteredIssues.filter((issue) => {
     if (doneStatuses.has(issue.status.toLowerCase())) return false;

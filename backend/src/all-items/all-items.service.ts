@@ -20,7 +20,6 @@ import {
 } from '../database/entities/index.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
-import { dateParts, startOfDayInTz } from '../metrics/tz-utils.js';
 import { isoWeekKeyToDates } from '../lib/iso-week.js';
 import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
 import {
@@ -483,17 +482,17 @@ export class AllItemsService {
         cancelledStatuses,
         kanbanBoardEntryDateByKey,
         weekStart,
-        weekEnd,
       );
       summary.inFlightCount = inFlightIssues.length;
 
       // Add in-flight issues to the item list if not already present
       // (an issue can be in-flight AND have entered this week — avoid duplicates).
       const existingKeys = new Set(items.map((i) => i.key));
+      const itemsByKey = new Map(items.map((i) => [i.key, i]));
       for (const issue of inFlightIssues) {
         if (existingKeys.has(issue.key)) {
           // Already in list as a working-set item — mark it inFlight=true
-          const existing = items.find((i) => i.key === issue.key);
+          const existing = itemsByKey.get(issue.key);
           if (existing) existing.inFlight = true;
           continue;
         }
