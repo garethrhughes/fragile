@@ -583,8 +583,13 @@ describe('SyncService', () => {
       // Should call getKanbanBacklog with the numeric board ID
       expect(jiraClient.getKanbanBacklog).toHaveBeenCalledWith('55', 0);
 
-      // Should mark backlog keys via createQueryBuilder
+      // Should mark backlog keys via createQueryBuilder using "key" (not "issueKey")
       expect(issueRepo.createQueryBuilder).toHaveBeenCalled();
+      const qb = (issueRepo.createQueryBuilder as jest.Mock).mock.results[0].value;
+      const whereCalls = (qb.where as jest.Mock).mock.calls;
+      expect(whereCalls.some((args: unknown[]) =>
+        typeof args[0] === 'string' && args[0].includes('"key"'),
+      )).toBe(true);
     });
 
     it('paginates getKanbanBacklog until all backlog keys are retrieved', async () => {

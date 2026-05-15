@@ -446,7 +446,7 @@ export class SyncService implements OnModuleInit {
         .createQueryBuilder()
         .update(JiraIssue)
         .set({ inBacklog: true })
-        .where('"issueKey" IN (:...keys)', { keys: backlogKeys })
+        .where('"key" IN (:...keys)', { keys: backlogKeys })
         .andWhere('"boardId" = :boardId', { boardId })
         .execute();
     }
