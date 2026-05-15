@@ -629,7 +629,160 @@ describe('SyncService', () => {
       expect(jiraClient.getKanbanBacklog).toHaveBeenNthCalledWith(2, '55', 100);
     });
 
-    it('does NOT call getKanbanBacklog for scrum boards', async () => {
+    // -----------------------------------------------------------------------
+    // Reconciliation / phantom-issue deletion (ADR 0064 / proposal 0068)
+    // -----------------------------------------------------------------------
+
+    it('deletes phantom issue from jira_issues when it is absent from the JQL response', async () => {
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardId: 'PLAT',
+        boardType: 'kanban',
+      } as BoardConfig);
+
+      jiraClient.getBoardsForProject.mockResolvedValue({
+        values: [{ id: 55, name: 'PLAT board', type: 'kanban' }],
+      } as never);
+
+      // JQL returns only PLAT-1; PLAT-1403 is the phantom
+      jiraClient.searchIssues.mockResolvedValue({
+        issues: [makeRawIssue('PLAT-1')],
+        nextPageToken: undefined,
+      } as never);
+
+      // DB currently holds PLAT-1 and the phantom PLAT-1403
+      issueRepo.find.mockResolvedValue([
+        { key: 'PLAT-1' },
+        { key: 'PLAT-1403' },
+      ] as JiraIssue[]);
+
+      jiraClient.getIssueChangelog.mockResolvedValue({ total: 0, maxResults: 100, values: [] } as never);
+      jiraClient.getProjectVersions.mockResolvedValue([]);
+      issueRepo.upsert.mockResolvedValue(undefined as never);
+      syncLogRepo.save.mockImplementation((log) => Promise.resolve(log as SyncLog));
+
+      await service.syncBoard('PLAT');
+
+      // issueRepo.delete should be called with only the phantom key
+      const deleteCalls = (issueRepo.delete as jest.Mock).mock.calls;
+      const phantomDeleteCall = deleteCalls.find(
+        (args: unknown[]) => Array.isArray(args[0]) && (args[0] as string[]).includes('PLAT-1403'),
+      );
+      expect(phantomDeleteCall).toBeDefined();
+    });
+
+    it('deletes phantom changelogs when a phantom issue is removed', async () => {
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardId: 'PLAT',
+        boardType: 'kanban',
+      } as BoardConfig);
+
+      jiraClient.getBoardsForProject.mockResolvedValue({
+        values: [{ id: 55, name: 'PLAT board', type: 'kanban' }],
+      } as never);
+
+      jiraClient.searchIssues.mockResolvedValue({
+        issues: [makeRawIssue('PLAT-1')],
+        nextPageToken: undefined,
+      } as never);
+
+      issueRepo.find.mockResolvedValue([
+        { key: 'PLAT-1' },
+        { key: 'PLAT-1403' },
+      ] as JiraIssue[]);
+
+      jiraClient.getIssueChangelog.mockResolvedValue({ total: 0, maxResults: 100, values: [] } as never);
+      jiraClient.getProjectVersions.mockResolvedValue([]);
+      issueRepo.upsert.mockResolvedValue(undefined as never);
+      syncLogRepo.save.mockImplementation((log) => Promise.resolve(log as SyncLog));
+
+      await service.syncBoard('PLAT');
+
+      // changelogRepo.delete should be called for the phantom key
+      const deleteCalls = (changelogRepo.delete as jest.Mock).mock.calls;
+      const cascadeDeleteCall = deleteCalls.find(
+        (args: unknown[]) => {
+          const arg = args[0] as Record<string, unknown>;
+          return arg && 'issueKey' in arg;
+        },
+      );
+      expect(cascadeDeleteCall).toBeDefined();
+    });
+
+    it('deletes phantom issue links when a phantom issue is removed', async () => {
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardId: 'PLAT',
+        boardType: 'kanban',
+      } as BoardConfig);
+
+      jiraClient.getBoardsForProject.mockResolvedValue({
+        values: [{ id: 55, name: 'PLAT board', type: 'kanban' }],
+      } as never);
+
+      jiraClient.searchIssues.mockResolvedValue({
+        issues: [makeRawIssue('PLAT-1')],
+        nextPageToken: undefined,
+      } as never);
+
+      issueRepo.find.mockResolvedValue([
+        { key: 'PLAT-1' },
+        { key: 'PLAT-1403' },
+      ] as JiraIssue[]);
+
+      jiraClient.getIssueChangelog.mockResolvedValue({ total: 0, maxResults: 100, values: [] } as never);
+      jiraClient.getProjectVersions.mockResolvedValue([]);
+      issueRepo.upsert.mockResolvedValue(undefined as never);
+      syncLogRepo.save.mockImplementation((log) => Promise.resolve(log as SyncLog));
+
+      await service.syncBoard('PLAT');
+
+      // issueLinkRepo.delete should be called with the phantom key in a cascade delete
+      const deleteCalls = (issueLinkRepo.delete as jest.Mock).mock.calls;
+      const cascadeDeleteCall = deleteCalls.find(
+        (args: unknown[]) => {
+          const arg = args[0] as Record<string, unknown>;
+          return arg && 'sourceIssueKey' in arg;
+        },
+      );
+      expect(cascadeDeleteCall).toBeDefined();
+    });
+
+    it('does not call phantom deletion when all DB issues are returned by JQL', async () => {
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardId: 'PLAT',
+        boardType: 'kanban',
+      } as BoardConfig);
+
+      jiraClient.getBoardsForProject.mockResolvedValue({
+        values: [{ id: 55, name: 'PLAT board', type: 'kanban' }],
+      } as never);
+
+      jiraClient.searchIssues.mockResolvedValue({
+        issues: [makeRawIssue('PLAT-1'), makeRawIssue('PLAT-2')],
+        nextPageToken: undefined,
+      } as never);
+
+      // DB holds exactly the same two issues — no phantoms
+      issueRepo.find.mockResolvedValue([
+        { key: 'PLAT-1' },
+        { key: 'PLAT-2' },
+      ] as JiraIssue[]);
+
+      jiraClient.getIssueChangelog.mockResolvedValue({ total: 0, maxResults: 100, values: [] } as never);
+      jiraClient.getProjectVersions.mockResolvedValue([]);
+      issueRepo.upsert.mockResolvedValue(undefined as never);
+      syncLogRepo.save.mockImplementation((log) => Promise.resolve(log as SyncLog));
+
+      await service.syncBoard('PLAT');
+
+      // issueRepo.delete should NOT have been called with an array (phantom-issue path)
+      const deleteCalls = (issueRepo.delete as jest.Mock).mock.calls;
+      const phantomDeleteCall = deleteCalls.find(
+        (args: unknown[]) => Array.isArray(args[0]),
+      );
+      expect(phantomDeleteCall).toBeUndefined();
+    });
+
+    it('does NOT perform reconciliation for scrum boards', async () => {
       boardConfigRepo.findOne.mockResolvedValue({
         boardId: 'ACC',
         boardType: 'scrum',
@@ -644,9 +797,20 @@ describe('SyncService', () => {
       jiraClient.getProjectVersions.mockResolvedValue([]);
       syncLogRepo.save.mockImplementation((log) => Promise.resolve(log as SyncLog));
 
+      // issueRepo.find is used to query DB keys for reconciliation — should not be called for scrum
+      issueRepo.find.mockResolvedValue([]);
+
       await service.syncBoard('ACC');
 
-      expect(jiraClient.getKanbanBacklog).not.toHaveBeenCalled();
+      // issueRepo.find should NOT have been called with a boardId-scoped query for reconciliation
+      const findCalls = (issueRepo.find as jest.Mock).mock.calls;
+      const reconciliationQuery = findCalls.find(
+        (args: unknown[]) => {
+          const opts = args[0] as Record<string, unknown> | undefined;
+          return opts && 'select' in opts;
+        },
+      );
+      expect(reconciliationQuery).toBeUndefined();
     });
   });
 

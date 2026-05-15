@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
 import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, QueryRunner, Repository } from 'typeorm';
+import { DataSource, In, QueryRunner, Repository } from 'typeorm';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import { ConfigService } from '@nestjs/config';
@@ -455,7 +455,56 @@ export class SyncService implements OnModuleInit {
       `Backlog sync for ${boardId}: ${backlogKeys.length} issues in backlog`,
     );
 
+    // -----------------------------------------------------------------------
+    // Reconciliation — delete phantom issues (ADR 0064 / proposal 0068)
+    //
+    // The JQL fetch above returns every current issue for this board.
+    // Any key present in the DB but absent from the response was deleted in
+    // Jira and must be removed along with all cascade-dependent rows.
+    // -----------------------------------------------------------------------
+    await this.reconcileDeletedKanbanIssues(boardId, allIssues.map((i) => i.key));
+
     return allIssues;
+  }
+
+  /**
+   * Compare the set of keys returned by the kanban JQL scan against all keys
+   * currently stored in the DB for the board.  Hard-delete any key that is
+   * present in the DB but absent from the JQL response (i.e. the issue was
+   * deleted in Jira).
+   *
+   * Cascade deletes are performed explicitly because the related tables have
+   * no FK constraints to jira_issues:
+   *   - jira_changelogs  (issueKey)
+   *   - jira_issue_links (sourceIssueKey)
+   *   - jira_issue_sprints (issueKey)
+   */
+  private async reconcileDeletedKanbanIssues(
+    boardId: string,
+    returnedKeys: string[],
+  ): Promise<void> {
+    const dbIssues = await this.issueRepo.find({
+      where: { boardId },
+      select: ['key'],
+    });
+
+    const returnedKeySet = new Set(returnedKeys);
+    const deletedKeys = dbIssues
+      .map((i) => i.key)
+      .filter((k) => !returnedKeySet.has(k));
+
+    if (deletedKeys.length === 0) return;
+
+    this.logger.log(
+      `Reconciliation for ${boardId}: deleting ${deletedKeys.length} phantom issue(s): ${deletedKeys.join(', ')}`,
+    );
+
+    // Cascade deletes — must happen before the issue row is removed so that
+    // callers that inspect deleted rows can still identify the source issue.
+    await this.changelogRepo.delete({ issueKey: In(deletedKeys) });
+    await this.issueLinkRepo.delete({ sourceIssueKey: In(deletedKeys) });
+    await this.issueSprintRepo.delete({ issueKey: In(deletedKeys) });
+    await this.issueRepo.delete(deletedKeys);
   }
 
   /**

@@ -1,7 +1,7 @@
 # 0068 — Sync Deleted Jira Issues: Reconcile DB Against JQL Response
 
 **Date:** 2026-05-15
-**Status:** Draft
+**Status:** Accepted
 **Author:** Architect Agent
 **Related ADRs:** ADR 0048 (Sync includes cancelled issues)
 
