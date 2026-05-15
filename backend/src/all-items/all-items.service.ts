@@ -367,6 +367,28 @@ export class AllItemsService {
     // Apply filters and build summary from the full (unfiltered) working set
     const filteredItems = this.applyFilters(items, filters);
     const summary = this.buildSummary(items);
+
+    // Kanban fix (proposal 0065): completedCount and onRoadmapCount must be
+    // computed over ALL board issues that completed this week — not just those
+    // whose board-entry fell within the week. Most kanban items complete in a
+    // later week than they entered.
+    if (isKanban) {
+      let kanbanCompletedCount = 0;
+      let kanbanOnRoadmapCount = 0;
+      for (const issue of allBoardIssues) {
+        const statusLogs = statusChangelogsByIssue.get(issue.key) ?? [];
+        const completedAt = this.detectCompletionDate(statusLogs, doneStatuses, weekStart, weekEnd);
+        if (completedAt !== null) {
+          kanbanCompletedCount++;
+          if (this.classifyRoadmap(issue, completedAt, epicIdeaMap, directLinkIdeaMap)) {
+            kanbanOnRoadmapCount++;
+          }
+        }
+      }
+      summary.completedCount = kanbanCompletedCount;
+      summary.onRoadmapCount = kanbanOnRoadmapCount;
+    }
+
     const healthScore = this.calculateHealthScore(summary, isKanban ? 'kanban' : 'scrum');
 
     return {

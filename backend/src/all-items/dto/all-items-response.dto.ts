@@ -81,7 +81,17 @@ export interface AllItemsBoardSummary {
   totalItems: number;
   startedCount: number;
   addedMidSprintCount: number;
+  /**
+   * Scrum: items in the sprint working set that transitioned to Done within the week.
+   * Kanban: ALL board issues that transitioned to Done within the week — independent
+   * of whether they entered the board this week or in a prior week (proposal 0065).
+   */
   completedCount: number;
+  /**
+   * Scrum: completed items in the sprint working set that are roadmap-aligned.
+   * Kanban: board-wide completed items (same set as completedCount) that are
+   * roadmap-aligned.
+   */
   onRoadmapCount: number;
   supportCount: number;
   ttbSupportCount: number;

@@ -1041,4 +1041,169 @@ describe('AllItemsService', () => {
     // scrum: (1 - 1/2) * 100 = 50
     expect(result.boards[0].healthScore.stabilityScore).toBe(50);
   });
+
+  // -------------------------------------------------------------------------
+  // Kanban completedCount: decoupled from board-entry working set (proposal 0065)
+  // -------------------------------------------------------------------------
+
+  it('kanban completedCount includes items that entered the board in a prior week but completed this week', async () => {
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
+    // 2 items entered this week (working set), 3 items entered prior weeks
+    const enteredThisWeek = [
+      makeIssue({ key: 'PLAT-1', boardId: 'PLAT' }),
+      makeIssue({ key: 'PLAT-2', boardId: 'PLAT' }),
+    ];
+    const enteredPriorWeeks = [
+      makeIssue({ key: 'PLAT-3', boardId: 'PLAT' }),
+      makeIssue({ key: 'PLAT-4', boardId: 'PLAT' }),
+      makeIssue({ key: 'PLAT-5', boardId: 'PLAT' }),
+    ];
+    const allIssues = [...enteredThisWeek, ...enteredPriorWeeks];
+
+    // Board-entry changelogs: PLAT-1 & PLAT-2 entered this week; PLAT-3/4/5 entered prior week
+    const entryThisWeekCls = enteredThisWeek.map((iss, i) =>
+      makeChangelog({
+        id: i + 1,
+        issueKey: iss.key,
+        field: 'status',
+        fromValue: null,
+        toValue: 'To Do',
+        changedAt: new Date('2026-05-12T08:00:00Z'), // W20
+      }),
+    );
+    const entryPriorWeekCls = enteredPriorWeeks.map((iss, i) =>
+      makeChangelog({
+        id: i + 10,
+        issueKey: iss.key,
+        field: 'status',
+        fromValue: null,
+        toValue: 'To Do',
+        changedAt: new Date('2026-05-01T08:00:00Z'), // W18 — prior week
+      }),
+    );
+
+    // Done changelogs: PLAT-1, PLAT-3, PLAT-4, PLAT-5 all complete this week
+    // (PLAT-2 is NOT completed)
+    const doneCls = ['PLAT-1', 'PLAT-3', 'PLAT-4', 'PLAT-5'].map((key, i) =>
+      makeChangelog({
+        id: i + 20,
+        issueKey: key,
+        field: 'status',
+        fromValue: 'In Progress',
+        toValue: 'Done',
+        changedAt: new Date('2026-05-14T15:00:00Z'), // W20 completion
+      }),
+    );
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue(allIssues);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(
+      makeQb([...entryThisWeekCls, ...entryPriorWeekCls, ...doneCls]),
+    );
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    // totalItems = 2 (only those that entered this week)
+    expect(result.boards[0].summary.totalItems).toBe(2);
+    // completedCount = 4 (all items that completed this week, regardless of entry date)
+    expect(result.boards[0].summary.completedCount).toBe(4);
+  });
+
+  it('kanban stabilityScore uses board-wide completedCount as numerator', async () => {
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
+    // 5 items entered this week, 3 items from prior weeks also completed this week
+    const enteredThisWeek = Array.from({ length: 5 }, (_, i) =>
+      makeIssue({ key: `PLAT-${i + 1}`, boardId: 'PLAT' }),
+    );
+    const fromPriorWeek = Array.from({ length: 3 }, (_, i) =>
+      makeIssue({ key: `PLAT-${i + 10}`, boardId: 'PLAT' }),
+    );
+    const allIssues = [...enteredThisWeek, ...fromPriorWeek];
+
+    const entryThisWeekCls = enteredThisWeek.map((iss, i) =>
+      makeChangelog({
+        id: i + 1,
+        issueKey: iss.key,
+        field: 'status',
+        fromValue: null,
+        toValue: 'To Do',
+        changedAt: new Date('2026-05-12T08:00:00Z'), // W20
+      }),
+    );
+    const entryPriorCls = fromPriorWeek.map((iss, i) =>
+      makeChangelog({
+        id: i + 20,
+        issueKey: iss.key,
+        field: 'status',
+        fromValue: null,
+        toValue: 'To Do',
+        changedAt: new Date('2026-04-28T08:00:00Z'), // prior week
+      }),
+    );
+
+    // 3 items from prior weeks complete this week (PLAT-10, PLAT-11, PLAT-12)
+    const doneCls = fromPriorWeek.map((iss, i) =>
+      makeChangelog({
+        id: i + 30,
+        issueKey: iss.key,
+        field: 'status',
+        fromValue: 'In Progress',
+        toValue: 'Done',
+        changedAt: new Date('2026-05-13T15:00:00Z'), // W20 completion
+      }),
+    );
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue(allIssues);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(
+      makeQb([...entryThisWeekCls, ...entryPriorCls, ...doneCls]),
+    );
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    // totalItems = 5 (entered this week), completedCount = 3 (done this week board-wide)
+    expect(result.boards[0].summary.totalItems).toBe(5);
+    expect(result.boards[0].summary.completedCount).toBe(3);
+    // stabilityScore = min(3/5, 1) * 100 = 60
+    expect(result.boards[0].healthScore.stabilityScore).toBe(60);
+  });
+
+  it('scrum completedCount is NOT affected by the kanban fix (regression guard)', async () => {
+    const sprint = makeSprint();
+    // 2 committed issues, 1 completes this week
+    const issue1 = makeIssue({ key: 'ACC-1' });
+    const issue2 = makeIssue({ key: 'ACC-2' });
+    const doneCl = makeChangelog({
+      issueKey: 'ACC-1',
+      field: 'status',
+      fromValue: 'In Progress',
+      toValue: 'Done',
+      changedAt: new Date('2026-05-13T14:00:00Z'), // W20
+    });
+
+    boardConfigRepo.find.mockResolvedValue([makeBoard()]);
+    issueRepo.find.mockResolvedValue([issue1, issue2]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprint]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      new Map([['sprint-1', membershipWith(['ACC-1', 'ACC-2'])]]),
+    );
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([doneCl]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    // Only 1 issue completed within the sprint working set
+    expect(result.boards[0].summary.completedCount).toBe(1);
+    expect(result.boards[0].summary.totalItems).toBe(2);
+  });
 });
