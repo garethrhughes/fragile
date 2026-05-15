@@ -411,7 +411,6 @@ export class SyncService implements OnModuleInit {
       allIssues.push(...issues);
       allRawIssues.push(...response.issues);
       nextPageToken = response.nextPageToken;
-      if (allIssues.length >= 1000) break;
     } while (nextPageToken);
 
     if (allIssues.length > 0) {
