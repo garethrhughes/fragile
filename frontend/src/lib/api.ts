@@ -353,6 +353,7 @@ export interface KanbanWeekSummary {
   issuesPulledIn: number
   completed: number
   addedMidWeek: number
+  inFlightCount: number
   pointsIn: number
   pointsDone: number
   deliveryRate: number

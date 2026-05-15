@@ -16,9 +16,10 @@ import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { dateParts, midnightInTz } from '../metrics/tz-utils.js';
 import { dateToIsoWeekKey, isoWeekKeyToDates } from '../lib/iso-week.js';
 import {
-  buildKanbanBoardEntryDateMap,
   filterKanbanIssues,
   getKanbanCompletedThisWeek,
+  getKanbanInFlight,
+  buildKanbanBoardEntryDateMap,
   DEFAULT_BOARD_ENTRY_STATUSES,
 } from '../lib/kanban-week-stats.js';
 import {
@@ -72,6 +73,7 @@ export interface KanbanWeekSummary {
   issuesPulledIn: number;
   completed: number;
   addedMidWeek: number;   // board entry date is > 1 day after week start
+  inFlightCount: number;  // on-board issues not done/cancelled, entered before this week
   pointsIn: number;
   pointsDone: number;
   deliveryRate: number;   // 0-100
@@ -598,6 +600,9 @@ export class PlanningService {
 
     const doneStatuses: string[] = config.doneStatusNames ?? ['Done', 'Closed', 'Released'];
     const doneStatusesSet = new Set(doneStatuses.map((s) => s.toLowerCase()));
+    const cancelledStatusesSet = new Set(
+      (config.cancelledStatusNames ?? ['Cancelled', "Won't Do"]).map((s) => s.toLowerCase()),
+    );
     const backlogStatusIds: string[] = config.backlogStatusIds ?? [];
 
     // Shared board-entry status list (proposal 0066).
@@ -701,6 +706,16 @@ export class PlanningService {
         return entryDate > gracePeriodEnd;
       }).length;
 
+      // inFlight: on-board issues not done/cancelled, entered before this week
+      const inFlightCount = getKanbanInFlight(
+        boundedIssuesWeeks,
+        doneStatusesSet,
+        cancelledStatusesSet,
+        boardEntryDateByKey,
+        weekStart,
+        weekEnd,
+      ).length;
+
       const deliveryRate =
         issuesPulledIn > 0
           ? Math.round((completed / issuesPulledIn) * 10000) / 100
@@ -713,6 +728,7 @@ export class PlanningService {
         issuesPulledIn,
         completed,
         addedMidWeek,
+        inFlightCount,
         pointsIn,
         pointsDone,
         deliveryRate,
