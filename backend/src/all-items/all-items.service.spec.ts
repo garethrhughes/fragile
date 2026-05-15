@@ -1176,8 +1176,7 @@ describe('AllItemsService', () => {
     expect(result.boards[0].healthScore.stabilityScore).toBe(60);
   });
 
-  it('scrum completedCount is NOT affected by the kanban fix (regression guard)', async () => {
-    const sprint = makeSprint();
+  it('scrum completedCount is NOT affected by the kanban fix (regression guard)', async () => {    const sprint = makeSprint();
     // 2 committed issues, 1 completes this week
     const issue1 = makeIssue({ key: 'ACC-1' });
     const issue2 = makeIssue({ key: 'ACC-2' });
@@ -1204,6 +1203,63 @@ describe('AllItemsService', () => {
 
     // Only 1 issue completed within the sprint working set
     expect(result.boards[0].summary.completedCount).toBe(1);
+    expect(result.boards[0].summary.totalItems).toBe(2);
+  });
+
+  it('kanban completedCount excludes cancelled issues even if they transitioned through Done', async () => {
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
+    // 2 items entered this week; 1 extra issue entered a prior week
+    const enteredThisWeek1 = makeIssue({ key: 'PLAT-1', boardId: 'PLAT', status: 'Done' });
+    const enteredThisWeek2 = makeIssue({ key: 'PLAT-2', boardId: 'PLAT', status: 'Done' });
+    // This issue was moved to Done then Cancelled — should NOT be counted
+    const cancelledIssue = makeIssue({ key: 'PLAT-3', boardId: 'PLAT', status: 'Cancelled' });
+
+    const entryThisWeekCls = [enteredThisWeek1, enteredThisWeek2].map((iss, i) =>
+      makeChangelog({
+        id: i + 1,
+        issueKey: iss.key,
+        field: 'status',
+        fromValue: null,
+        toValue: 'To Do',
+        changedAt: new Date('2026-05-12T08:00:00Z'), // W20 board-entry
+      }),
+    );
+    const entryPriorCl = makeChangelog({
+      id: 10,
+      issueKey: 'PLAT-3',
+      field: 'status',
+      fromValue: null,
+      toValue: 'To Do',
+      changedAt: new Date('2026-05-01T08:00:00Z'), // prior week
+    });
+
+    // All 3 transitioned through Done this week (simulating Jira workflow Done → Cancelled)
+    const doneCls = [enteredThisWeek1, enteredThisWeek2, cancelledIssue].map((iss, i) =>
+      makeChangelog({
+        id: i + 20,
+        issueKey: iss.key,
+        field: 'status',
+        fromValue: 'In Progress',
+        toValue: 'Done',
+        changedAt: new Date('2026-05-14T10:00:00Z'), // W20
+      }),
+    );
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue([enteredThisWeek1, enteredThisWeek2, cancelledIssue]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(
+      makeQb([...entryThisWeekCls, entryPriorCl, ...doneCls]),
+    );
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    // totalItems = 2 (entered this week, excluding cancelled)
+    // completedCount = 2 (PLAT-1 and PLAT-2 only — PLAT-3 cancelled, excluded)
+    expect(result.boards[0].summary.completedCount).toBe(2);
     expect(result.boards[0].summary.totalItems).toBe(2);
   });
 });

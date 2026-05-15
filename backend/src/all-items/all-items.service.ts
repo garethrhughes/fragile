@@ -132,6 +132,9 @@ export class AllItemsService {
     const boardId = config.boardId;
     const isKanban = config.boardType === 'kanban';
     const doneStatuses = new Set(config.doneStatusNames ?? ['Done', 'Closed', 'Released']);
+    const cancelledStatuses = new Set(
+      config.cancelledStatusNames ?? ['Cancelled', "Won't Do"],
+    );
     const inProgressStatuses = new Set(config.inProgressStatusNames ?? ['In Progress']);
     const boardEntryStatuses = new Set(
       (config.boardEntryStatuses ?? ['To Do']).map((s) => s.toLowerCase()),
@@ -185,7 +188,9 @@ export class AllItemsService {
 
     if (isKanban) {
       // Kanban: include only issues whose board-entry date is within the week.
+      // Cancelled issues are excluded — consistent with all other services.
       workingSet = allBoardIssues.filter((issue) => {
+        if (cancelledStatuses.has(issue.status)) return false;
         const statusLogs = statusChangelogsByIssue.get(issue.key) ?? [];
         const entryDate = this.detectBoardEntryDate(statusLogs, boardEntryStatuses);
         return entryDate !== null && entryDate >= weekStart && entryDate <= weekEnd;
@@ -376,6 +381,8 @@ export class AllItemsService {
       let kanbanCompletedCount = 0;
       let kanbanOnRoadmapCount = 0;
       for (const issue of allBoardIssues) {
+        // Exclude cancelled issues — consistent with all other services.
+        if (cancelledStatuses.has(issue.status)) continue;
         const statusLogs = statusChangelogsByIssue.get(issue.key) ?? [];
         const completedAt = this.detectCompletionDate(statusLogs, doneStatuses, weekStart, weekEnd);
         if (completedAt !== null) {
