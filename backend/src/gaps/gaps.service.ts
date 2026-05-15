@@ -423,8 +423,16 @@ export class GapsService {
         // placed into a sprint at creation time. Also covers the case where
         // sprint changelogs exist but ALL are after resolvedAt (issue was already
         // in a sprint at resolution time via direct placement, then moved later).
-        // If the issue has a JiraIssueSprint row, it was in a sprint.
-        if (!inSprint && issueHasAnySprintMembership.has(issue.key)) {
+        //
+        // Only apply this fallback when the replay loop didn't process any
+        // changelogs — i.e. either no sprint logs exist, or all of them are
+        // after resolvedAt. If the loop DID process logs and concluded
+        // inSprint=false, the issue was explicitly removed from sprints before
+        // resolution and is genuinely unplanned.
+        const replayProcessedAnyLog = sprintLogs.some(
+          (cl) => cl.changedAt <= resolvedAt,
+        );
+        if (!inSprint && !replayProcessedAnyLog && issueHasAnySprintMembership.has(issue.key)) {
           inSprint = true;
         }
 
