@@ -153,3 +153,25 @@ export function getKanbanCompletedThisWeek(
     );
   });
 }
+
+// ---------------------------------------------------------------------------
+// getKanbanInFlight
+//
+// Returns all issues in the filtered pool whose current status is neither a
+// done status nor a cancelled status. These are issues currently being worked
+// on — a board-state snapshot, independent of the week window.
+//
+// Both doneStatuses and cancelledStatuses must be pre-lowercased by the caller.
+// ---------------------------------------------------------------------------
+
+export function getKanbanInFlight(
+  filteredIssues: JiraIssue[],
+  doneStatuses: Set<string>,      // must be pre-lowercased
+  cancelledStatuses: Set<string>, // must be pre-lowercased
+): JiraIssue[] {
+  return filteredIssues.filter(
+    (issue) =>
+      !doneStatuses.has(issue.status.toLowerCase()) &&
+      !cancelledStatuses.has(issue.status.toLowerCase()),
+  );
+}

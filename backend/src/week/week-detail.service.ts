@@ -23,6 +23,7 @@ import {
   buildKanbanBoardEntryDateMap,
   filterKanbanIssues,
   getKanbanCompletedThisWeek,
+  getKanbanInFlight,
   DEFAULT_BOARD_ENTRY_STATUSES,
 } from '../lib/kanban-week-stats.js';
 
@@ -98,6 +99,12 @@ export interface WeekDetailIssue {
 
   /** Deep link to the issue in Jira Cloud, or empty string if not configured */
   jiraUrl: string;
+
+  /**
+   * True if the issue is currently in-flight on the board — it has entered
+   * the board but is not in a done or cancelled status.
+   */
+  inFlight: boolean;
 }
 
 export interface WeekDetailSummary {
@@ -112,6 +119,8 @@ export interface WeekDetailSummary {
   medianCycleTimeDays: number | null;
   /** Issues whose representative cycle is a reopen (proposal 0054 AC C). */
   reopenedIssueCount: number;
+  /** Count of on-board issues currently in-flight (not done, not cancelled). */
+  inFlightCount: number;
 }
 
 export interface WeekDetailBoardConfig {
@@ -490,6 +499,7 @@ export class WeekDetailService {
         cycleTimeDays,
         isReopen,
         jiraUrl,
+        inFlight: false, // set to true below for issues that are currently in-flight
       });
     }
 
@@ -544,6 +554,55 @@ export class WeekDetailService {
         cycleTimeDays: null,
         isReopen: false,
         jiraUrl,
+        inFlight: false,
+      });
+    }
+
+    // -----------------------------------------------------------------------
+    // Step 8c — In-flight issues
+    //
+    // Issues currently on the board that are not done and not cancelled.
+    // Added to the results list if not already present (some in-flight issues
+    // may have entered the board this week and already be in weekIssues).
+    // -----------------------------------------------------------------------
+    const cancelledStatusSet = new Set(cancelledStatusNames.map((s) => s.toLowerCase()));
+    const inFlightIssues = getKanbanInFlight(
+      startBoundedIssues,
+      doneStatusesSet,
+      cancelledStatusSet,
+    );
+    const existingResultKeys = new Set(results.map((r) => r.key));
+    for (const issue of inFlightIssues) {
+      if (existingResultKeys.has(issue.key)) {
+        // Mark the existing result as in-flight
+        const existing = results.find((r) => r.key === issue.key);
+        if (existing) existing.inFlight = true;
+        continue;
+      }
+      const boardEntryDate = boardEntryDateByKey.get(issue.key) ?? issue.createdAt;
+      const jiraBaseUrl = this.configService.get<string>('JIRA_BASE_URL', '');
+      const jiraUrl = jiraBaseUrl ? `${jiraBaseUrl}/browse/${issue.key}` : '';
+      results.push({
+        key: issue.key,
+        summary: issue.summary,
+        issueType: issue.issueType,
+        priority: issue.priority ?? null,
+        status: issue.status,
+        points: issue.points ?? null,
+        epicKey: issue.epicKey ?? null,
+        assignedWeek: week,
+        completedInWeek: false,
+        addedMidWeek: false,
+        roadmapStatus: 'none',
+        roadmapLinkSource: null,
+        isIncident: false,
+        isFailure: false,
+        labels: Array.isArray(issue.labels) ? (issue.labels as string[]) : [],
+        boardEntryDate: boardEntryDate.toISOString(),
+        cycleTimeDays: null,
+        isReopen: false,
+        jiraUrl,
+        inFlight: true,
       });
     }
 
@@ -574,6 +633,7 @@ export class WeekDetailService {
         .reduce((s, r) => s + (r.points ?? 0), 0),
       medianCycleTimeDays,
       reopenedIssueCount: results.filter((r) => r.isReopen).length,
+      inFlightCount: inFlightIssues.length,
     };
 
     // -----------------------------------------------------------------------
@@ -670,6 +730,7 @@ export class WeekDetailService {
         completedPoints: 0,
         medianCycleTimeDays: null,
         reopenedIssueCount: 0,
+        inFlightCount: 0,
       },
       issues: [],
       boardConfig: {

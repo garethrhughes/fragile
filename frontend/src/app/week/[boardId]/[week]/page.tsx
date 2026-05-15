@@ -170,6 +170,19 @@ function buildColumns(): Column<WeekDetailIssue>[] {
         ),
     },
     {
+      key: 'inFlight',
+      label: 'In Flight',
+      sortable: true,
+      render: (value) =>
+        value ? (
+          <span className="inline-flex items-center gap-1 rounded-md bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+            ⟳ In Flight
+          </span>
+        ) : (
+          <span className="text-muted">—</span>
+        ),
+    },
+    {
       key: 'roadmapStatus',
       label: 'Roadmap',
       sortable: true,
@@ -241,6 +254,7 @@ function rowClassName(row: WeekDetailIssue): string {
   if (row.isIncident) return 'bg-red-50 dark:bg-red-950/20'
   if (row.isFailure) return 'bg-orange-50 dark:bg-orange-950/20'
   if (row.completedInWeek) return 'bg-green-50 dark:bg-green-950/20'
+  if (row.inFlight) return 'bg-blue-50 dark:bg-blue-950/20'
   return ''
 }
 
@@ -406,6 +420,11 @@ export default function WeekDetailPage() {
           label="Completed"
           value={summary.completedIssues}
           highlight={summary.completedIssues > 0 ? 'good' : 'none'}
+        />
+        <StatChip
+          label="In Flight"
+          value={summary.inFlightCount}
+          highlight={summary.inFlightCount > 0 ? 'none' : 'none'}
         />
         <StatChip
           label="Roadmap-Linked"

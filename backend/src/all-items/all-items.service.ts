@@ -31,6 +31,7 @@ import {
   filterKanbanIssues,
   getKanbanPulledIn,
   getKanbanCompletedThisWeek,
+  getKanbanInFlight,
   DEFAULT_BOARD_ENTRY_STATUSES,
 } from '../lib/kanban-week-stats.js';
 import type {
@@ -95,7 +96,7 @@ export class AllItemsService {
         weekStart: weekStart.toISOString(),
         weekEnd: weekEnd.toISOString(),
         boards: [],
-        totals: { totalItems: 0, startedCount: 0, addedMidSprintCount: 0, completedCount: 0, onRoadmapCount: 0, supportCount: 0, ttbSupportCount: 0 },
+        totals: { totalItems: 0, startedCount: 0, addedMidSprintCount: 0, completedCount: 0, onRoadmapCount: 0, supportCount: 0, ttbSupportCount: 0, inFlightCount: 0 },
         overallScore: 100,
       };
     }
@@ -400,6 +401,7 @@ export class AllItemsService {
         onRoadmap,
         isSupport,
         isTtbSupport,
+        inFlight: false, // set correctly for kanban after the completion scan
       });
     }
 
@@ -484,6 +486,54 @@ export class AllItemsService {
           onRoadmap,
           isSupport,
           isTtbSupport: false,
+          inFlight: false,
+        });
+      }
+
+      // In-flight: all on-board issues that are not done and not cancelled.
+      // This is a board-state snapshot — independent of the week window.
+      const inFlightIssues = getKanbanInFlight(
+        filteredBoardIssues,
+        doneStatuses,
+        cancelledStatuses,
+      );
+      summary.inFlightCount = inFlightIssues.length;
+
+      // Add in-flight issues to the item list if not already present
+      // (an issue can be in-flight AND have entered this week — avoid duplicates).
+      const existingKeys = new Set(items.map((i) => i.key));
+      for (const issue of inFlightIssues) {
+        if (existingKeys.has(issue.key)) {
+          // Already in list as a working-set item — mark it inFlight=true
+          const existing = items.find((i) => i.key === issue.key);
+          if (existing) existing.inFlight = true;
+          continue;
+        }
+        const isSupport =
+          (config.supportEpics ?? []).some((e) => issue.epicKey?.toUpperCase() === e.toUpperCase()) ||
+          (config.supportLabels ?? []).some(
+            (l) => (Array.isArray(issue.labels) ? (issue.labels as string[]) : []).includes(l),
+          );
+        items.push({
+          key: issue.key,
+          summary: issue.summary,
+          issueType: issue.issueType,
+          status: issue.status,
+          boardId,
+          assignee: issue.assignee ?? null,
+          points: issue.points ?? null,
+          labels: Array.isArray(issue.labels) ? (issue.labels as string[]) : [],
+          jiraUrl: this.jiraBaseUrl ? `${this.jiraBaseUrl}/browse/${issue.key}` : '',
+          epicKey: issue.epicKey ?? null,
+          sprintName: null,
+          started: false,
+          addedMidSprint: false,
+          kanbanAdd: false,
+          completed: false,
+          onRoadmap: false,
+          isSupport,
+          isTtbSupport: false,
+          inFlight: true,
         });
       }
     }
@@ -677,6 +727,7 @@ export class AllItemsService {
       onRoadmapCount: items.filter((i) => i.onRoadmap).length,
       supportCount: items.filter((i) => i.isSupport).length,
       ttbSupportCount: items.filter((i) => i.isTtbSupport).length,
+      inFlightCount: 0, // overridden for kanban boards after in-flight scan
     };
   }
 
@@ -728,6 +779,7 @@ export class AllItemsService {
       onRoadmapCount: 0,
       supportCount: 0,
       ttbSupportCount: 0,
+      inFlightCount: 0,
     };
     for (const board of boards) {
       totals.totalItems += board.summary.totalItems;
@@ -737,6 +789,7 @@ export class AllItemsService {
       totals.onRoadmapCount += board.summary.onRoadmapCount;
       totals.supportCount += board.summary.supportCount;
       totals.ttbSupportCount += board.summary.ttbSupportCount;
+      totals.inFlightCount += board.summary.inFlightCount;
     }
     return totals;
   }
@@ -838,6 +891,7 @@ export class AllItemsService {
       onRoadmapCount: 0,
       supportCount: 0,
       ttbSupportCount: 0,
+      inFlightCount: 0,
     };
     return {
       boardId,

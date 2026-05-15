@@ -531,12 +531,12 @@ describe('AllItemsService', () => {
   // Kanban: working set is board-entry-in-week only
   // -------------------------------------------------------------------------
 
-  it('includes only kanban issues whose board-entry date is within the week', async () => {
+  it('includes only kanban issues whose board-entry date is within the week in working set (totalItems)', async () => {
     const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
     // 3 issues: one entered this week, one entered last week, one has no entry transition
-    const inWeek = makeIssue({ key: 'PLAT-1', boardId: 'PLAT' });
-    const priorWeek = makeIssue({ key: 'PLAT-2', boardId: 'PLAT' });
-    const noEntry = makeIssue({ key: 'PLAT-3', boardId: 'PLAT' });
+    const inWeek = makeIssue({ key: 'PLAT-1', boardId: 'PLAT', status: 'To Do' });
+    const priorWeek = makeIssue({ key: 'PLAT-2', boardId: 'PLAT', status: 'To Do' });
+    const noEntry = makeIssue({ key: 'PLAT-3', boardId: 'PLAT', status: 'To Do' });
 
     const clInWeek = makeChangelog({
       issueKey: 'PLAT-1',
@@ -562,12 +562,20 @@ describe('AllItemsService', () => {
     jpdIdeaRepo.find.mockResolvedValue([]);
 
     const result = await service.getAllItems('2026-W20', undefined);
-    const keys = result.boards[0].items.map((i) => i.key);
 
-    expect(keys).toContain('PLAT-1');
-    expect(keys).not.toContain('PLAT-2');  // prior week
-    expect(keys).not.toContain('PLAT-3');  // no entry transition
+    // totalItems (working set) = 1 — only PLAT-1 entered this week
     expect(result.boards[0].summary.totalItems).toBe(1);
+    // PLAT-1 is in working set
+    const plat1 = result.boards[0].items.find((i) => i.key === 'PLAT-1');
+    expect(plat1).toBeDefined();
+    expect(plat1?.started).toBe(true);
+    // PLAT-2 appears as in-flight (entered prior week, still To Do)
+    const plat2 = result.boards[0].items.find((i) => i.key === 'PLAT-2');
+    expect(plat2).toBeDefined();
+    expect(plat2?.inFlight).toBe(true);
+    // PLAT-3 has no changelog — filtered by issueKeysWithStatusChangelog, not in list
+    const plat3 = result.boards[0].items.find((i) => i.key === 'PLAT-3');
+    expect(plat3).toBeUndefined();
   });
 
   it('marks kanbanAdd=false for all kanban working-set items (mid-week concept removed for kanban)', async () => {
@@ -596,13 +604,12 @@ describe('AllItemsService', () => {
     expect(item?.addedMidSprint).toBe(false);
   });
 
-  it('returns empty kanban board when no issues enter the board in the week', async () => {
+  it('kanban board with no issues entering this week shows in-flight issues from prior weeks', async () => {
     const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
-    // 980 issues on board but all entered in prior weeks
+    // 5 issues on board, all entered in prior weeks, all currently in-progress (in-flight)
     const issues = Array.from({ length: 5 }, (_, i) =>
-      makeIssue({ key: `PLAT-${i + 1}`, boardId: 'PLAT' }),
+      makeIssue({ key: `PLAT-${i + 1}`, boardId: 'PLAT', status: 'In Progress' }),
     );
-    // All changelogs are from prior weeks
     const priorCls = issues.map((iss, i) =>
       makeChangelog({
         id: i + 1,
@@ -623,9 +630,13 @@ describe('AllItemsService', () => {
 
     const result = await service.getAllItems('2026-W20', undefined);
 
-    expect(result.boards[0].items).toHaveLength(0);
+    // totalItems = 0 (nothing entered this week)
     expect(result.boards[0].summary.totalItems).toBe(0);
-    expect(result.boards[0].healthScore.overall).toBe(100);
+    // inFlightCount = 5 (all 5 are in-progress, not done)
+    expect(result.boards[0].summary.inFlightCount).toBe(5);
+    // items list shows the 5 in-flight issues
+    expect(result.boards[0].items).toHaveLength(5);
+    expect(result.boards[0].items.every((i) => i.inFlight)).toBe(true);
   });
 
   // -------------------------------------------------------------------------

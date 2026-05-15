@@ -9,6 +9,7 @@ import {
   filterKanbanIssues,
   getKanbanPulledIn,
   getKanbanCompletedThisWeek,
+  getKanbanInFlight,
 } from './kanban-week-stats.js';
 import type { JiraIssue, JiraChangelog } from '../database/entities/index.js';
 
@@ -325,5 +326,70 @@ describe('getKanbanCompletedThisWeek', () => {
     );
 
     expect(result).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getKanbanInFlight
+// ---------------------------------------------------------------------------
+
+describe('getKanbanInFlight', () => {
+  it('returns issues that are not in a done or cancelled status', () => {
+    const active = makeIssue({ key: 'PLAT-1', status: 'In Progress' });
+    const done   = makeIssue({ key: 'PLAT-2', status: 'Done' });
+    const cancelled = makeIssue({ key: 'PLAT-3', status: 'Cancelled' });
+    const todo   = makeIssue({ key: 'PLAT-4', status: 'To Do' });
+
+    const result = getKanbanInFlight(
+      [active, done, cancelled, todo],
+      DONE_STATUSES,
+      new Set(['cancelled']),
+    );
+
+    expect(result.map(i => i.key)).toEqual(['PLAT-1', 'PLAT-4']);
+  });
+
+  it('is case-insensitive for status matching', () => {
+    const issue = makeIssue({ key: 'PLAT-1', status: 'DONE' });
+
+    const result = getKanbanInFlight(
+      [issue],
+      DONE_STATUSES, // contains 'done' lowercase
+      new Set(['cancelled']),
+    );
+
+    expect(result).toHaveLength(0);
+  });
+
+  it('returns empty array when all issues are done or cancelled', () => {
+    const issues = [
+      makeIssue({ key: 'PLAT-1', status: 'Done' }),
+      makeIssue({ key: 'PLAT-2', status: 'Released' }),
+      makeIssue({ key: 'PLAT-3', status: 'Cancelled' }),
+    ];
+
+    const result = getKanbanInFlight(
+      issues,
+      new Set(['done', 'released']),
+      new Set(['cancelled']),
+    );
+
+    expect(result).toHaveLength(0);
+  });
+
+  it('returns all issues when none are done or cancelled', () => {
+    const issues = [
+      makeIssue({ key: 'PLAT-1', status: 'To Do' }),
+      makeIssue({ key: 'PLAT-2', status: 'In Progress' }),
+      makeIssue({ key: 'PLAT-3', status: 'In Review' }),
+    ];
+
+    const result = getKanbanInFlight(
+      issues,
+      DONE_STATUSES,
+      new Set(['cancelled']),
+    );
+
+    expect(result).toHaveLength(3);
   });
 });

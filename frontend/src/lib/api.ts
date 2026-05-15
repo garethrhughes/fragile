@@ -378,6 +378,8 @@ export interface WeekDetailIssue {
   /** True when the representative cycle is a reopen (proposal 0054 AC C). */
   isReopen: boolean
   jiraUrl: string
+  /** True if the issue is currently in-flight (on board, not done or cancelled). */
+  inFlight: boolean
 }
 
 export interface WeekDetailSummary {
@@ -392,6 +394,8 @@ export interface WeekDetailSummary {
   medianCycleTimeDays: number | null
   /** Issues whose representative cycle is a reopen (proposal 0054 AC C). */
   reopenedIssueCount: number
+  /** Count of on-board issues currently in-flight (not done, not cancelled). */
+  inFlightCount: number
 }
 
 export interface WeekDetailBoardConfig {
@@ -1357,6 +1361,8 @@ export interface AllItemsIssue {
   onRoadmap: boolean
   isSupport: boolean
   isTtbSupport: boolean
+  /** Kanban only: true if currently on the board but not done or cancelled. */
+  inFlight: boolean
 }
 
 export interface AllItemsBoardSummary {
@@ -1367,6 +1373,8 @@ export interface AllItemsBoardSummary {
   onRoadmapCount: number
   supportCount: number
   ttbSupportCount: number
+  /** Kanban only: issues currently on the board, not done or cancelled. */
+  inFlightCount: number
 }
 
 export interface BoardHealthScore {
@@ -1392,6 +1400,8 @@ export interface AllItemsTotals {
   onRoadmapCount: number
   supportCount: number
   ttbSupportCount: number
+  /** Kanban only: sum of inFlightCount across all boards. */
+  inFlightCount: number
 }
 
 export interface AllItemsResponse {

@@ -180,6 +180,7 @@ function BoardCard({ board }: { board: AllItemsBoardResult }) {
           { label: board.boardType === 'kanban' ? 'Pulled In' : 'Total', value: summary.totalItems },
           ...(board.boardType === 'scrum' ? [{ label: 'Started', value: summary.startedCount }] : []),
           ...(board.boardType === 'scrum' ? [{ label: 'Added', value: summary.addedMidSprintCount }] : []),
+          ...(board.boardType === 'kanban' ? [{ label: 'In Flight', value: summary.inFlightCount }] : []),
           { label: 'Completed', value: summary.completedCount },
           { label: 'On roadmap', value: summary.onRoadmapCount },
           { label: 'Support', value: summary.supportCount },
@@ -277,6 +278,7 @@ function IssueTable({ items }: { items: AllItemsIssue[] }) {
             <td className="px-3 py-2">
               <div className="flex flex-wrap justify-center gap-1">
                 {item.started && <FlagBadge label="started" colour="blue" />}
+                {item.inFlight && <FlagBadge label="in flight" colour="blue" />}
                 {item.completed && <FlagBadge label="done" colour="green" />}
                 {item.addedMidSprint && <FlagBadge label="mid-sprint" colour="orange" />}
                 {item.kanbanAdd && <FlagBadge label="mid-week" colour="orange" />}

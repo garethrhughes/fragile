@@ -54,6 +54,13 @@ export interface AllItemsIssue {
   kanbanAdd: boolean;
 
   /**
+   * Kanban boards: true if the issue is currently in-flight — it has entered the
+   * board but is not in a done or cancelled status. False for all scrum items and
+   * for kanban items that are completed or cancelled.
+   */
+  inFlight: boolean;
+
+  /**
    * True if the issue transitioned to a done status within the week window.
    */
   completed: boolean;
@@ -97,6 +104,11 @@ export interface AllItemsBoardSummary {
   onRoadmapCount: number;
   supportCount: number;
   ttbSupportCount: number;
+  /**
+   * Kanban only: count of on-board issues that are neither done nor cancelled —
+   * i.e. currently being worked on. Always 0 for scrum boards.
+   */
+  inFlightCount: number;
 }
 
 export interface BoardHealthScore {
@@ -134,6 +146,7 @@ export interface AllItemsTotals {
   onRoadmapCount: number;
   supportCount: number;
   ttbSupportCount: number;
+  inFlightCount: number;
 }
 
 export interface AllItemsResponse {
