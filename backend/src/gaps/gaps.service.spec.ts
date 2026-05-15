@@ -551,6 +551,41 @@ describe('GapsService', () => {
       expect(result.issues).toHaveLength(0); // should be classified as planned
     });
 
+    it('classifies issue as planned when sprint changelog exists but is after resolvedAt and membership row exists', async () => {
+      // BPT-99 regression: issue completed, then moved to another sprint later.
+      // The Sprint changelog is after resolvedAt, so the replay loop skips it.
+      // But the issue HAS a jira_issue_sprints row — it was in a sprint at resolution.
+      boardConfigRepo.findOne.mockResolvedValue(scrumConfig);
+      const issue = makeIssue({ key: 'ACC-99', status: 'In Progress' });
+      issueRepo.find.mockResolvedValue([issue]);
+
+      const resolvedAt = new Date('2026-01-20T00:14:54Z');
+      const sprintChangeAfterResolution = new Date('2026-01-20T05:58:04Z');
+
+      setupChangelogs(
+        [makeChangelog({ issueKey: 'ACC-99', toValue: 'Done', changedAt: resolvedAt })],
+        [
+          makeChangelog({
+            id: 20,
+            issueKey: 'ACC-99',
+            field: 'Sprint',
+            fromValue: 'Sprint 1',
+            toValue: 'Sprint 1, Sprint 2',
+            changedAt: sprintChangeAfterResolution,
+          }),
+        ],
+      );
+
+      // Issue has sprint membership row — it was in a sprint
+      issueSprintRepo.createQueryBuilder = jest.fn().mockReturnValue(
+        mockQb([{ issueKey: 'ACC-99', sprintId: 'sprint-1' } as JiraIssueSprint]),
+      );
+
+      const result = await service.getUnplannedDone('ACC');
+
+      expect(result.issues).toHaveLength(0); // should be classified as planned
+    });
+
     it('classifies issue committed to sprint before completion as planned (not returned)', async () => {
       boardConfigRepo.findOne.mockResolvedValue(scrumConfig);
       const issue = makeIssue({ key: 'ACC-2', status: 'In Progress' });

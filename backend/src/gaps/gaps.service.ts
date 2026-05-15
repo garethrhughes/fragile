@@ -420,9 +420,11 @@ export class GapsService {
         }
 
         // Snapshot fallback: Jira doesn't record a Sprint changelog for issues
-        // placed into a sprint at creation time. If there are no Sprint changelogs
-        // but the issue has a JiraIssueSprint row, it was in a sprint at creation.
-        if (sprintLogs.length === 0 && issueHasAnySprintMembership.has(issue.key)) {
+        // placed into a sprint at creation time. Also covers the case where
+        // sprint changelogs exist but ALL are after resolvedAt (issue was already
+        // in a sprint at resolution time via direct placement, then moved later).
+        // If the issue has a JiraIssueSprint row, it was in a sprint.
+        if (!inSprint && issueHasAnySprintMembership.has(issue.key)) {
           inSprint = true;
         }
 
