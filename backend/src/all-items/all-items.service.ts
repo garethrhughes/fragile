@@ -453,6 +453,42 @@ export class AllItemsService {
       // Add prior-week completers to the item list so the user can see which
       // tickets contributed to completedCount (they do not affect summary counts).
       const workingSetKeySet = new Set(workingSet.map((i) => i.key));
+
+      // Collect keys of issues that will be added (completers + in-flight) so we
+      // can fetch their support links in a single query (Option 2 — second query).
+      const extraKeys: string[] = [];
+      for (const issue of completedIssues) {
+        if (!workingSetKeySet.has(issue.key)) extraKeys.push(issue.key);
+      }
+      const inFlightIssues = getKanbanInFlight(
+        filteredBoardIssues,
+        doneStatuses,
+        cancelledStatuses,
+        kanbanBoardEntryDateByKey,
+        weekStart,
+      );
+      for (const issue of inFlightIssues) {
+        if (!workingSetKeySet.has(issue.key) && !extraKeys.includes(issue.key)) {
+          extraKeys.push(issue.key);
+        }
+      }
+
+      // Fetch support links for extra keys (second query — only the new keys)
+      if (supportLinkTypes.length > 0 && triageBoardKey && extraKeys.length > 0) {
+        const extraLinks = await this.issueLinkRepo
+          .createQueryBuilder('lnk')
+          .where('lnk.sourceIssueKey IN (:...keys)', { keys: extraKeys })
+          .andWhere('LOWER(lnk.linkTypeName) IN (:...types)', {
+            types: supportLinkTypes.map((t) => t.toLowerCase()),
+          })
+          .getMany();
+        for (const lnk of extraLinks) {
+          const list = linksByIssue.get(lnk.sourceIssueKey) ?? [];
+          list.push(lnk);
+          linksByIssue.set(lnk.sourceIssueKey, list);
+        }
+      }
+
       for (const issue of completedIssues) {
         if (workingSetKeySet.has(issue.key)) continue; // already in list
 
@@ -465,24 +501,19 @@ export class AllItemsService {
           (config.supportLabels ?? []).some(
             (l) => (Array.isArray(issue.labels) ? (issue.labels as string[]) : []).includes(l),
           );
+        const isTtbSupport = isSupport || this.classifyTtbSupport(issue.key, linksByIssue, triagePrefix);
 
         items.push(this.buildKanbanItem(issue, boardId, {
           completed: true,
           onRoadmap,
-          isSupport,
+          isSupport: isSupport || isTtbSupport,
+          isTtbSupport,
           inFlight: false,
         }));
       }
 
       // In-flight: on-board issues that entered BEFORE this week, not done, not cancelled.
       // Issues that entered this week are "Pulled In" — excluded from In Flight.
-      const inFlightIssues = getKanbanInFlight(
-        filteredBoardIssues,
-        doneStatuses,
-        cancelledStatuses,
-        kanbanBoardEntryDateByKey,
-        weekStart,
-      );
       summary.inFlightCount = inFlightIssues.length;
 
       // Add in-flight issues to the item list if not already present
@@ -501,10 +532,12 @@ export class AllItemsService {
           (config.supportLabels ?? []).some(
             (l) => (Array.isArray(issue.labels) ? (issue.labels as string[]) : []).includes(l),
           );
+        const isTtbSupport = isSupport || this.classifyTtbSupport(issue.key, linksByIssue, triagePrefix);
         items.push(this.buildKanbanItem(issue, boardId, {
           completed: false,
           onRoadmap: false,
-          isSupport,
+          isSupport: isSupport || isTtbSupport,
+          isTtbSupport,
           inFlight: true,
         }));
       }
@@ -698,7 +731,7 @@ export class AllItemsService {
   private buildKanbanItem(
     issue: JiraIssue,
     boardId: string,
-    overrides: Pick<AllItemsIssue, 'completed' | 'onRoadmap' | 'isSupport' | 'inFlight'>,
+    overrides: Pick<AllItemsIssue, 'completed' | 'onRoadmap' | 'isSupport' | 'isTtbSupport' | 'inFlight'>,
   ): AllItemsIssue {
     return {
       key: issue.key,
@@ -715,9 +748,25 @@ export class AllItemsService {
       started: false,
       addedMidSprint: false,
       kanbanAdd: false,
-      isTtbSupport: false,
       ...overrides,
     };
+  }
+
+  /**
+   * Classify whether an issue is TTB support based on its issue links.
+   * Returns true if the issue has a link (matching supportLinkTypes) pointing
+   * to a ticket on the triage board (triagePrefix).
+   */
+  private classifyTtbSupport(
+    issueKey: string,
+    linksByIssue: Map<string, JiraIssueLink[]>,
+    triagePrefix: string | null,
+  ): boolean {
+    if (!triagePrefix) return false;
+    const issueLinks = linksByIssue.get(issueKey) ?? [];
+    return issueLinks.some(
+      (lnk) => lnk.targetIssueKey.startsWith(triagePrefix),
+    );
   }
 
   private buildSummary(items: AllItemsIssue[]): AllItemsBoardSummary {
