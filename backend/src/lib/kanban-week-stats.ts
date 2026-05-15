@@ -79,9 +79,14 @@ export function filterKanbanIssues({
     // 1. Backlog status exclusion
     if (backlogStatusIds.length > 0) {
       if (issue.statusId !== null) {
-        return !backlogStatusIds.includes(issue.statusId);
+        // statusId is available — use it for a precise match
+        if (backlogStatusIds.includes(issue.statusId)) return false;
+      } else {
+        // statusId is null (pre-migration or missing sync data) — fall back to
+        // the changelog heuristic: if the issue has never moved at all, treat
+        // it as pure backlog noise.
+        if (!issueKeysWithStatusChangelog.has(issue.key)) return false;
       }
-      // statusId null — fall through to changelog fallback
     } else {
       // No backlogStatusIds configured — exclude issues with no changelog at all
       if (!issueKeysWithStatusChangelog.has(issue.key)) return false;
