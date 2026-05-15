@@ -177,7 +177,7 @@ function BoardCard({ board }: { board: AllItemsBoardResult }) {
       {/* Summary counts */}
       <div className={`grid divide-x divide-border border-b border-border ${board.boardType === 'kanban' ? 'grid-cols-3 sm:grid-cols-5' : 'grid-cols-3 sm:grid-cols-6'}`}>
         {[
-          { label: 'Pulled In', value: summary.totalItems },
+          { label: board.boardType === 'kanban' ? 'Pulled In' : 'Total', value: summary.totalItems },
           ...(board.boardType === 'scrum' ? [{ label: 'Started', value: summary.startedCount }] : []),
           ...(board.boardType === 'scrum' ? [{ label: 'Added', value: summary.addedMidSprintCount }] : []),
           { label: 'Completed', value: summary.completedCount },
@@ -502,7 +502,7 @@ function AllItemsPageInner() {
             {/* Count totals */}
             <div className="grid flex-1 grid-cols-3 gap-3 sm:grid-cols-7">
               {[
-                { label: 'Pulled In', value: pageState.data.totals.totalItems },
+                { label: 'Total items', value: pageState.data.totals.totalItems },
                 { label: 'Started', value: pageState.data.totals.startedCount },
                 { label: 'Added mid-sprint', value: pageState.data.totals.addedMidSprintCount },
                 { label: 'Completed', value: pageState.data.totals.completedCount },
