@@ -578,7 +578,7 @@ describe('GapsService', () => {
 
       // Issue has sprint membership row — it was in a sprint
       issueSprintRepo.createQueryBuilder = jest.fn().mockReturnValue(
-        mockQb([{ issueKey: 'ACC-99', sprintId: 'sprint-1' } as JiraIssueSprint]),
+        mockQb([{ issueKey: 'ACC-99', sprintId: 'sprint-1' } as unknown as JiraChangelog]),
       );
 
       const result = await service.getUnplannedDone('ACC');

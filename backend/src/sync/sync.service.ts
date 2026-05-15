@@ -351,6 +351,9 @@ export class SyncService implements OnModuleInit {
     if (fieldConfig.epicLinkFieldId !== null) {
       fields.push(fieldConfig.epicLinkFieldId);
     }
+    // Always request the sprint field so persistIssueSprintMembership can
+    // persist multi-sprint membership rows for scrum issues.
+    fields.push('customfield_10020');
     return fields;
   }
 
