@@ -296,8 +296,8 @@ export class SyncService implements OnModuleInit {
       const allIssueKeys: string[] = [];
 
       if (config.boardType === 'kanban') {
-        // Kanban boards don't have sprints — fetch issues via JQL
-        const issues = await this.syncKanbanIssuesWithConfig(boardId, extraFields, resolvedFieldConfig);
+        // Kanban boards don't have sprints — fetch issues via JQL, then sync backlog membership
+        const issues = await this.syncKanbanIssuesWithConfig(boardId, numericBoardId, extraFields, resolvedFieldConfig);
         totalIssues = issues.length;
         allIssueKeys.push(...issues.map((i) => i.key));
         this.logger.log(
@@ -393,6 +393,7 @@ export class SyncService implements OnModuleInit {
 
   private async syncKanbanIssuesWithConfig(
     boardId: string,
+    numericBoardId: string,
     extraFields: string[],
     fieldConfig: FieldConfig,
   ): Promise<JiraIssue[]> {
@@ -417,6 +418,42 @@ export class SyncService implements OnModuleInit {
       await this.issueRepo.upsert(allIssues, ['key']);
       await this.persistIssueLinks(allRawIssues);
     }
+
+    // -----------------------------------------------------------------------
+    // Backlog membership sync (proposal 0067 / ADR 0067)
+    //
+    // The Jira Agile backlog endpoint is the authoritative source of whether
+    // a kanban issue is in the backlog or on the board. statusId is unreliable
+    // because the same status can serve both roles (e.g. PLAT's "To Do").
+    //
+    // 1. Reset all board issues to inBacklog=false
+    // 2. Fetch all backlog keys from Jira (paginated)
+    // 3. Mark backlog keys as inBacklog=true
+    // -----------------------------------------------------------------------
+    await this.issueRepo.update({ boardId }, { inBacklog: false });
+
+    const backlogKeys: string[] = [];
+    let backlogStartAt = 0;
+    while (true) {
+      const page = await this.jiraClient.getKanbanBacklog(numericBoardId, backlogStartAt);
+      backlogKeys.push(...page.issues.map((i) => i.key));
+      if (backlogKeys.length >= page.total || page.issues.length === 0) break;
+      backlogStartAt += page.maxResults;
+    }
+
+    if (backlogKeys.length > 0) {
+      await this.issueRepo
+        .createQueryBuilder()
+        .update(JiraIssue)
+        .set({ inBacklog: true })
+        .where('"issueKey" IN (:...keys)', { keys: backlogKeys })
+        .andWhere('"boardId" = :boardId', { boardId })
+        .execute();
+    }
+
+    this.logger.log(
+      `Backlog sync for ${boardId}: ${backlogKeys.length} issues in backlog`,
+    );
 
     return allIssues;
   }

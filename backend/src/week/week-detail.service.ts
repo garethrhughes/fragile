@@ -268,13 +268,11 @@ export class WeekDetailService {
       boardEntryStatusSet,
     );
 
-    // Apply backlogStatusIds + dataStartDate filters using the shared helper.
+    // Apply inBacklog + dataStartDate filters using the shared helper (ADR 0067).
     const dataStartDate = boardConfig?.dataStartDate ?? null;
     const dataStartBound = dataStartDate ? new Date(dataStartDate) : null;
     const startBoundedIssues = filterKanbanIssues({
       issues,
-      backlogStatusIds,
-      issueKeysWithStatusChangelog,
       dataStartBound,
       boardEntryDateByKey,
     });

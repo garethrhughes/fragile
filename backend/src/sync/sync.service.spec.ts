@@ -39,6 +39,13 @@ function mockSchedulerRegistry(): jest.Mocked<SchedulerRegistry> {
 }
 
 function mockRepo<T extends object>(): jest.Mocked<Repository<T>> {
+  const qb = {
+    update: jest.fn().mockReturnThis(),
+    set: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    execute: jest.fn().mockResolvedValue(undefined),
+  };
   return {
     find: jest.fn().mockResolvedValue([]),
     findOne: jest.fn().mockResolvedValue(null),
@@ -46,6 +53,8 @@ function mockRepo<T extends object>(): jest.Mocked<Repository<T>> {
     save: jest.fn().mockImplementation((entity: T) => Promise.resolve(entity)),
     upsert: jest.fn().mockResolvedValue(undefined),
     delete: jest.fn().mockResolvedValue(undefined),
+    update: jest.fn().mockResolvedValue(undefined),
+    createQueryBuilder: jest.fn().mockReturnValue(qb),
   } as unknown as jest.Mocked<Repository<T>>;
 }
 
@@ -58,6 +67,7 @@ function mockJiraClient(): jest.Mocked<JiraClientService> {
     getIssueChangelog: jest.fn(),
     getProjectVersions: jest.fn().mockResolvedValue([]),
     getJpdIdeas: jest.fn(),
+    getKanbanBacklog: jest.fn().mockResolvedValue({ startAt: 0, maxResults: 100, total: 0, issues: [] }),
   } as unknown as jest.Mocked<JiraClientService>;
 }
 
@@ -532,6 +542,106 @@ describe('SyncService', () => {
 
       expect(log.issueCount).toBe(2);
       expect(jiraClient.searchIssues).toHaveBeenCalledTimes(2);
+    });
+
+    it('calls getKanbanBacklog and marks backlog issues with inBacklog=true', async () => {
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardId: 'PLAT',
+        boardType: 'kanban',
+      } as BoardConfig);
+
+      jiraClient.getBoardsForProject.mockResolvedValue({
+        values: [{ id: 55, name: 'PLAT board', type: 'kanban' }],
+      } as never);
+
+      jiraClient.searchIssues.mockResolvedValue({
+        issues: [makeRawIssue('PLAT-1'), makeRawIssue('PLAT-2'), makeRawIssue('PLAT-3')],
+        nextPageToken: undefined,
+      } as never);
+
+      // PLAT-1 and PLAT-3 are in the backlog; PLAT-2 is on the board
+      jiraClient.getKanbanBacklog.mockResolvedValue({
+        startAt: 0,
+        maxResults: 100,
+        total: 2,
+        issues: [{ key: 'PLAT-1' }, { key: 'PLAT-3' }],
+      } as never);
+
+      jiraClient.getIssueChangelog.mockResolvedValue({ total: 0, maxResults: 100, values: [] } as never);
+      jiraClient.getProjectVersions.mockResolvedValue([]);
+      issueRepo.upsert.mockResolvedValue(undefined as never);
+      syncLogRepo.save.mockImplementation((log) => Promise.resolve(log as SyncLog));
+
+      await service.syncBoard('PLAT');
+
+      // Should reset inBacklog for the board
+      expect(issueRepo.update).toHaveBeenCalledWith(
+        { boardId: 'PLAT' },
+        { inBacklog: false },
+      );
+
+      // Should call getKanbanBacklog with the numeric board ID
+      expect(jiraClient.getKanbanBacklog).toHaveBeenCalledWith('55', 0);
+
+      // Should mark backlog keys via createQueryBuilder
+      expect(issueRepo.createQueryBuilder).toHaveBeenCalled();
+    });
+
+    it('paginates getKanbanBacklog until all backlog keys are retrieved', async () => {
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardId: 'PLAT',
+        boardType: 'kanban',
+      } as BoardConfig);
+
+      jiraClient.getBoardsForProject.mockResolvedValue({
+        values: [{ id: 55, name: 'PLAT board', type: 'kanban' }],
+      } as never);
+
+      jiraClient.searchIssues.mockResolvedValue({ issues: [], nextPageToken: undefined } as never);
+      jiraClient.getProjectVersions.mockResolvedValue([]);
+      syncLogRepo.save.mockImplementation((log) => Promise.resolve(log as SyncLog));
+
+      let backlogCallCount = 0;
+      jiraClient.getKanbanBacklog.mockImplementation((_boardId, startAt = 0) => {
+        backlogCallCount++;
+        if (startAt === 0) {
+          return Promise.resolve({
+            startAt: 0, maxResults: 100, total: 150,
+            issues: Array.from({ length: 100 }, (_, i) => ({ key: `PLAT-${i + 1}` })),
+          } as never);
+        }
+        return Promise.resolve({
+          startAt: 100, maxResults: 100, total: 150,
+          issues: Array.from({ length: 50 }, (_, i) => ({ key: `PLAT-${i + 101}` })),
+        } as never);
+      });
+
+      await service.syncBoard('PLAT');
+
+      // Should have paginated — called twice (startAt=0, startAt=100)
+      expect(jiraClient.getKanbanBacklog).toHaveBeenCalledTimes(2);
+      expect(jiraClient.getKanbanBacklog).toHaveBeenNthCalledWith(1, '55', 0);
+      expect(jiraClient.getKanbanBacklog).toHaveBeenNthCalledWith(2, '55', 100);
+    });
+
+    it('does NOT call getKanbanBacklog for scrum boards', async () => {
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardId: 'ACC',
+        boardType: 'scrum',
+      } as BoardConfig);
+
+      jiraClient.getBoardsForProject.mockResolvedValue({
+        values: [{ id: 10, name: 'ACC board', type: 'scrum' }],
+      } as never);
+
+      jiraClient.getSprints.mockResolvedValue({ values: [] } as never);
+      jiraClient.searchIssues.mockResolvedValue({ issues: [], nextPageToken: undefined } as never);
+      jiraClient.getProjectVersions.mockResolvedValue([]);
+      syncLogRepo.save.mockImplementation((log) => Promise.resolve(log as SyncLog));
+
+      await service.syncBoard('ACC');
+
+      expect(jiraClient.getKanbanBacklog).not.toHaveBeenCalled();
     });
   });
 

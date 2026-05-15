@@ -43,6 +43,7 @@ function makeIssue(overrides: Partial<JiraIssue> = {}): JiraIssue {
     assignee: null,
     createdAt: new Date('2026-01-01T00:00:00Z'),
     updatedAt: new Date('2026-01-01T00:00:00Z'),
+    inBacklog: false,
     ...overrides,
   } as unknown as JiraIssue;
 }
@@ -121,22 +122,16 @@ describe('buildKanbanBoardEntryDateMap', () => {
 // ---------------------------------------------------------------------------
 
 describe('filterKanbanIssues', () => {
-  it('excludes issues whose statusId is in backlogStatusIds', () => {
-    const active = makeIssue({ key: 'PLAT-1', statusId: null });
-    const backlog = makeIssue({ key: 'PLAT-2', statusId: '10303' });
-    const clsByIssue = new Map<string, JiraChangelog[]>([
-      ['PLAT-1', [makeCl({ issueKey: 'PLAT-1' })]],
-      ['PLAT-2', [makeCl({ issueKey: 'PLAT-2' })]],
-    ]);
+  it('excludes issues where inBacklog=true', () => {
+    const onBoard = makeIssue({ key: 'PLAT-1', inBacklog: false } as Partial<JiraIssue>);
+    const inBacklog = makeIssue({ key: 'PLAT-2', inBacklog: true } as Partial<JiraIssue>);
     const boardEntryDateByKey = new Map([
       ['PLAT-1', new Date('2026-05-12T00:00:00Z')],
       ['PLAT-2', new Date('2026-05-12T00:00:00Z')],
     ]);
 
     const result = filterKanbanIssues({
-      issues: [active, backlog],
-      backlogStatusIds: ['10303'],
-      issueKeysWithStatusChangelog: new Set(['PLAT-1', 'PLAT-2']),
+      issues: [onBoard, inBacklog],
       dataStartBound: null,
       boardEntryDateByKey,
     });
@@ -144,46 +139,11 @@ describe('filterKanbanIssues', () => {
     expect(result.map(i => i.key)).toEqual(['PLAT-1']);
   });
 
-  it('excludes issues with no status changelog when backlogStatusIds is empty', () => {
-    const withCl = makeIssue({ key: 'PLAT-1' });
-    const noCl = makeIssue({ key: 'PLAT-2' });
-    const boardEntryDateByKey = new Map([
-      ['PLAT-1', new Date('2026-05-12T00:00:00Z')],
-      ['PLAT-2', new Date('2026-01-01T00:00:00Z')],
-    ]);
-
-    const result = filterKanbanIssues({
-      issues: [withCl, noCl],
-      backlogStatusIds: [],
-      issueKeysWithStatusChangelog: new Set(['PLAT-1']), // PLAT-2 has no changelog
-      dataStartBound: null,
-      boardEntryDateByKey,
-    });
-
-    expect(result.map(i => i.key)).toEqual(['PLAT-1']);
-  });
-
-  it('excludes issues whose board-entry date is before dataStartBound', () => {
-    const newIssue = makeIssue({ key: 'PLAT-1' });
-    const oldIssue = makeIssue({ key: 'PLAT-2' });
-    const boardEntryDateByKey = new Map([
-      ['PLAT-1', new Date('2025-06-01T00:00:00Z')], // after bound
-      ['PLAT-2', new Date('2023-12-01T00:00:00Z')], // before bound
-    ]);
-
-    const result = filterKanbanIssues({
-      issues: [newIssue, oldIssue],
-      backlogStatusIds: [],
-      issueKeysWithStatusChangelog: new Set(['PLAT-1', 'PLAT-2']),
-      dataStartBound: new Date('2024-01-01'),
-      boardEntryDateByKey,
-    });
-
-    expect(result.map(i => i.key)).toEqual(['PLAT-1']);
-  });
-
-  it('includes all issues when backlogStatusIds is empty and all have changelogs', () => {
-    const issues = [makeIssue({ key: 'PLAT-1' }), makeIssue({ key: 'PLAT-2' })];
+  it('includes all issues when none are inBacklog', () => {
+    const issues = [
+      makeIssue({ key: 'PLAT-1', inBacklog: false } as Partial<JiraIssue>),
+      makeIssue({ key: 'PLAT-2', inBacklog: false } as Partial<JiraIssue>),
+    ];
     const boardEntryDateByKey = new Map([
       ['PLAT-1', new Date('2026-05-12T00:00:00Z')],
       ['PLAT-2', new Date('2026-05-12T00:00:00Z')],
@@ -191,13 +151,28 @@ describe('filterKanbanIssues', () => {
 
     const result = filterKanbanIssues({
       issues,
-      backlogStatusIds: [],
-      issueKeysWithStatusChangelog: new Set(['PLAT-1', 'PLAT-2']),
       dataStartBound: null,
       boardEntryDateByKey,
     });
 
     expect(result).toHaveLength(2);
+  });
+
+  it('excludes issues whose board-entry date is before dataStartBound', () => {
+    const newIssue = makeIssue({ key: 'PLAT-1', inBacklog: false } as Partial<JiraIssue>);
+    const oldIssue = makeIssue({ key: 'PLAT-2', inBacklog: false } as Partial<JiraIssue>);
+    const boardEntryDateByKey = new Map([
+      ['PLAT-1', new Date('2025-06-01T00:00:00Z')], // after bound
+      ['PLAT-2', new Date('2023-12-01T00:00:00Z')], // before bound
+    ]);
+
+    const result = filterKanbanIssues({
+      issues: [newIssue, oldIssue],
+      dataStartBound: new Date('2024-01-01'),
+      boardEntryDateByKey,
+    });
+
+    expect(result.map(i => i.key)).toEqual(['PLAT-1']);
   });
 });
 

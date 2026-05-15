@@ -62,6 +62,7 @@ function makeIssue(overrides: Partial<JiraIssue> = {}): JiraIssue {
   i.fixVersion = null;
   i.createdAt = new Date('2026-05-05T00:00:00Z');
   i.updatedAt = new Date('2026-05-05T00:00:00Z');
+  i.inBacklog = false;
   return Object.assign(i, overrides);
 }
 
@@ -533,10 +534,10 @@ describe('AllItemsService', () => {
 
   it('includes only kanban issues whose board-entry date is within the week in working set (totalItems)', async () => {
     const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
-    // 3 issues: one entered this week, one entered last week, one has no entry transition
+    // 3 issues: one entered this week, one entered last week, one is in the backlog
     const inWeek = makeIssue({ key: 'PLAT-1', boardId: 'PLAT', status: 'To Do' });
     const priorWeek = makeIssue({ key: 'PLAT-2', boardId: 'PLAT', status: 'To Do' });
-    const noEntry = makeIssue({ key: 'PLAT-3', boardId: 'PLAT', status: 'To Do' });
+    const inBacklog = makeIssue({ key: 'PLAT-3', boardId: 'PLAT', status: 'To Do', inBacklog: true } as Parameters<typeof makeIssue>[0]);
 
     const clInWeek = makeChangelog({
       issueKey: 'PLAT-1',
@@ -554,7 +555,7 @@ describe('AllItemsService', () => {
     });
 
     boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
-    issueRepo.find.mockResolvedValue([inWeek, priorWeek, noEntry]);
+    issueRepo.find.mockResolvedValue([inWeek, priorWeek, inBacklog]);
     sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
     roadmapConfigRepo.find.mockResolvedValue([]);
     changelogRepo.createQueryBuilder.mockReturnValue(makeQb([clInWeek, clPriorWeek]));
@@ -569,11 +570,11 @@ describe('AllItemsService', () => {
     const plat1 = result.boards[0].items.find((i) => i.key === 'PLAT-1');
     expect(plat1).toBeDefined();
     expect(plat1?.started).toBe(true);
-    // PLAT-2 appears as in-flight (entered prior week, still To Do)
+    // PLAT-2 appears as in-flight (entered prior week, still To Do, not in backlog)
     const plat2 = result.boards[0].items.find((i) => i.key === 'PLAT-2');
     expect(plat2).toBeDefined();
     expect(plat2?.inFlight).toBe(true);
-    // PLAT-3 has no changelog — filtered by issueKeysWithStatusChangelog, not in list
+    // PLAT-3 has inBacklog=true — excluded from all metrics and item list
     const plat3 = result.boards[0].items.find((i) => i.key === 'PLAT-3');
     expect(plat3).toBeUndefined();
   });
@@ -1309,15 +1310,11 @@ describe('AllItemsService', () => {
     expect(result.boards[0].items[0].key).toBe('PLAT-1');
   });
 
-  // 2. backlogStatusIds — working set
-  it('kanban working set excludes issues whose statusId is in backlogStatusIds', async () => {
-    const kanbanBoard = makeBoard({
-      boardId: 'PLAT',
-      boardType: 'kanban',
-      backlogStatusIds: ['10303'],
-    });
-    const activeIssue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT', status: 'To Do', statusId: null });
-    const backlogIssue = makeIssue({ key: 'PLAT-2', boardId: 'PLAT', status: 'Backlog', statusId: '10303' });
+  // 2. inBacklog — working set
+  it('kanban working set excludes issues where inBacklog=true', async () => {
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
+    const activeIssue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT', status: 'To Do', inBacklog: false } as Parameters<typeof makeIssue>[0]);
+    const backlogIssue = makeIssue({ key: 'PLAT-2', boardId: 'PLAT', status: 'To Do', inBacklog: true } as Parameters<typeof makeIssue>[0]);
 
     const entryCls = [activeIssue, backlogIssue].map((iss, i) =>
       makeChangelog({
@@ -1344,15 +1341,11 @@ describe('AllItemsService', () => {
     expect(result.boards[0].items[0].key).toBe('PLAT-1');
   });
 
-  // 3. backlogStatusIds — completion scan
-  it('kanban completedCount excludes issues whose statusId is in backlogStatusIds', async () => {
-    const kanbanBoard = makeBoard({
-      boardId: 'PLAT',
-      boardType: 'kanban',
-      backlogStatusIds: ['10303'],
-    });
-    const activeIssue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT', status: 'Done', statusId: null });
-    const backlogIssue = makeIssue({ key: 'PLAT-2', boardId: 'PLAT', status: 'Done', statusId: '10303' });
+  // 3. inBacklog — completion scan
+  it('kanban completedCount excludes issues where inBacklog=true', async () => {
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
+    const activeIssue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT', status: 'Done', inBacklog: false } as Parameters<typeof makeIssue>[0]);
+    const backlogIssue = makeIssue({ key: 'PLAT-2', boardId: 'PLAT', status: 'Done', inBacklog: true } as Parameters<typeof makeIssue>[0]);
 
     // Both have board-entry this week
     const entryCls = [activeIssue, backlogIssue].map((iss, i) =>

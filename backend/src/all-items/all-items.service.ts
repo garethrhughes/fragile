@@ -210,14 +210,10 @@ export class AllItemsService {
         boardEntryStatuses,
       );
 
-      // Apply backlogStatusIds + dataStartDate filters, then scope to issues
-      // that entered the board this week (proposal 0066).
-      // Cancelled issues are excluded at this stage — consistent across all services.
-      const issueKeysWithStatusChangelog = new Set(statusChangelogsByIssue.keys());
+      // Apply dataStartDate filter + inBacklog exclusion (ADR 0067) using the
+      // shared helper. Cancelled issues pre-filtered before passing.
       const filteredBoardIssues = filterKanbanIssues({
         issues: allBoardIssues.filter((i) => !cancelledStatuses.has(i.status.toLowerCase())),
-        backlogStatusIds,
-        issueKeysWithStatusChangelog,
         dataStartBound,
         boardEntryDateByKey: kanbanBoardEntryDateByKey,
       });
@@ -415,13 +411,10 @@ export class AllItemsService {
       summary.addedMidSprintCount = 0;
 
       // Board-wide completion scan using the shared helper.
-      // Candidate pool: all filtered board issues (same backlogStatusIds +
-      // dataStartDate + cancelled gates as the working set).
-      const issueKeysWithStatusChangelog = new Set(statusChangelogsByIssue.keys());
+      // Candidate pool: all filtered board issues (inBacklog + dataStartDate
+      // + cancelled gates — ADR 0067).
       const filteredBoardIssues = filterKanbanIssues({
         issues: allBoardIssues.filter((i) => !cancelledStatuses.has(i.status.toLowerCase())),
-        backlogStatusIds,
-        issueKeysWithStatusChangelog,
         dataStartBound,
         boardEntryDateByKey: kanbanBoardEntryDateByKey,
       });

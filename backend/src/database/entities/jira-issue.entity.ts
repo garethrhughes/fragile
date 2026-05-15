@@ -52,4 +52,12 @@ export class JiraIssue {
 
   @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt!: Date;
+
+  /**
+   * True if the issue is currently in the Jira board backlog (not on the
+   * active board). Populated during kanban sync via the Agile backlog API
+   * (ADR 0067). Always false for scrum issues.
+   */
+  @Column({ type: 'boolean', default: false })
+  inBacklog!: boolean;
 }

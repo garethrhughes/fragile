@@ -641,12 +641,10 @@ export class PlanningService {
       boardEntryStatusSet,
     );
 
-    // Apply backlogStatusIds + dataStartDate filters using the shared helper
+    // Apply inBacklog + dataStartDate filters using the shared helper (ADR 0067)
     const dataStartBound = config.dataStartDate ? new Date(config.dataStartDate) : null;
     const boundedIssuesWeeks = filterKanbanIssues({
       issues: allIssues,
-      backlogStatusIds,
-      issueKeysWithStatusChangelog,
       dataStartBound,
       boardEntryDateByKey,
     });

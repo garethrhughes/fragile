@@ -117,3 +117,14 @@ export interface JiraBoardSprintIssuesResponse {
   total: number;
   issues: JiraIssueValue[];
 }
+
+/**
+ * Response from GET /rest/agile/1.0/board/{id}/backlog
+ * Only `key` is requested (fields=key) to minimise payload.
+ */
+export interface JiraBacklogResponse {
+  startAt: number;
+  maxResults: number;
+  total: number;
+  issues: Array<{ key: string }>;
+}

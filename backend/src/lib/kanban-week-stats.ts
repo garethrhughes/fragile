@@ -49,48 +49,31 @@ export function buildKanbanBoardEntryDateMap(
 // ---------------------------------------------------------------------------
 // filterKanbanIssues
 //
-// Applies the standard kanban candidate-pool filters in order:
-//   1. backlogStatusIds — exclude issues still sitting in a pre-board status
-//   2. changelog fallback — when backlogStatusIds is empty, exclude issues
-//      that have never moved at all (pure backlog noise)
-//   3. dataStartBound — exclude issues whose board-entry predates the
-//      configured data start date
+// Applies the standard kanban candidate-pool filters:
+//   1. inBacklog — exclude issues the Jira Agile backlog API reports as in
+//      the backlog. This is the authoritative board/backlog discriminator
+//      (ADR 0067) — replaces the previous backlogStatusIds/changelog heuristics.
+//   2. dataStartBound — exclude issues whose board-entry date predates the
+//      configured data start date.
 //
 // Returns the filtered array ("on-board issues"). This is the pool used for
-// both the completion scan and week-window filtering.
+// completion scanning, in-flight detection, and week-window filtering.
 // ---------------------------------------------------------------------------
 
 export interface FilterKanbanIssuesArgs {
   issues: JiraIssue[];
-  backlogStatusIds: string[];
-  issueKeysWithStatusChangelog: Set<string>;
   dataStartBound: Date | null;
   boardEntryDateByKey: Map<string, Date>;
 }
 
 export function filterKanbanIssues({
   issues,
-  backlogStatusIds,
-  issueKeysWithStatusChangelog,
   dataStartBound,
   boardEntryDateByKey,
 }: FilterKanbanIssuesArgs): JiraIssue[] {
   return issues.filter((issue) => {
-    // 1. Backlog status exclusion
-    if (backlogStatusIds.length > 0) {
-      if (issue.statusId !== null) {
-        // statusId is available — use it for a precise match
-        if (backlogStatusIds.includes(issue.statusId)) return false;
-      } else {
-        // statusId is null (pre-migration or missing sync data) — fall back to
-        // the changelog heuristic: if the issue has never moved at all, treat
-        // it as pure backlog noise.
-        if (!issueKeysWithStatusChangelog.has(issue.key)) return false;
-      }
-    } else {
-      // No backlogStatusIds configured — exclude issues with no changelog at all
-      if (!issueKeysWithStatusChangelog.has(issue.key)) return false;
-    }
+    // 1. Backlog exclusion — authoritative via Jira Agile backlog API (ADR 0067)
+    if (issue.inBacklog) return false;
 
     // 2. dataStartBound exclusion
     if (dataStartBound !== null) {

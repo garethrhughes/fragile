@@ -54,6 +54,7 @@ function makeIssue(overrides: Partial<JiraIssue> = {}): JiraIssue {
     priority: null,
     points: null,
     statusId: null,
+    inBacklog: false,
     ...overrides,
   } as unknown as JiraIssue;
 }
@@ -1466,30 +1467,30 @@ describe('WeekDetailService', () => {
       expect(plat2.addedMidWeek).toBe(false);
     });
 
-    it('completedIssues respects backlogStatusIds — does not count backlog issues', async () => {
-      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig({ backlogStatusIds: ['10303'] }));
-      issueRepo.find.mockResolvedValue([
-        makeIssue({ key: 'PLAT-1', status: 'Done', statusId: null }),
-        makeIssue({ key: 'PLAT-2', status: 'Done', statusId: '10303' }), // in backlog
-      ]);
-      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
-        where: jest.fn().mockReturnThis(),
-        andWhere: jest.fn().mockReturnThis(),
-        orderBy: jest.fn().mockReturnThis(),
-        getMany: jest.fn().mockResolvedValue([
-          makeChangelog({ issueKey: 'PLAT-1', toValue: 'To Do', changedAt: new Date('2025-11-01T09:00:00Z') }),
-          makeChangelog({ issueKey: 'PLAT-2', toValue: 'To Do', changedAt: new Date('2025-11-01T09:00:00Z') }),
-          makeChangelog({ issueKey: 'PLAT-1', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-01-07T14:00:00Z') }),
-          makeChangelog({ issueKey: 'PLAT-2', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-01-07T14:00:00Z') }),
-        ]),
-      });
-      roadmapConfigRepo.find.mockResolvedValue([]);
+     it('completedIssues excludes issues where inBacklog=true', async () => {
+       boardConfigRepo.findOne.mockResolvedValue(kanbanConfig());
+       issueRepo.find.mockResolvedValue([
+         makeIssue({ key: 'PLAT-1', status: 'Done' }),
+         { ...makeIssue({ key: 'PLAT-2', status: 'Done' }), inBacklog: true }, // in backlog
+       ] as unknown as JiraIssue[]);
+       changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+         where: jest.fn().mockReturnThis(),
+         andWhere: jest.fn().mockReturnThis(),
+         orderBy: jest.fn().mockReturnThis(),
+         getMany: jest.fn().mockResolvedValue([
+           makeChangelog({ issueKey: 'PLAT-1', toValue: 'To Do', changedAt: new Date('2025-11-01T09:00:00Z') }),
+           makeChangelog({ issueKey: 'PLAT-2', toValue: 'To Do', changedAt: new Date('2025-11-01T09:00:00Z') }),
+           makeChangelog({ issueKey: 'PLAT-1', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-01-07T14:00:00Z') }),
+           makeChangelog({ issueKey: 'PLAT-2', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-01-07T14:00:00Z') }),
+         ]),
+       });
+       roadmapConfigRepo.find.mockResolvedValue([]);
 
-      const result = await service.getDetail('PLAT', WEEK);
+       const result = await service.getDetail('PLAT', WEEK);
 
-      // PLAT-2 is in backlog status — must not be counted
-      expect(result.summary.completedIssues).toBe(1);
-    });
+       // PLAT-2 has inBacklog=true — must not be counted
+       expect(result.summary.completedIssues).toBe(1);
+     });
 
     it('scrum boards are unaffected (week detail only serves kanban — reject test)', async () => {
       boardConfigRepo.findOne.mockResolvedValue({ ...kanbanConfig(), boardType: 'scrum' } as unknown as BoardConfig);
