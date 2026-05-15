@@ -21,6 +21,7 @@ import {
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
 import { dateParts, startOfDayInTz } from '../metrics/tz-utils.js';
+import { isoWeekKeyToDates } from '../lib/iso-week.js';
 import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
 import {
   resolveEpicIdeas,
@@ -85,7 +86,14 @@ export class AllItemsService {
     week: string,
     filterParam: string | undefined,
   ): Promise<AllItemsResponse> {
-    const { weekStart, weekEnd } = this.parseWeek(week);
+    const tz = this.configService.get<string>('TIMEZONE', 'UTC');
+    let weekStart: Date;
+    let weekEnd: Date;
+    try {
+      ({ weekStart, weekEnd } = isoWeekKeyToDates(week, tz));
+    } catch {
+      throw new BadRequestException(`Invalid week format: "${week}". Expected YYYY-Www e.g. 2026-W20`);
+    }
     const filters = this.parseFilters(filterParam);
 
     const configs = await this.boardConfigRepo.find();
@@ -110,6 +118,9 @@ export class AllItemsService {
         this.processBoardForWeek(config, week, weekStart, weekEnd, filters, allIdeas, ruleByJpdKey),
       ),
     );
+
+    // Sort boards alphabetically by boardId for consistent display order
+    boardResults.sort((a, b) => a.boardId.localeCompare(b.boardId));
 
     const totals = this.aggregateTotals(boardResults);
     const overallScore = this.calculateOverallScore(boardResults);
@@ -430,13 +441,8 @@ export class AllItemsService {
 
       summary.completedCount = completedIssues.length;
       summary.onRoadmapCount = completedIssues.filter((issue) => {
-        // completedAt is guaranteed within the week — use any done-transition in window
         const statusLogs = statusChangelogsByIssue.get(issue.key) ?? [];
-        const completedAt = statusLogs
-          .filter((cl) => cl.field === 'status' && cl.toValue !== null &&
-            doneStatuses.has(cl.toValue.toLowerCase()) &&
-            cl.changedAt >= weekStart && cl.changedAt <= weekEnd)
-          .at(-1)?.changedAt ?? null;
+        const completedAt = this.detectCompletionDate(statusLogs, doneStatuses, weekStart, weekEnd);
         return this.classifyRoadmap(issue, completedAt, epicIdeaMap, directLinkIdeaMap);
       }).length;
 
@@ -447,11 +453,7 @@ export class AllItemsService {
         if (workingSetKeySet.has(issue.key)) continue; // already in list
 
         const statusLogs = statusChangelogsByIssue.get(issue.key) ?? [];
-        const completedAt = statusLogs
-          .filter((cl) => cl.field === 'status' && cl.toValue !== null &&
-            doneStatuses.has(cl.toValue.toLowerCase()) &&
-            cl.changedAt >= weekStart && cl.changedAt <= weekEnd)
-          .at(-1)?.changedAt ?? null;
+        const completedAt = this.detectCompletionDate(statusLogs, doneStatuses, weekStart, weekEnd);
 
         const onRoadmap = this.classifyRoadmap(issue, completedAt, epicIdeaMap, directLinkIdeaMap);
         const isSupport =
@@ -460,27 +462,12 @@ export class AllItemsService {
             (l) => (Array.isArray(issue.labels) ? (issue.labels as string[]) : []).includes(l),
           );
 
-        items.push({
-          key: issue.key,
-          summary: issue.summary,
-          issueType: issue.issueType,
-          status: issue.status,
-          boardId,
-          assignee: issue.assignee ?? null,
-          points: issue.points ?? null,
-          labels: Array.isArray(issue.labels) ? (issue.labels as string[]) : [],
-          jiraUrl: this.jiraBaseUrl ? `${this.jiraBaseUrl}/browse/${issue.key}` : '',
-          epicKey: issue.epicKey ?? null,
-          sprintName: null,
-          started: false,
-          addedMidSprint: false,
-          kanbanAdd: false,
+        items.push(this.buildKanbanItem(issue, boardId, {
           completed: true,
           onRoadmap,
           isSupport,
-          isTtbSupport: false,
           inFlight: false,
-        });
+        }));
       }
 
       // In-flight: on-board issues that entered BEFORE this week, not done, not cancelled.
@@ -510,27 +497,12 @@ export class AllItemsService {
           (config.supportLabels ?? []).some(
             (l) => (Array.isArray(issue.labels) ? (issue.labels as string[]) : []).includes(l),
           );
-        items.push({
-          key: issue.key,
-          summary: issue.summary,
-          issueType: issue.issueType,
-          status: issue.status,
-          boardId,
-          assignee: issue.assignee ?? null,
-          points: issue.points ?? null,
-          labels: Array.isArray(issue.labels) ? (issue.labels as string[]) : [],
-          jiraUrl: this.jiraBaseUrl ? `${this.jiraBaseUrl}/browse/${issue.key}` : '',
-          epicKey: issue.epicKey ?? null,
-          sprintName: null,
-          started: false,
-          addedMidSprint: false,
-          kanbanAdd: false,
+        items.push(this.buildKanbanItem(issue, boardId, {
           completed: false,
           onRoadmap: false,
           isSupport,
-          isTtbSupport: false,
           inFlight: true,
-        });
+        }));
       }
     }
 
@@ -714,6 +686,31 @@ export class AllItemsService {
   // Summary and health score
   // ---------------------------------------------------------------------------
 
+  private buildKanbanItem(
+    issue: JiraIssue,
+    boardId: string,
+    overrides: Pick<AllItemsIssue, 'completed' | 'onRoadmap' | 'isSupport' | 'inFlight'>,
+  ): AllItemsIssue {
+    return {
+      key: issue.key,
+      summary: issue.summary,
+      issueType: issue.issueType,
+      status: issue.status,
+      boardId,
+      assignee: issue.assignee ?? null,
+      points: issue.points ?? null,
+      labels: Array.isArray(issue.labels) ? (issue.labels as string[]) : [],
+      jiraUrl: this.jiraBaseUrl ? `${this.jiraBaseUrl}/browse/${issue.key}` : '',
+      epicKey: issue.epicKey ?? null,
+      sprintName: null,
+      started: false,
+      addedMidSprint: false,
+      kanbanAdd: false,
+      isTtbSupport: false,
+      ...overrides,
+    };
+  }
+
   private buildSummary(items: AllItemsIssue[]): AllItemsBoardSummary {
     return {
       totalItems: items.length,
@@ -823,52 +820,6 @@ export class AllItemsService {
     }
 
     return { allIdeas, ruleByJpdKey };
-  }
-
-  // ---------------------------------------------------------------------------
-  // Week parsing (matches WeekDetailService.parseWeek logic)
-  // ---------------------------------------------------------------------------
-
-  private parseWeek(week: string): { weekStart: Date; weekEnd: Date } {
-    const match = week.match(/^(\d{4})-W(\d{2})$/);
-    if (!match) {
-      throw new BadRequestException(
-        `Invalid week format: "${week}". Expected YYYY-Www e.g. 2026-W20`,
-      );
-    }
-
-    const year = parseInt(match[1], 10);
-    const weekNum = parseInt(match[2], 10);
-    const tz = this.configService.get<string>('TIMEZONE', 'UTC');
-
-    const jan4LocalParts = dateParts(new Date(Date.UTC(year, 0, 4)), tz);
-    const jan4LocalDate = new Date(Date.UTC(jan4LocalParts.year, jan4LocalParts.month, jan4LocalParts.day));
-    const jan4Dow = jan4LocalDate.getUTCDay();
-    const daysToMon = jan4Dow === 0 ? -6 : 1 - jan4Dow;
-    const week1MondayLocal = new Date(jan4LocalDate);
-    week1MondayLocal.setUTCDate(jan4LocalDate.getUTCDate() + daysToMon);
-
-    const weekMondayLocal = new Date(week1MondayLocal);
-    weekMondayLocal.setUTCDate(week1MondayLocal.getUTCDate() + (weekNum - 1) * 7);
-
-    const weekSundayLocal = new Date(weekMondayLocal);
-    weekSundayLocal.setUTCDate(weekMondayLocal.getUTCDate() + 6);
-
-    const weekStart = startOfDayInTz(
-      weekMondayLocal.getUTCFullYear(),
-      weekMondayLocal.getUTCMonth(),
-      weekMondayLocal.getUTCDate(),
-      tz,
-    );
-    const dayAfterWeekEnd = startOfDayInTz(
-      weekSundayLocal.getUTCFullYear(),
-      weekSundayLocal.getUTCMonth(),
-      weekSundayLocal.getUTCDate() + 1,
-      tz,
-    );
-    const weekEnd = new Date(dayAfterWeekEnd.getTime() - 1);
-
-    return { weekStart, weekEnd };
   }
 
   // ---------------------------------------------------------------------------

@@ -670,6 +670,7 @@ export class PlanningService {
 
     const now = new Date();
     const currentWeekKey = this.dateToWeekKey(now);
+    const tz = this.configService.get<string>('TIMEZONE', 'UTC');
 
     const results: KanbanWeekSummary[] = [];
 
@@ -679,7 +680,6 @@ export class PlanningService {
 
     for (const wKey of sortedKeys) {
       const issues = weekMap.get(wKey)!;
-      const tz = this.configService.get<string>('TIMEZONE', 'UTC');
       const { weekStart, weekEnd } = isoWeekKeyToDates(wKey, tz);
       const state = wKey === currentWeekKey ? 'active' : 'closed';
 

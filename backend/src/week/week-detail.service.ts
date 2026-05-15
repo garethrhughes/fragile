@@ -17,6 +17,7 @@ import {
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
 import { dateParts, startOfDayInTz } from '../metrics/tz-utils.js';
+import { isoWeekKeyToDates } from '../lib/iso-week.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
 import { extractCycles, resolveResetNames } from '../metrics/cycle.js';
 import {
@@ -179,7 +180,14 @@ export class WeekDetailService {
     // -----------------------------------------------------------------------
     // Step 1 — Parse week to date range
     // -----------------------------------------------------------------------
-    const { weekStart, weekEnd } = this.parseWeek(week);
+    const tz = this.configService.get<string>('TIMEZONE', 'UTC');
+    let weekStart: Date;
+    let weekEnd: Date;
+    try {
+      ({ weekStart, weekEnd } = isoWeekKeyToDates(week, tz));
+    } catch {
+      throw new BadRequestException(`Invalid week format: "${week}". Expected YYYY-Www e.g. 2026-W15`);
+    }
 
     // -----------------------------------------------------------------------
     // Step 2 — Load board config
@@ -509,6 +517,9 @@ export class WeekDetailService {
       return a.key.localeCompare(b.key);
     });
 
+    // cancelledStatusSet used by both Step 8b (exclude from completions) and Step 8c (in-flight)
+    const cancelledStatusSet = new Set(cancelledStatusNames.map((s) => s.toLowerCase()));
+
     // -----------------------------------------------------------------------
     // Step 8b — Board-wide completion scan (proposal 0066)
     //
@@ -520,40 +531,19 @@ export class WeekDetailService {
     // -----------------------------------------------------------------------
     const weekIssueKeySet = new Set(weekIssues.map((i) => i.key));
     const priorWeekCompleters = getKanbanCompletedThisWeek(
-      startBoundedIssues.filter((i) => !weekIssueKeySet.has(i.key)),
+      startBoundedIssues.filter((i) => !weekIssueKeySet.has(i.key) && !cancelledStatusSet.has(i.status.toLowerCase())),
       changelogsByIssue,
       doneStatusesSet,
       weekStart,
       weekEnd,
     );
 
-    const jiraBaseUrl = this.configService.get<string>('JIRA_BASE_URL', '');
     for (const issue of priorWeekCompleters) {
       const boardEntryDate = boardEntryDateByKey.get(issue.key) ?? issue.createdAt;
-      const jiraUrl = jiraBaseUrl ? `${jiraBaseUrl}/browse/${issue.key}` : '';
-
-      results.push({
-        key: issue.key,
-        summary: issue.summary,
-        issueType: issue.issueType,
-        priority: issue.priority ?? null,
-        status: issue.status,
-        points: issue.points ?? null,
-        epicKey: issue.epicKey ?? null,
-        assignedWeek: week,
+      results.push(this.buildExtraWeekDetailIssue(issue, week, boardEntryDate, {
         completedInWeek: true,
-        addedMidWeek: false, // entered in a prior week — not added this week
-        roadmapStatus: 'none',
-        roadmapLinkSource: null,
-        isIncident: false,
-        isFailure: false,
-        labels: Array.isArray(issue.labels) ? (issue.labels as string[]) : [],
-        boardEntryDate: boardEntryDate.toISOString(),
-        cycleTimeDays: null,
-        isReopen: false,
-        jiraUrl,
         inFlight: false,
-      });
+      }));
     }
 
     // -----------------------------------------------------------------------
@@ -564,7 +554,6 @@ export class WeekDetailService {
     // Issues that entered the board this week are excluded — those are
     // "Pulled In" and distinct from "In Flight".
     // -----------------------------------------------------------------------
-    const cancelledStatusSet = new Set(cancelledStatusNames.map((s) => s.toLowerCase()));
     const inFlightIssues = getKanbanInFlight(
       startBoundedIssues,
       doneStatusesSet,
@@ -582,30 +571,10 @@ export class WeekDetailService {
         continue;
       }
       const boardEntryDate = boardEntryDateByKey.get(issue.key) ?? issue.createdAt;
-      const jiraBaseUrl = this.configService.get<string>('JIRA_BASE_URL', '');
-      const jiraUrl = jiraBaseUrl ? `${jiraBaseUrl}/browse/${issue.key}` : '';
-      results.push({
-        key: issue.key,
-        summary: issue.summary,
-        issueType: issue.issueType,
-        priority: issue.priority ?? null,
-        status: issue.status,
-        points: issue.points ?? null,
-        epicKey: issue.epicKey ?? null,
-        assignedWeek: week,
+      results.push(this.buildExtraWeekDetailIssue(issue, week, boardEntryDate, {
         completedInWeek: false,
-        addedMidWeek: false,
-        roadmapStatus: 'none',
-        roadmapLinkSource: null,
-        isIncident: false,
-        isFailure: false,
-        labels: Array.isArray(issue.labels) ? (issue.labels as string[]) : [],
-        boardEntryDate: boardEntryDate.toISOString(),
-        cycleTimeDays: null,
-        isReopen: false,
-        jiraUrl,
         inFlight: true,
-      });
+      }));
     }
 
     // -----------------------------------------------------------------------
@@ -655,57 +624,38 @@ export class WeekDetailService {
     };
   }
 
-  // -------------------------------------------------------------------------
-  // Private helpers
-  // -------------------------------------------------------------------------
-
-  private parseWeek(week: string): { weekStart: Date; weekEnd: Date } {
-    const match = week.match(/^(\d{4})-W(\d{2})$/);
-    if (!match) {
-      throw new BadRequestException(
-        `Invalid week format: "${week}". Expected YYYY-Www e.g. 2026-W15`,
-      );
-    }
-
-    const year = parseInt(match[1], 10);
-    const weekNum = parseInt(match[2], 10);
-    const tz = this.configService.get<string>('TIMEZONE', 'UTC');
-
-    // Jan 4 is always in ISO week 1 — find Monday of week 1 in the configured timezone.
-    // We work in calendar-date space (not UTC) so that week boundaries align with
-    // local midnight, matching the bucketing logic in PlanningService.dateToWeekKey.
-    const jan4LocalParts = dateParts(new Date(Date.UTC(year, 0, 4)), tz);
-    const jan4LocalDate = new Date(Date.UTC(jan4LocalParts.year, jan4LocalParts.month, jan4LocalParts.day));
-    const jan4Dow = jan4LocalDate.getUTCDay(); // 0=Sun
-    const daysToMon = jan4Dow === 0 ? -6 : 1 - jan4Dow;
-    const week1MondayLocal = new Date(jan4LocalDate);
-    week1MondayLocal.setUTCDate(jan4LocalDate.getUTCDate() + daysToMon);
-
-    // Monday of the requested week (calendar date arithmetic)
-    const weekMondayLocal = new Date(week1MondayLocal);
-    weekMondayLocal.setUTCDate(week1MondayLocal.getUTCDate() + (weekNum - 1) * 7);
-
-    // Sunday of the requested week (calendar date, 6 days after Monday)
-    const weekSundayLocal = new Date(weekMondayLocal);
-    weekSundayLocal.setUTCDate(weekMondayLocal.getUTCDate() + 6);
-
-    // Convert calendar dates to UTC instants using the configured timezone.
-    const weekStart = startOfDayInTz(
-      weekMondayLocal.getUTCFullYear(),
-      weekMondayLocal.getUTCMonth(),
-      weekMondayLocal.getUTCDate(),
-      tz,
-    );
-    // weekEnd = start of the day AFTER Sunday, minus 1ms
-    const dayAfterWeekEnd = startOfDayInTz(
-      weekSundayLocal.getUTCFullYear(),
-      weekSundayLocal.getUTCMonth(),
-      weekSundayLocal.getUTCDate() + 1,
-      tz,
-    );
-    const weekEnd = new Date(dayAfterWeekEnd.getTime() - 1);
-
-    return { weekStart, weekEnd };
+  /**
+   * Build a WeekDetailIssue for a board-wide issue that is not in the
+   * entry-week working set (prior-week completer or in-flight).
+   * Shared between Step 8b and Step 8c to prevent field drift.
+   */
+  private buildExtraWeekDetailIssue(
+    issue: JiraIssue,
+    week: string,
+    boardEntryDate: Date,
+    overrides: Pick<WeekDetailIssue, 'completedInWeek' | 'inFlight'>,
+  ): WeekDetailIssue {
+    return {
+      key: issue.key,
+      summary: issue.summary,
+      issueType: issue.issueType,
+      priority: issue.priority ?? null,
+      status: issue.status,
+      points: issue.points ?? null,
+      epicKey: issue.epicKey ?? null,
+      assignedWeek: week,
+      addedMidWeek: false,
+      roadmapStatus: 'none',
+      roadmapLinkSource: null,
+      isIncident: false,
+      isFailure: false,
+      labels: Array.isArray(issue.labels) ? (issue.labels as string[]) : [],
+      boardEntryDate: boardEntryDate.toISOString(),
+      cycleTimeDays: null,
+      isReopen: false,
+      jiraUrl: this.jiraBaseUrl ? `${this.jiraBaseUrl}/browse/${issue.key}` : '',
+      ...overrides,
+    };
   }
 
   private buildEmptyResponse(
