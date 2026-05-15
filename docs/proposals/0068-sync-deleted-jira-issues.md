@@ -41,9 +41,10 @@ const deletedKeys = dbKeys
   .filter(k => !returnedKeys.has(k));
 
 if (deletedKeys.length > 0) {
-  await this.issueRepo.delete(deletedKeys);
   await this.changelogRepo.delete({ issueKey: In(deletedKeys) });
-  // also clean up related tables
+  await this.issueLinkRepo.delete({ sourceIssueKey: In(deletedKeys) });
+  await this.issueSprintRepo.delete({ issueKey: In(deletedKeys) });
+  await this.issueRepo.delete(deletedKeys); // parent row last
 }
 ```
 

@@ -75,3 +75,4 @@ a new ADR is created for the replacement decision.
 | [0061](0061-support-report-ttb-filter-and-plural-link-types.md) | Support Report: migrate `supportLinkType` to `supportLinkTypes` string array; add server-side `matchReason` filter param to `/api/support` and `/api/support/summary` | Accepted | 2026-05-12 |
 | [0062](0062-kanban-stability-score-throughput-balance.md) | Kanban Stability Score: throughput balance formula `min(completed/entered, 1) * 100` replaces broken disruption-ratio for kanban boards | Accepted | 2026-05-15 |
 | [0063](0063-kanban-pulse-decouple-completed-from-entry-date.md) | Kanban Pulse Report: decouple `completedCount` from board-entry working set; scan all board issues for done-transitions in week | Accepted | 2026-05-15 |
+| [0064](0064-sync-deleted-jira-issues-reconciliation.md) | Sync deleted Jira issues: reconcile kanban DB against JQL response; hard-delete phantoms + cascade to changelogs, links, sprints | Accepted | 2026-05-15 |
