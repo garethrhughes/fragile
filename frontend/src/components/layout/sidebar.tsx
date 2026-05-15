@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart3, Target, Map, Settings, Timer, AlertCircle, Sun, Moon, Headphones, FileBarChart2 } from 'lucide-react'
+import { BarChart3, Target, Map, Settings, Timer, AlertCircle, Sun, Moon, Headphones, FileBarChart2, Activity } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useDarkMode } from '@/hooks/use-dark-mode'
 
@@ -13,6 +13,7 @@ interface NavItem {
 }
 
 const MAIN_NAV_ITEMS: NavItem[] = [
+  { label: 'Pulse', href: '/all-items', icon: <Activity className="h-5 w-5" /> },
   { label: 'DORA', href: '/dora', icon: <BarChart3 className="h-5 w-5" /> },
   { label: 'Cycle Time', href: '/cycle-time', icon: <Timer className="h-5 w-5" /> },
   { label: 'Support', href: '/support', icon: <Headphones className="h-5 w-5" /> },

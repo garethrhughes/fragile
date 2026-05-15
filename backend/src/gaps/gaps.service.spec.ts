@@ -551,6 +551,41 @@ describe('GapsService', () => {
       expect(result.issues).toHaveLength(0); // should be classified as planned
     });
 
+    it('classifies issue as planned when sprint changelog exists but is after resolvedAt and membership row exists', async () => {
+      // BPT-99 regression: issue completed, then moved to another sprint later.
+      // The Sprint changelog is after resolvedAt, so the replay loop skips it.
+      // But the issue HAS a jira_issue_sprints row — it was in a sprint at resolution.
+      boardConfigRepo.findOne.mockResolvedValue(scrumConfig);
+      const issue = makeIssue({ key: 'ACC-99', status: 'In Progress' });
+      issueRepo.find.mockResolvedValue([issue]);
+
+      const resolvedAt = new Date('2026-01-20T00:14:54Z');
+      const sprintChangeAfterResolution = new Date('2026-01-20T05:58:04Z');
+
+      setupChangelogs(
+        [makeChangelog({ issueKey: 'ACC-99', toValue: 'Done', changedAt: resolvedAt })],
+        [
+          makeChangelog({
+            id: 20,
+            issueKey: 'ACC-99',
+            field: 'Sprint',
+            fromValue: 'Sprint 1',
+            toValue: 'Sprint 1, Sprint 2',
+            changedAt: sprintChangeAfterResolution,
+          }),
+        ],
+      );
+
+      // Issue has sprint membership row — it was in a sprint
+      issueSprintRepo.createQueryBuilder = jest.fn().mockReturnValue(
+        mockQb([{ issueKey: 'ACC-99', sprintId: 'sprint-1' } as unknown as JiraChangelog]),
+      );
+
+      const result = await service.getUnplannedDone('ACC');
+
+      expect(result.issues).toHaveLength(0); // should be classified as planned
+    });
+
     it('classifies issue committed to sprint before completion as planned (not returned)', async () => {
       boardConfigRepo.findOne.mockResolvedValue(scrumConfig);
       const issue = makeIssue({ key: 'ACC-2', status: 'In Progress' });
@@ -761,9 +796,9 @@ describe('GapsService', () => {
       const issue3 = makeIssue({ key: 'ACC-3', status: 'In Progress' });
       issueRepo.find.mockResolvedValue([issue1, issue2, issue3]);
 
-      // All within last-90-days default window (today is 2026-04-14)
-      const earlier = new Date('2026-02-10T10:00:00Z');
-      const later = new Date('2026-03-20T10:00:00Z');
+      // Use dates relative to now so they always fall within the 90-day window
+      const earlier = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30 days ago
+      const later = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);   // 10 days ago
 
       setupChangelogs(
         [
@@ -942,8 +977,8 @@ describe('GapsService', () => {
           return Promise.resolve(null);
         });
 
-        const earlier = new Date('2026-02-10T10:00:00Z');
-        const later = new Date('2026-03-20T10:00:00Z');
+        const earlier = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30 days ago
+        const later = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);   // 10 days ago
 
         issueRepo.find.mockImplementation(({ where }: { where: { boardId: string } }) => {
           if (where.boardId === 'ACC') {

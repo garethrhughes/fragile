@@ -63,3 +63,10 @@
 | [0059](0059-dora-aggregate-quarter-selection-and-partial-period.md) | DORA Aggregate: Quarter Selection and Partial-Period Awareness | Accepted | 2026-05-11 |
 | [0060](0060-support-report-ttb-filter-and-plural-link-types.md) | Support Report: TTB Filter and Plural Link Types | Accepted | 2026-05-12 |
 | [0061](0061-timezone-aware-sync-schedule.md) | Timezone-Aware Sync Schedule | Accepted | 2026-05-12 |
+| [0062](0062-all-items-weekly-report.md) | All Items Weekly Report | Accepted | 2026-05-13 |
+| [0063](0063-all-items-correct-issue-population.md) | All Items Weekly Report: Correct Issue Population | Accepted | 2026-05-13 |
+| [0064](0064-kanban-stability-score-throughput-balance.md) | Kanban Stability Score: Throughput Balance | Accepted | 2026-05-15 |
+| [0065](0065-kanban-pulse-decouple-completed-from-entry-date.md) | Kanban Pulse Report: Decouple Completed Count from Working Set Entry Date | Accepted | 2026-05-15 |
+| [0066](0066-align-pulse-kanban-with-week-detail.md) | Align Pulse Kanban Metrics with Week Detail Report | Accepted | 2026-05-15 |
+| [0067](0067-kanban-backlog-membership-via-agile-api.md) | Kanban Backlog Membership via Jira Agile Backlog API | Accepted | 2026-05-15 |
+| [0068](0068-sync-deleted-jira-issues.md) | Sync Deleted Jira Issues: Reconcile DB Against JQL Response | Accepted | 2026-05-15 |

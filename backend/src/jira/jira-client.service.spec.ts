@@ -79,6 +79,64 @@ describe('JiraClientService', () => {
   });
 
   // -------------------------------------------------------------------------
+  // getKanbanBacklog
+  // -------------------------------------------------------------------------
+
+  describe('getKanbanBacklog', () => {
+    it('calls the agile backlog endpoint for a given board ID', async () => {
+      const payload = {
+        startAt: 0,
+        maxResults: 100,
+        total: 2,
+        issues: [{ key: 'PLAT-1293' }, { key: 'PLAT-1391' }],
+      };
+      globalFetch.mockImplementation(async () => ({
+        status: 200,
+        ok: true,
+        json: async () => payload,
+      }));
+
+      const result = await service.getKanbanBacklog('49');
+
+      expect(result).toEqual(payload);
+      expect(globalFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/rest/agile/1.0/board/49/backlog'),
+        expect.anything(),
+      );
+    });
+
+    it('includes startAt parameter in the URL', async () => {
+      globalFetch.mockImplementation(async () => ({
+        status: 200,
+        ok: true,
+        json: async () => ({ startAt: 100, maxResults: 100, total: 150, issues: [] }),
+      }));
+
+      await service.getKanbanBacklog('49', 100);
+
+      expect(globalFetch).toHaveBeenCalledWith(
+        expect.stringContaining('startAt=100'),
+        expect.anything(),
+      );
+    });
+
+    it('requests only the key field to minimise payload size', async () => {
+      globalFetch.mockImplementation(async () => ({
+        status: 200,
+        ok: true,
+        json: async () => ({ startAt: 0, maxResults: 100, total: 0, issues: [] }),
+      }));
+
+      await service.getKanbanBacklog('49');
+
+      expect(globalFetch).toHaveBeenCalledWith(
+        expect.stringContaining('fields=key'),
+        expect.anything(),
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // getSprintIssues
   // -------------------------------------------------------------------------
 

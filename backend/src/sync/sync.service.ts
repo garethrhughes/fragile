@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
 import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, QueryRunner, Repository } from 'typeorm';
+import { DataSource, In, QueryRunner, Repository } from 'typeorm';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import { ConfigService } from '@nestjs/config';
@@ -35,6 +35,7 @@ interface FieldConfig {
   epicLinkFieldId: string | null;
   jpdDeliveryLinkInward: string[];
   jpdDeliveryLinkOutward: string[];
+  sprintFieldId: string;
 }
 
 /** Fallback values that match the previously hardcoded behaviour. */
@@ -49,6 +50,7 @@ const DEFAULT_FIELD_CONFIG: FieldConfig = {
   epicLinkFieldId: 'customfield_10014',
   jpdDeliveryLinkInward: ['is implemented by', 'is delivered by'],
   jpdDeliveryLinkOutward: ['implements', 'delivers'],
+  sprintFieldId: 'customfield_10020',
 };
 
 @Injectable()
@@ -268,6 +270,7 @@ export class SyncService implements OnModuleInit {
       epicLinkFieldId: row.epicLinkFieldId,
       jpdDeliveryLinkInward: row.jpdDeliveryLinkInward,
       jpdDeliveryLinkOutward: row.jpdDeliveryLinkOutward,
+      sprintFieldId: row.sprintFieldId,
     };
   }
 
@@ -296,8 +299,8 @@ export class SyncService implements OnModuleInit {
       const allIssueKeys: string[] = [];
 
       if (config.boardType === 'kanban') {
-        // Kanban boards don't have sprints — fetch issues via JQL
-        const issues = await this.syncKanbanIssuesWithConfig(boardId, extraFields, resolvedFieldConfig);
+        // Kanban boards don't have sprints — fetch issues via JQL, then sync backlog membership
+        const issues = await this.syncKanbanIssuesWithConfig(boardId, numericBoardId, extraFields, resolvedFieldConfig);
         totalIssues = issues.length;
         allIssueKeys.push(...issues.map((i) => i.key));
         this.logger.log(
@@ -351,6 +354,9 @@ export class SyncService implements OnModuleInit {
     if (fieldConfig.epicLinkFieldId !== null) {
       fields.push(fieldConfig.epicLinkFieldId);
     }
+    // Always request the sprint field so persistIssueSprintMembership can
+    // persist multi-sprint membership rows for scrum issues.
+    fields.push(fieldConfig.sprintFieldId);
     return fields;
   }
 
@@ -393,6 +399,7 @@ export class SyncService implements OnModuleInit {
 
   private async syncKanbanIssuesWithConfig(
     boardId: string,
+    numericBoardId: string,
     extraFields: string[],
     fieldConfig: FieldConfig,
   ): Promise<JiraIssue[]> {
@@ -410,7 +417,6 @@ export class SyncService implements OnModuleInit {
       allIssues.push(...issues);
       allRawIssues.push(...response.issues);
       nextPageToken = response.nextPageToken;
-      if (allIssues.length >= 1000) break;
     } while (nextPageToken);
 
     if (allIssues.length > 0) {
@@ -418,7 +424,92 @@ export class SyncService implements OnModuleInit {
       await this.persistIssueLinks(allRawIssues);
     }
 
+    // -----------------------------------------------------------------------
+    // Backlog membership sync (proposal 0067 / ADR 0067)
+    //
+    // The Jira Agile backlog endpoint is the authoritative source of whether
+    // a kanban issue is in the backlog or on the board. statusId is unreliable
+    // because the same status can serve both roles (e.g. PLAT's "To Do").
+    //
+    // 1. Reset all board issues to inBacklog=false
+    // 2. Fetch all backlog keys from Jira (paginated)
+    // 3. Mark backlog keys as inBacklog=true
+    // -----------------------------------------------------------------------
+    await this.issueRepo.update({ boardId }, { inBacklog: false });
+
+    const backlogKeys: string[] = [];
+    let backlogStartAt = 0;
+    while (true) {
+      const page = await this.jiraClient.getKanbanBacklog(numericBoardId, backlogStartAt);
+      backlogKeys.push(...page.issues.map((i) => i.key));
+      if (backlogKeys.length >= page.total || page.issues.length === 0) break;
+      backlogStartAt += page.maxResults;
+    }
+
+    if (backlogKeys.length > 0) {
+      await this.issueRepo
+        .createQueryBuilder()
+        .update(JiraIssue)
+        .set({ inBacklog: true })
+        .where('"key" IN (:...keys)', { keys: backlogKeys })
+        .andWhere('"boardId" = :boardId', { boardId })
+        .execute();
+    }
+
+    this.logger.log(
+      `Backlog sync for ${boardId}: ${backlogKeys.length} issues in backlog`,
+    );
+
+    // -----------------------------------------------------------------------
+    // Reconciliation — delete phantom issues (ADR 0064 / proposal 0068)
+    //
+    // The JQL fetch above returns every current issue for this board.
+    // Any key present in the DB but absent from the response was deleted in
+    // Jira and must be removed along with all cascade-dependent rows.
+    // -----------------------------------------------------------------------
+    await this.reconcileDeletedKanbanIssues(boardId, allIssues.map((i) => i.key));
+
     return allIssues;
+  }
+
+  /**
+   * Compare the set of keys returned by the kanban JQL scan against all keys
+   * currently stored in the DB for the board.  Hard-delete any key that is
+   * present in the DB but absent from the JQL response (i.e. the issue was
+   * deleted in Jira).
+   *
+   * Cascade deletes are performed explicitly because the related tables have
+   * no FK constraints to jira_issues:
+   *   - jira_changelogs  (issueKey)
+   *   - jira_issue_links (sourceIssueKey)
+   *   - jira_issue_sprints (issueKey)
+   */
+  private async reconcileDeletedKanbanIssues(
+    boardId: string,
+    returnedKeys: string[],
+  ): Promise<void> {
+    const dbIssues = await this.issueRepo.find({
+      where: { boardId },
+      select: ['key'],
+    });
+
+    const returnedKeySet = new Set(returnedKeys);
+    const deletedKeys = dbIssues
+      .map((i) => i.key)
+      .filter((k) => !returnedKeySet.has(k));
+
+    if (deletedKeys.length === 0) return;
+
+    this.logger.log(
+      `Reconciliation for ${boardId}: deleting ${deletedKeys.length} phantom issue(s): ${deletedKeys.join(', ')}`,
+    );
+
+    // Cascade deletes — must happen before the issue row is removed so that
+    // callers that inspect deleted rows can still identify the source issue.
+    await this.changelogRepo.delete({ issueKey: In(deletedKeys) });
+    await this.issueLinkRepo.delete({ sourceIssueKey: In(deletedKeys) });
+    await this.issueSprintRepo.delete({ issueKey: In(deletedKeys) });
+    await this.issueRepo.delete(deletedKeys);
   }
 
   /**
@@ -467,7 +558,7 @@ export class SyncService implements OnModuleInit {
 
       // Persist multi-sprint membership for each issue on this page
       for (const raw of response.issues) {
-        await this.persistIssueSprintMembership(raw.key, raw.fields);
+        await this.persistIssueSprintMembership(raw.key, raw.fields, fieldConfig.sprintFieldId);
       }
 
       // Retain only keys for the changelog phase (not the full issue objects)
@@ -484,7 +575,7 @@ export class SyncService implements OnModuleInit {
 
   /**
    * Updates sprint membership rows for one issue key from Jira's current
-   * `customfield_10020`.
+   * sprint field (configured via `sprintFieldId` in JiraFieldConfig).
    *
    * Behaviour:
    *   - If Jira returns a non-empty sprint array, replace existing rows
@@ -493,7 +584,7 @@ export class SyncService implements OnModuleInit {
    *   - If Jira returns an empty/missing sprint array, leave existing rows
    *     untouched. This preserves historical membership for issues that
    *     completed in a sprint that has since closed — Jira drops closed
-   *     sprints from `customfield_10020` for Done issues, but the row is
+   *     sprints from the sprint field for Done issues, but the row is
    *     the only fallback the gaps report and sprint membership
    *     reconstruction have for issues that were created directly into a
    *     sprint (no Sprint-field changelog event is fired by Jira for
@@ -501,13 +592,14 @@ export class SyncService implements OnModuleInit {
    *
    * Without this guard, completed issues with no Sprint changelog were
    * falsely classified as "never boarded" once Jira stopped returning their
-   * sprint in `customfield_10020`.
+   * sprint in the configured sprint field (`sprintFieldId`).
    */
   private async persistIssueSprintMembership(
     issueKey: string,
     fields: JiraIssueValue['fields'],
+    sprintFieldId: string,
   ): Promise<void> {
-    const sprintField = fields['customfield_10020'];
+    const sprintField = fields[sprintFieldId];
 
     // Jira returned no current sprints — preserve existing rows as the
     // historical membership snapshot. Do NOT delete.

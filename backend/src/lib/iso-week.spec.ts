@@ -1,4 +1,4 @@
-import { dateToIsoWeekKey } from './iso-week.js';
+import { dateToIsoWeekKey, isoWeekKeyToDates } from './iso-week.js';
 
 describe('dateToIsoWeekKey', () => {
   // ---------------------------------------------------------------------------
@@ -77,5 +77,26 @@ describe('dateToIsoWeekKey', () => {
     expect(dateToIsoWeekKey(d, 'Australia/Sydney')).toBe('2024-W01');
     // …same instant under UTC is still in 2023-W52
     expect(dateToIsoWeekKey(d, 'UTC')).toBe('2023-W52');
+  });
+});
+
+describe('isoWeekKeyToDates', () => {
+  it('W20 2026 in UTC starts Mon 11 May 00:00 UTC and ends Sun 17 May 23:59:59 UTC', () => {
+    const { weekStart, weekEnd } = isoWeekKeyToDates('2026-W20', 'UTC');
+    expect(weekStart.toISOString()).toBe('2026-05-11T00:00:00.000Z');
+    expect(weekEnd.toISOString()).toBe('2026-05-17T23:59:59.999Z');
+  });
+
+  it('W20 2026 in Australia/Sydney starts Sun 10 May 14:00 UTC (Mon 11 May 00:00 AEST)', () => {
+    // This is the critical test — Mon 11 May 00:00 AEST = Sun 10 May 14:00 UTC
+    // Planning was computing Mon 11 May 00:00 UTC, missing completions that
+    // happened between 14:00-24:00 UTC on Sunday.
+    const { weekStart, weekEnd } = isoWeekKeyToDates('2026-W20', 'Australia/Sydney');
+    expect(weekStart.toISOString()).toBe('2026-05-10T14:00:00.000Z');
+    expect(weekEnd.toISOString()).toBe('2026-05-17T13:59:59.999Z');
+  });
+
+  it('throws on invalid week format', () => {
+    expect(() => isoWeekKeyToDates('invalid')).toThrow();
   });
 });

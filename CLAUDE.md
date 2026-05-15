@@ -419,6 +419,7 @@ See the `architect` and `decision-log` skills for the exact proposal and ADR for
 | 0057 | Custom Reports: `custom-reports` NestJS domain, REST CRUD, 13 MCP tools, frontend `/reports` |
 | 0059 | Custom Report Layout Schema: typed `ReportLayout` in JSONB; Zod-backed validator; `colSpan` per widget |
 | 0060 | DORA Aggregate: quarter parameter for historical quarters; `elapsedDays`/`totalDays`/`partial` on period |
+| 0062 | Kanban stability score: throughput balance `min(completed/entered, 1) * 100` replaces broken disruption-ratio for kanban boards |
 
 ---
 

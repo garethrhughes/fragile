@@ -6,6 +6,7 @@ import type {
   JiraChangelogResponse,
   JiraVersionResponse,
   JiraBoardResponse,
+  JiraBacklogResponse,
 } from './jira.types.js';
 
 const MAX_RETRIES = 5;
@@ -71,6 +72,19 @@ export class JiraClientService {
   async getSprints(boardId: string): Promise<JiraSprintResponse> {
     const url = `${this.baseUrl}/rest/agile/1.0/board/${boardId}/sprint?maxResults=100`;
     return this.fetchWithRetry<JiraSprintResponse>(url);
+  }
+
+  /**
+   * Fetches a page of issues from the Jira board backlog.
+   * GET /rest/agile/1.0/board/{boardId}/backlog
+   *
+   * Only the issue key is requested (fields=key) to minimise payload size.
+   * Callers must paginate using startAt until total is exhausted.
+   */
+  async getKanbanBacklog(boardId: string, startAt = 0): Promise<JiraBacklogResponse> {
+    const url = `${this.baseUrl}/rest/agile/1.0/board/${boardId}/backlog`
+      + `?startAt=${startAt}&maxResults=100&fields=key`;
+    return this.fetchWithRetry<JiraBacklogResponse>(url);
   }
 
   async getSprintIssues(

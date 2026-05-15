@@ -662,7 +662,7 @@ function PlanningPageInner() {
       },
       { key: 'issuesPulledIn', label: 'Pulled In', sortable: true },
       { key: 'completed', label: 'Completed', sortable: true },
-      { key: 'addedMidWeek', label: 'Mid-Week', sortable: true },
+      { key: 'inFlightCount', label: 'In Flight', sortable: true },
       { key: 'pointsIn', label: 'Points In', sortable: true },
       { key: 'pointsDone', label: 'Points Done', sortable: true },
       {

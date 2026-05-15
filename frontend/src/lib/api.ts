@@ -26,6 +26,7 @@ export interface BoardConfig {
   recoveryStatusNames: string[];
   incidentLabels: string[];
   backlogStatusIds: string[];
+  boardEntryStatuses: string[] | null;
   dataStartDate: string | null;
   inProgressStatusNames: string[];
   cancelledStatusNames: string[];
@@ -352,6 +353,7 @@ export interface KanbanWeekSummary {
   issuesPulledIn: number
   completed: number
   addedMidWeek: number
+  inFlightCount: number
   pointsIn: number
   pointsDone: number
   deliveryRate: number
@@ -378,6 +380,8 @@ export interface WeekDetailIssue {
   /** True when the representative cycle is a reopen (proposal 0054 AC C). */
   isReopen: boolean
   jiraUrl: string
+  /** True if the issue is currently in-flight (on board, not done or cancelled). */
+  inFlight: boolean
 }
 
 export interface WeekDetailSummary {
@@ -392,6 +396,8 @@ export interface WeekDetailSummary {
   medianCycleTimeDays: number | null
   /** Issues whose representative cycle is a reopen (proposal 0054 AC C). */
   reopenedIssueCount: number
+  /** Count of on-board issues currently in-flight (not done, not cancelled). */
+  inFlightCount: number
 }
 
 export interface WeekDetailBoardConfig {
@@ -1330,5 +1336,91 @@ export function replaceCustomReportData(
   return apiFetch(
     `/api/custom-reports/${encodeURIComponent(slug)}/widgets/${encodeURIComponent(widgetId)}/data-points`,
     { method: 'PUT', body: JSON.stringify(body) },
+  )
+}
+
+// ---------------------------------------------------------------------------
+// All Items — bespoke MyPass weekly cross-board report (feature 0012)
+// NOTE: Not for upstreaming. Isolated to this project.
+// ---------------------------------------------------------------------------
+
+export interface AllItemsIssue {
+  key: string
+  summary: string
+  issueType: string
+  status: string
+  boardId: string
+  assignee: string | null
+  points: number | null
+  labels: string[]
+  jiraUrl: string
+  epicKey: string | null
+  sprintName: string | null
+  started: boolean
+  addedMidSprint: boolean
+  kanbanAdd: boolean
+  completed: boolean
+  onRoadmap: boolean
+  isSupport: boolean
+  isTtbSupport: boolean
+  /** Kanban only: true if currently on the board but not done or cancelled. */
+  inFlight: boolean
+}
+
+export interface AllItemsBoardSummary {
+  totalItems: number
+  startedCount: number
+  addedMidSprintCount: number
+  completedCount: number
+  onRoadmapCount: number
+  supportCount: number
+  ttbSupportCount: number
+  /** Kanban only: issues currently on the board, not done or cancelled. */
+  inFlightCount: number
+}
+
+export interface BoardHealthScore {
+  overall: number
+  roadmapAlignmentScore: number
+  supportBurdenScore: number
+  stabilityScore: number
+}
+
+export interface AllItemsBoardResult {
+  boardId: string
+  boardType: 'scrum' | 'kanban'
+  items: AllItemsIssue[]
+  summary: AllItemsBoardSummary
+  healthScore: BoardHealthScore
+}
+
+export interface AllItemsTotals {
+  totalItems: number
+  startedCount: number
+  addedMidSprintCount: number
+  completedCount: number
+  onRoadmapCount: number
+  supportCount: number
+  ttbSupportCount: number
+  /** Kanban only: sum of inFlightCount across all boards. */
+  inFlightCount: number
+}
+
+export interface AllItemsResponse {
+  week: string
+  weekStart: string
+  weekEnd: string
+  boards: AllItemsBoardResult[]
+  totals: AllItemsTotals
+  /** Mean of all boards' healthScore.overall. 100 when no boards. */
+  overallScore: number
+}
+
+export type AllItemsFilter = 'added-mid-sprint' | 'not-on-roadmap' | 'support' | 'ttb-support'
+
+export function getAllItems(week: string, filters?: AllItemsFilter[]): Promise<AllItemsResponse> {
+  const filterParam = filters && filters.length > 0 ? filters.join('|') : undefined
+  return apiFetch<AllItemsResponse>(
+    `/api/all-items${toQueryString({ week, filter: filterParam })}`,
   )
 }
