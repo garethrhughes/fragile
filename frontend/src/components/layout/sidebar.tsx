@@ -13,6 +13,7 @@ interface NavItem {
 }
 
 const MAIN_NAV_ITEMS: NavItem[] = [
+  { label: 'Pulse', href: '/all-items', icon: <Activity className="h-5 w-5" /> },
   { label: 'DORA', href: '/dora', icon: <BarChart3 className="h-5 w-5" /> },
   { label: 'Cycle Time', href: '/cycle-time', icon: <Timer className="h-5 w-5" /> },
   { label: 'Support', href: '/support', icon: <Headphones className="h-5 w-5" /> },
@@ -20,7 +21,6 @@ const MAIN_NAV_ITEMS: NavItem[] = [
   { label: 'Roadmap', href: '/roadmap', icon: <Map className="h-5 w-5" /> },
   { label: 'Gaps', href: '/gaps', icon: <AlertCircle className="h-5 w-5" /> },
   { label: 'Reports', href: '/reports', icon: <FileBarChart2 className="h-5 w-5" /> },
-  { label: 'Pulse (beta)', href: '/all-items', icon: <Activity className="h-5 w-5" /> },
 ]
 
 const SETTINGS_ITEM: NavItem = {

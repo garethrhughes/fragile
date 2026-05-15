@@ -386,7 +386,7 @@ function AllItemsPageInner() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold">Pulse <span className="text-sm font-normal text-muted">(beta)</span></h1>
+        <h1 className="text-2xl font-bold">Pulse</h1>
         <p className="mt-1 text-sm text-muted">
           Weekly cross-board activity — started, added, completed, and roadmap alignment
         </p>
