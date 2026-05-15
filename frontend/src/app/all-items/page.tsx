@@ -95,7 +95,7 @@ type PageState =
   | { status: 'ready'; data: AllItemsResponse }
 
 const ALL_FILTERS: { key: AllItemsFilter; label: string }[] = [
-  { key: 'added-mid-sprint', label: 'Added mid-sprint' },
+  { key: 'added-mid-sprint', label: 'Added mid-week / mid-sprint' },
   { key: 'not-on-roadmap', label: 'Not on roadmap' },
   { key: 'support', label: 'Support' },
   { key: 'ttb-support', label: 'TTB support' },
@@ -279,7 +279,7 @@ function IssueTable({ items }: { items: AllItemsIssue[] }) {
                 {item.started && <FlagBadge label="started" colour="blue" />}
                 {item.completed && <FlagBadge label="done" colour="green" />}
                 {item.addedMidSprint && <FlagBadge label="mid-sprint" colour="orange" />}
-                {item.kanbanAdd && <FlagBadge label="kanban add" colour="orange" />}
+                {item.kanbanAdd && <FlagBadge label="mid-week" colour="orange" />}
                 {item.onRoadmap && <FlagBadge label="roadmap" colour="green" />}
                 {item.isTtbSupport && <FlagBadge label="TTB" colour="red" />}
                 {item.isSupport && !item.isTtbSupport && <FlagBadge label="support" colour="red" />}

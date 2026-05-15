@@ -46,7 +46,9 @@ export interface AllItemsIssue {
   addedMidSprint: boolean;
 
   /**
-   * Kanban boards: true if the issue's board-entry date falls within the week.
+   * Kanban boards: true if the issue's board-entry date is MORE than 1 day after
+   * weekStart (i.e. entered after Monday — "added mid-week"). False for issues
+   * that entered on Monday (considered "committed") or from a prior week.
    * Scrum boards: always false.
    */
   kanbanAdd: boolean;

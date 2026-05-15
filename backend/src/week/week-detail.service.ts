@@ -293,7 +293,7 @@ export class WeekDetailService {
       return entryDate >= weekStart && entryDate <= weekEnd;
     });
 
-    if (weekIssues.length === 0) {
+    if (weekIssues.length === 0 && startBoundedIssues.length === 0) {
       return this.buildEmptyResponse(boardId, week, weekStart, weekEnd, boardType, doneStatuses);
     }
 
@@ -515,6 +515,56 @@ export class WeekDetailService {
       }
       return a.key.localeCompare(b.key);
     });
+
+    // -----------------------------------------------------------------------
+    // Step 8b — Board-wide completion scan (proposal 0066)
+    //
+    // completedIssues should count ALL filtered board issues that transitioned
+    // to Done this week, not just those that entered the board this week.
+    // Issues that completed from prior weeks are added to the results list so
+    // the user can see which tickets drove the completedCount.
+    // -----------------------------------------------------------------------
+    const weekIssueKeySet = new Set(weekIssues.map((i) => i.key));
+    for (const issue of startBoundedIssues) {
+      // Only process issues NOT already in the weekIssues set
+      if (weekIssueKeySet.has(issue.key)) continue;
+      const issueChangelogs = changelogsByIssue.get(issue.key) ?? [];
+      const completedInWeek = issueChangelogs.some(
+        (cl) =>
+          cl.field === 'status' &&
+          cl.toValue !== null &&
+          doneStatuses.includes(cl.toValue) &&
+          cl.changedAt >= weekStart &&
+          cl.changedAt <= weekEnd,
+      );
+      if (!completedInWeek) continue;
+
+      const boardEntryDate = boardEntryDateByKey.get(issue.key) ?? issue.createdAt;
+      const jiraBaseUrl = this.configService.get<string>('JIRA_BASE_URL', '');
+      const jiraUrl = jiraBaseUrl ? `${jiraBaseUrl}/browse/${issue.key}` : '';
+
+      results.push({
+        key: issue.key,
+        summary: issue.summary,
+        issueType: issue.issueType,
+        priority: issue.priority ?? null,
+        status: issue.status,
+        points: issue.points ?? null,
+        epicKey: issue.epicKey ?? null,
+        assignedWeek: week,
+        completedInWeek: true,
+        addedMidWeek: false, // entered in a prior week — not added this week
+        roadmapStatus: 'none',
+        roadmapLinkSource: null,
+        isIncident: false,
+        isFailure: false,
+        labels: Array.isArray(issue.labels) ? (issue.labels as string[]) : [],
+        boardEntryDate: boardEntryDate.toISOString(),
+        cycleTimeDays: null,
+        isReopen: false,
+        jiraUrl,
+      });
+    }
 
     // -----------------------------------------------------------------------
     // Step 9 — Build summary

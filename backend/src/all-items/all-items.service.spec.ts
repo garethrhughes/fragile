@@ -1262,4 +1262,299 @@ describe('AllItemsService', () => {
     expect(result.boards[0].summary.completedCount).toBe(2);
     expect(result.boards[0].summary.totalItems).toBe(2);
   });
+
+  // -------------------------------------------------------------------------
+  // Proposal 0066 — Align kanban pulse with week-detail
+  // -------------------------------------------------------------------------
+
+  // 1. boardEntryStatuses — 7-entry default
+  it('kanban working set detects board entry via Backlog status when boardEntryStatuses uses default 7-entry list', async () => {
+    // Issue enters via 'Backlog' (not 'To Do') — invisible with old 1-entry fallback
+    // boardEntryStatuses is null to trigger the 7-entry default
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban', boardEntryStatuses: null as unknown as string[] });
+    const issue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT' });
+
+    const entryViaBacklog = makeChangelog({
+      id: 1,
+      issueKey: 'PLAT-1',
+      field: 'status',
+      fromValue: null,
+      toValue: 'Backlog', // NOT 'To Do'
+      changedAt: new Date('2026-05-12T08:00:00Z'), // W20
+    });
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue([issue]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([entryViaBacklog]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    // With 7-entry default, 'Backlog' is a valid board-entry status
+    expect(result.boards[0].summary.totalItems).toBe(1);
+    expect(result.boards[0].items[0].key).toBe('PLAT-1');
+  });
+
+  // 2. backlogStatusIds — working set
+  it('kanban working set excludes issues whose statusId is in backlogStatusIds', async () => {
+    const kanbanBoard = makeBoard({
+      boardId: 'PLAT',
+      boardType: 'kanban',
+      backlogStatusIds: ['10303'],
+    });
+    const activeIssue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT', status: 'To Do', statusId: null });
+    const backlogIssue = makeIssue({ key: 'PLAT-2', boardId: 'PLAT', status: 'Backlog', statusId: '10303' });
+
+    const entryCls = [activeIssue, backlogIssue].map((iss, i) =>
+      makeChangelog({
+        id: i + 1,
+        issueKey: iss.key,
+        field: 'status',
+        fromValue: null,
+        toValue: 'To Do',
+        changedAt: new Date('2026-05-12T08:00:00Z'), // W20
+      }),
+    );
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue([activeIssue, backlogIssue]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb(entryCls));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    expect(result.boards[0].summary.totalItems).toBe(1);
+    expect(result.boards[0].items[0].key).toBe('PLAT-1');
+  });
+
+  // 3. backlogStatusIds — completion scan
+  it('kanban completedCount excludes issues whose statusId is in backlogStatusIds', async () => {
+    const kanbanBoard = makeBoard({
+      boardId: 'PLAT',
+      boardType: 'kanban',
+      backlogStatusIds: ['10303'],
+    });
+    const activeIssue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT', status: 'Done', statusId: null });
+    const backlogIssue = makeIssue({ key: 'PLAT-2', boardId: 'PLAT', status: 'Done', statusId: '10303' });
+
+    // Both have board-entry this week
+    const entryCls = [activeIssue, backlogIssue].map((iss, i) =>
+      makeChangelog({ id: i + 1, issueKey: iss.key, field: 'status', fromValue: null, toValue: 'To Do', changedAt: new Date('2026-05-12T08:00:00Z') }),
+    );
+    // Both complete this week
+    const doneCls = [activeIssue, backlogIssue].map((iss, i) =>
+      makeChangelog({ id: i + 10, issueKey: iss.key, field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-05-14T10:00:00Z') }),
+    );
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue([activeIssue, backlogIssue]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([...entryCls, ...doneCls]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    expect(result.boards[0].summary.completedCount).toBe(1);
+  });
+
+  // 4. dataStartDate — working set
+  it('kanban working set excludes issues whose board-entry date is before dataStartDate', async () => {
+    const kanbanBoard = makeBoard({
+      boardId: 'PLAT',
+      boardType: 'kanban',
+      dataStartDate: '2025-01-01',
+    });
+    const newIssue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT', status: 'To Do' });
+    const oldIssue = makeIssue({ key: 'PLAT-2', boardId: 'PLAT', status: 'To Do' });
+
+    // PLAT-1 enters in W20 2026 (after dataStartDate)
+    // PLAT-2 enters in W20 2026 BUT its first-ever board-entry was in 2024 (before dataStartDate)
+    const plat1Entry = makeChangelog({ id: 1, issueKey: 'PLAT-1', field: 'status', fromValue: null, toValue: 'To Do', changedAt: new Date('2026-05-12T08:00:00Z') });
+    const plat2OldEntry = makeChangelog({ id: 2, issueKey: 'PLAT-2', field: 'status', fromValue: null, toValue: 'To Do', changedAt: new Date('2024-01-10T08:00:00Z') }); // before dataStartDate
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue([newIssue, oldIssue]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([plat1Entry, plat2OldEntry]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    expect(result.boards[0].summary.totalItems).toBe(1);
+    expect(result.boards[0].items[0].key).toBe('PLAT-1');
+  });
+
+  // 5. dataStartDate — completion scan
+  it('kanban completedCount excludes issues whose board-entry date is before dataStartDate', async () => {
+    const kanbanBoard = makeBoard({
+      boardId: 'PLAT',
+      boardType: 'kanban',
+      dataStartDate: '2025-01-01',
+    });
+    const newIssue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT', status: 'Done' });
+    const oldIssue = makeIssue({ key: 'PLAT-2', boardId: 'PLAT', status: 'Done' });
+
+    const newEntry = makeChangelog({ id: 1, issueKey: 'PLAT-1', field: 'status', fromValue: null, toValue: 'To Do', changedAt: new Date('2025-06-01T08:00:00Z') }); // after dataStartDate
+    const oldEntry = makeChangelog({ id: 2, issueKey: 'PLAT-2', field: 'status', fromValue: null, toValue: 'To Do', changedAt: new Date('2024-01-10T08:00:00Z') }); // before dataStartDate
+    const doneCls = [newIssue, oldIssue].map((iss, i) =>
+      makeChangelog({ id: i + 10, issueKey: iss.key, field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-05-14T10:00:00Z') }),
+    );
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue([newIssue, oldIssue]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([newEntry, oldEntry, ...doneCls]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    expect(result.boards[0].summary.completedCount).toBe(1);
+  });
+
+  // 6. 1-day grace period — kanbanAdd false for Monday entry
+  it('kanbanAdd is false for issues entering on Monday (day 1 grace period)', async () => {
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
+    const mondayIssue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT' });
+
+    // W20 starts Mon 2026-05-11 00:00:00 UTC — entering Monday is within grace period
+    const mondayEntry = makeChangelog({
+      id: 1, issueKey: 'PLAT-1', field: 'status', fromValue: null, toValue: 'To Do',
+      changedAt: new Date('2026-05-11T09:00:00Z'), // Monday
+    });
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue([mondayIssue]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([mondayEntry]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    const item = result.boards[0].items[0];
+    expect(item.kanbanAdd).toBe(false); // Monday — within grace period
+  });
+
+  // 7. 1-day grace period — kanbanAdd true for Tuesday+ entry
+  it('kanbanAdd is true for issues entering after Monday (added mid-week)', async () => {
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
+    const tuesdayIssue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT' });
+
+    const tuesdayEntry = makeChangelog({
+      id: 1, issueKey: 'PLAT-1', field: 'status', fromValue: null, toValue: 'To Do',
+      changedAt: new Date('2026-05-12T09:00:00Z'), // Tuesday
+    });
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue([tuesdayIssue]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([tuesdayEntry]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    const item = result.boards[0].items[0];
+    expect(item.kanbanAdd).toBe(true); // Tuesday — beyond grace period
+  });
+
+  // 8. addedMidSprintCount reflects grace period, not always totalItems
+  it('kanban addedMidSprintCount counts only post-grace-period entries, not all items', async () => {
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
+    const mondayIssue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT' });
+    const tuesdayIssue = makeIssue({ key: 'PLAT-2', boardId: 'PLAT' });
+    const wednesdayIssue = makeIssue({ key: 'PLAT-3', boardId: 'PLAT' });
+
+    const cls = [
+      makeChangelog({ id: 1, issueKey: 'PLAT-1', field: 'status', fromValue: null, toValue: 'To Do', changedAt: new Date('2026-05-11T08:00:00Z') }), // Mon
+      makeChangelog({ id: 2, issueKey: 'PLAT-2', field: 'status', fromValue: null, toValue: 'To Do', changedAt: new Date('2026-05-12T08:00:00Z') }), // Tue
+      makeChangelog({ id: 3, issueKey: 'PLAT-3', field: 'status', fromValue: null, toValue: 'To Do', changedAt: new Date('2026-05-13T08:00:00Z') }), // Wed
+    ];
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue([mondayIssue, tuesdayIssue, wednesdayIssue]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb(cls));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    expect(result.boards[0].summary.totalItems).toBe(3);
+    // Only Tue+Wed entries are "added mid-week"; Mon is within grace period
+    expect(result.boards[0].summary.addedMidSprintCount).toBe(2);
+  });
+
+  // 9. Expanded item list — completed-from-prior-week issues appear in items
+  it('kanban item list includes issues that completed this week from prior weeks', async () => {
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
+    // PLAT-1 entered this week (in working set)
+    // PLAT-2 entered a prior week, completes this week (should appear in list)
+    const inWeekIssue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT', status: 'To Do' });
+    const priorWeekIssue = makeIssue({ key: 'PLAT-2', boardId: 'PLAT', status: 'Done' });
+
+    const cls = [
+      makeChangelog({ id: 1, issueKey: 'PLAT-1', field: 'status', fromValue: null, toValue: 'To Do', changedAt: new Date('2026-05-12T08:00:00Z') }), // W20 entry
+      makeChangelog({ id: 2, issueKey: 'PLAT-2', field: 'status', fromValue: null, toValue: 'To Do', changedAt: new Date('2026-04-01T08:00:00Z') }), // prior week entry
+      makeChangelog({ id: 3, issueKey: 'PLAT-2', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-05-14T10:00:00Z') }), // W20 completion
+    ];
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue([inWeekIssue, priorWeekIssue]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb(cls));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    const keys = result.boards[0].items.map((i) => i.key);
+    expect(keys).toContain('PLAT-1'); // entered this week
+    expect(keys).toContain('PLAT-2'); // completed this week from prior week
+  });
+
+  // 10. Prior-week completer has correct flags
+  it('kanban prior-week completer has started=false, kanbanAdd=false, completed=true', async () => {
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
+    const priorWeekIssue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT', status: 'Done' });
+
+    const cls = [
+      makeChangelog({ id: 1, issueKey: 'PLAT-1', field: 'status', fromValue: null, toValue: 'To Do', changedAt: new Date('2026-04-01T08:00:00Z') }), // prior entry
+      makeChangelog({ id: 2, issueKey: 'PLAT-1', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-05-14T10:00:00Z') }), // W20 done
+    ];
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue([priorWeekIssue]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb(cls));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    // totalItems = 0 (none entered this week), but item list has 1 item
+    expect(result.boards[0].summary.totalItems).toBe(0);
+    expect(result.boards[0].items).toHaveLength(1);
+    const item = result.boards[0].items[0];
+    expect(item.started).toBe(false);
+    expect(item.kanbanAdd).toBe(false);
+    expect(item.completed).toBe(true);
+  });
 });

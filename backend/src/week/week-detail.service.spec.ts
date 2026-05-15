@@ -1400,4 +1400,103 @@ describe('WeekDetailService', () => {
       expect(result.summary.failureCount).toBe(1);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Proposal 0066 — board-wide completedIssues and expanded item list
+  // -------------------------------------------------------------------------
+
+  describe('proposal 0066 — board-wide completedIssues', () => {
+    // WEEK = 2026-W02, WEEK_START = 2026-01-05 (Mon)
+
+    it('completedIssues counts issues that completed this week from prior weeks', async () => {
+      // PLAT-1 entered this week, PLAT-2 entered a prior week but completes this week
+      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig());
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', status: 'To Do' }),
+        makeIssue({ key: 'PLAT-2', status: 'Done', createdAt: new Date('2025-11-01T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          // PLAT-1 enters this week
+          makeChangelog({ issueKey: 'PLAT-1', toValue: 'To Do', changedAt: new Date('2026-01-05T09:00:00Z') }),
+          // PLAT-2 entered 3 months ago
+          makeChangelog({ issueKey: 'PLAT-2', toValue: 'To Do', changedAt: new Date('2025-11-01T09:00:00Z') }),
+          // PLAT-2 completes this week
+          makeChangelog({ issueKey: 'PLAT-2', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-01-07T14:00:00Z') }),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+
+      const result = await service.getDetail('PLAT', WEEK);
+
+      // totalIssues = 1 (only PLAT-1 entered this week)
+      expect(result.summary.totalIssues).toBe(1);
+      // completedIssues = 1 (PLAT-2 completed this week from prior entry)
+      expect(result.summary.completedIssues).toBe(1);
+    });
+
+    it('completed-from-prior-week issue appears in the issue list with completedInWeek=true', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig());
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', status: 'To Do' }),
+        makeIssue({ key: 'PLAT-2', status: 'Done', createdAt: new Date('2025-11-01T00:00:00Z') }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeChangelog({ issueKey: 'PLAT-1', toValue: 'To Do', changedAt: new Date('2026-01-05T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-2', toValue: 'To Do', changedAt: new Date('2025-11-01T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-2', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-01-07T14:00:00Z') }),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+
+      const result = await service.getDetail('PLAT', WEEK);
+
+      const keys = result.issues.map((i) => i.key);
+      expect(keys).toContain('PLAT-1');
+      expect(keys).toContain('PLAT-2');
+      const plat2 = result.issues.find((i) => i.key === 'PLAT-2')!;
+      expect(plat2.completedInWeek).toBe(true);
+      expect(plat2.addedMidWeek).toBe(false);
+    });
+
+    it('completedIssues respects backlogStatusIds — does not count backlog issues', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig({ backlogStatusIds: ['10303'] }));
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', status: 'Done', statusId: null }),
+        makeIssue({ key: 'PLAT-2', status: 'Done', statusId: '10303' }), // in backlog
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          makeChangelog({ issueKey: 'PLAT-1', toValue: 'To Do', changedAt: new Date('2025-11-01T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-2', toValue: 'To Do', changedAt: new Date('2025-11-01T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-1', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-01-07T14:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-2', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-01-07T14:00:00Z') }),
+        ]),
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+
+      const result = await service.getDetail('PLAT', WEEK);
+
+      // PLAT-2 is in backlog status — must not be counted
+      expect(result.summary.completedIssues).toBe(1);
+    });
+
+    it('scrum boards are unaffected (week detail only serves kanban — reject test)', async () => {
+      boardConfigRepo.findOne.mockResolvedValue({ ...kanbanConfig(), boardType: 'scrum' } as unknown as BoardConfig);
+      issueRepo.find.mockResolvedValue([makeIssue()]);
+      roadmapConfigRepo.find.mockResolvedValue([]);
+      await expect(service.getDetail('PLAT', WEEK)).rejects.toThrow();
+    });
+  });
 });
+
