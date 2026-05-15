@@ -111,6 +111,7 @@ const defaultFieldConfig: JiraFieldConfig = {
   epicLinkFieldId: 'customfield_10014',
   jpdDeliveryLinkInward: ['is implemented by', 'is delivered by'],
   jpdDeliveryLinkOutward: ['implements', 'delivers'],
+  sprintFieldId: 'customfield_10020',
 };
 
 // ---------------------------------------------------------------------------

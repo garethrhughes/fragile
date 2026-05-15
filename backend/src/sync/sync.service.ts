@@ -35,6 +35,7 @@ interface FieldConfig {
   epicLinkFieldId: string | null;
   jpdDeliveryLinkInward: string[];
   jpdDeliveryLinkOutward: string[];
+  sprintFieldId: string;
 }
 
 /** Fallback values that match the previously hardcoded behaviour. */
@@ -49,6 +50,7 @@ const DEFAULT_FIELD_CONFIG: FieldConfig = {
   epicLinkFieldId: 'customfield_10014',
   jpdDeliveryLinkInward: ['is implemented by', 'is delivered by'],
   jpdDeliveryLinkOutward: ['implements', 'delivers'],
+  sprintFieldId: 'customfield_10020',
 };
 
 @Injectable()
@@ -268,6 +270,7 @@ export class SyncService implements OnModuleInit {
       epicLinkFieldId: row.epicLinkFieldId,
       jpdDeliveryLinkInward: row.jpdDeliveryLinkInward,
       jpdDeliveryLinkOutward: row.jpdDeliveryLinkOutward,
+      sprintFieldId: row.sprintFieldId,
     };
   }
 
@@ -353,7 +356,7 @@ export class SyncService implements OnModuleInit {
     }
     // Always request the sprint field so persistIssueSprintMembership can
     // persist multi-sprint membership rows for scrum issues.
-    fields.push('customfield_10020');
+    fields.push(fieldConfig.sprintFieldId);
     return fields;
   }
 
@@ -555,7 +558,7 @@ export class SyncService implements OnModuleInit {
 
       // Persist multi-sprint membership for each issue on this page
       for (const raw of response.issues) {
-        await this.persistIssueSprintMembership(raw.key, raw.fields);
+        await this.persistIssueSprintMembership(raw.key, raw.fields, fieldConfig.sprintFieldId);
       }
 
       // Retain only keys for the changelog phase (not the full issue objects)
@@ -572,7 +575,7 @@ export class SyncService implements OnModuleInit {
 
   /**
    * Updates sprint membership rows for one issue key from Jira's current
-   * `customfield_10020`.
+   * sprint field (configured via `sprintFieldId` in JiraFieldConfig).
    *
    * Behaviour:
    *   - If Jira returns a non-empty sprint array, replace existing rows
@@ -581,7 +584,7 @@ export class SyncService implements OnModuleInit {
    *   - If Jira returns an empty/missing sprint array, leave existing rows
    *     untouched. This preserves historical membership for issues that
    *     completed in a sprint that has since closed — Jira drops closed
-   *     sprints from `customfield_10020` for Done issues, but the row is
+   *     sprints from the sprint field for Done issues, but the row is
    *     the only fallback the gaps report and sprint membership
    *     reconstruction have for issues that were created directly into a
    *     sprint (no Sprint-field changelog event is fired by Jira for
@@ -589,13 +592,15 @@ export class SyncService implements OnModuleInit {
    *
    * Without this guard, completed issues with no Sprint changelog were
    * falsely classified as "never boarded" once Jira stopped returning their
-   * sprint in `customfield_10020`.
+   * sprint in the configured sprint field.
+   * sprint in the configured sprint field (`sprintFieldId`).
    */
   private async persistIssueSprintMembership(
     issueKey: string,
     fields: JiraIssueValue['fields'],
+    sprintFieldId: string,
   ): Promise<void> {
-    const sprintField = fields['customfield_10020'];
+    const sprintField = fields[sprintFieldId];
 
     // Jira returned no current sprints — preserve existing rows as the
     // historical membership snapshot. Do NOT delete.

@@ -64,4 +64,12 @@ export class JiraFieldConfig {
     default: '["implements","delivers"]',
   })
   jpdDeliveryLinkOutward!: string[];
+
+  /**
+   * Custom field ID for the Sprint field.  Jira exposes sprint membership
+   * through a custom field (not a native REST field).  The ID is typically
+   * `customfield_10020` on Jira Cloud but can vary between tenants.
+   */
+  @Column({ type: 'varchar', default: 'customfield_10020' })
+  sprintFieldId!: string;
 }
