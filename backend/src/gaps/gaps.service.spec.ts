@@ -761,9 +761,9 @@ describe('GapsService', () => {
       const issue3 = makeIssue({ key: 'ACC-3', status: 'In Progress' });
       issueRepo.find.mockResolvedValue([issue1, issue2, issue3]);
 
-      // All within last-90-days default window (today is 2026-04-14)
-      const earlier = new Date('2026-02-10T10:00:00Z');
-      const later = new Date('2026-03-20T10:00:00Z');
+      // Use dates relative to now so they always fall within the 90-day window
+      const earlier = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30 days ago
+      const later = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);   // 10 days ago
 
       setupChangelogs(
         [
@@ -942,8 +942,8 @@ describe('GapsService', () => {
           return Promise.resolve(null);
         });
 
-        const earlier = new Date('2026-02-10T10:00:00Z');
-        const later = new Date('2026-03-20T10:00:00Z');
+        const earlier = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30 days ago
+        const later = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);   // 10 days ago
 
         issueRepo.find.mockImplementation(({ where }: { where: { boardId: string } }) => {
           if (where.boardId === 'ACC') {
