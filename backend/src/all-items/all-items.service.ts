@@ -212,6 +212,9 @@ export class AllItemsService {
     let sprintNameByIssue = new Map<string, string>();
     // Kanban-only: board-entry date map used by working set filter and completion scan
     let kanbanBoardEntryDateByKey = new Map<string, Date>();
+    // Scrum-only: sprint-lifetime committed/added totals for stability calculation
+    let scrumTotalCommitted = 0;
+    let scrumTotalAdded = 0;
 
     if (isKanban) {
       // Compute board-entry date for every board issue using the shared helper
@@ -259,6 +262,8 @@ export class AllItemsService {
       for (const sprint of overlappingSprints) {
         const m = membershipMap.get(sprint.id);
         if (!m) continue;
+        scrumTotalCommitted += m.committedKeys.size;
+        scrumTotalAdded += m.addedKeys.size;
         for (const key of m.committedKeys) {
           workingSetKeys.add(key);
           if (!sprintNameByIssue.has(key)) sprintNameByIssue.set(key, sprint.name);
@@ -510,7 +515,12 @@ export class AllItemsService {
     // prior-week completers.
     const filteredItems = this.applyFilters(items, filters);
 
-    const healthScore = this.calculateHealthScore(summary, isKanban ? 'kanban' : 'scrum');
+    const healthScore = this.calculateHealthScore(
+      summary,
+      isKanban ? 'kanban' : 'scrum',
+      isKanban ? undefined : scrumTotalCommitted,
+      isKanban ? undefined : scrumTotalAdded,
+    );
 
     return {
       boardId,
@@ -727,8 +737,10 @@ export class AllItemsService {
   private calculateHealthScore(
     summary: AllItemsBoardSummary,
     boardType: 'scrum' | 'kanban',
+    scrumCommitted?: number,
+    scrumAdded?: number,
   ): BoardHealthScore {
-    const { totalItems, completedCount, onRoadmapCount, supportCount, addedMidSprintCount } = summary;
+    const { totalItems, completedCount, onRoadmapCount, supportCount } = summary;
 
     if (totalItems === 0) {
       return { overall: 100, roadmapAlignmentScore: 100, supportBurdenScore: 100, stabilityScore: 100 };
@@ -742,15 +754,22 @@ export class AllItemsService {
     const supportBurdenScore = Math.round((1 - supportCount / totalItems) * 100);
 
     // Stability:
-    // Scrum  — disruption ratio: penalises unplanned mid-sprint additions.
+    // Scrum  — committed / (committed + added) across overlapping sprints.
+    //          Uses sprint-lifetime membership data (same as planning report).
+    //          100% when no sprint members exist yet (proposal 0070).
     // Kanban — throughput balance: min(completed / entered, 1) * 100.
     //          A kanban team is stable when it completes as much as it pulls in
     //          (ADR 0062). Over-delivery is capped at 100 — clearing a backlog
     //          is not penalised.
-    const stabilityScore =
-      boardType === 'kanban'
-        ? Math.round(Math.min(completedCount / totalItems, 1) * 100)
-        : Math.round((1 - addedMidSprintCount / totalItems) * 100);
+    let stabilityScore: number;
+    if (boardType === 'kanban') {
+      stabilityScore = Math.round(Math.min(completedCount / totalItems, 1) * 100);
+    } else {
+      const totalSprintItems = (scrumCommitted ?? 0) + (scrumAdded ?? 0);
+      stabilityScore = totalSprintItems === 0
+        ? 100
+        : Math.round((scrumCommitted ?? 0) / totalSprintItems * 100);
+    }
 
     // Support burden is informational only — excluded from overall to avoid
     // penalising teams for support work they have no control over.

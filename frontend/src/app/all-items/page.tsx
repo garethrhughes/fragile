@@ -198,7 +198,7 @@ function BoardCard({ board }: { board: AllItemsBoardResult }) {
           <Tooltip text={
             board.boardType === 'kanban'
               ? 'Stability (throughput balance): completed items ÷ items entered this week. 100% when the team completes as much as it pulls in.'
-              : 'Stability: percentage of sprint items that were committed at sprint start (not added mid-sprint). 100% when no items were added mid-sprint.'
+              : 'Stability: committed items ÷ total sprint scope (committed + added). Uses sprint-lifetime membership across all overlapping sprints. 100% when nothing was added mid-sprint.'
           }>
             <div className="text-lg font-bold underline decoration-dotted">
               {healthScore.stabilityScore}%

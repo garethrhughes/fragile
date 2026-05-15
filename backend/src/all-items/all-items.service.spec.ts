@@ -1056,7 +1056,7 @@ describe('AllItemsService', () => {
     const sprint = makeSprint();
     const committed = makeIssue({ key: 'ACC-1' });
     const added = makeIssue({ key: 'ACC-2' });
-    // 1 of 2 items was added mid-sprint: disruption ratio = 1/2 = 50 → stabilityScore = 50
+    // 1 committed + 1 added: stability = 1 / (1 + 1) * 100 = 50
 
     boardConfigRepo.find.mockResolvedValue([makeBoard()]);
     issueRepo.find.mockResolvedValue([committed, added]);
@@ -1071,8 +1071,48 @@ describe('AllItemsService', () => {
 
     const result = await service.getAllItems('2026-W20', undefined);
 
-    // scrum: (1 - 1/2) * 100 = 50
+    // scrum: committed / (committed + added) = 1 / 2 = 50%
     expect(result.boards[0].healthScore.stabilityScore).toBe(50);
+  });
+
+  it('scrum stability uses sprint-lifetime committed/added ratio across overlapping sprints', async () => {
+    // Sprint A: 8 committed + 2 added = 10 items
+    // Sprint B: 5 committed + 0 added = 5 items
+    // Pooled: 13 committed / 15 total = 87% stability
+    const sprintA = makeSprint({ id: 'sprint-a', name: 'Sprint A' });
+    const sprintB = makeSprint({ id: 'sprint-b', name: 'Sprint B' });
+
+    const issues = [
+      ...Array.from({ length: 8 }, (_, i) => makeIssue({ key: `ACC-${i + 1}` })),
+      makeIssue({ key: 'ACC-9' }),
+      makeIssue({ key: 'ACC-10' }),
+      ...Array.from({ length: 5 }, (_, i) => makeIssue({ key: `ACC-${i + 11}` })),
+    ];
+
+    boardConfigRepo.find.mockResolvedValue([makeBoard()]);
+    issueRepo.find.mockResolvedValue(issues);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([sprintA, sprintB]));
+    sprintMembership.reconstructMany.mockResolvedValue(
+      new Map([
+        ['sprint-a', membershipWith(
+          ['ACC-1', 'ACC-2', 'ACC-3', 'ACC-4', 'ACC-5', 'ACC-6', 'ACC-7', 'ACC-8'],
+          ['ACC-9', 'ACC-10'],
+        )],
+        ['sprint-b', membershipWith(
+          ['ACC-11', 'ACC-12', 'ACC-13', 'ACC-14', 'ACC-15'],
+          [],
+        )],
+      ]),
+    );
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    // Pooled: 13 / (13 + 2) = 87%
+    expect(result.boards[0].healthScore.stabilityScore).toBe(87);
   });
 
   // -------------------------------------------------------------------------
