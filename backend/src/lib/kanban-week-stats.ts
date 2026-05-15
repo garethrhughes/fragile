@@ -130,6 +130,11 @@ export function getKanbanCompletedThisWeek(
   weekEnd: Date,
 ): JiraIssue[] {
   return filteredIssues.filter((issue) => {
+    // Issue must currently be in a done status. An issue that passed through
+    // a done status then moved to something else (e.g. Done → Scheduled) is
+    // not complete — it should not be counted.
+    if (!doneStatuses.has(issue.status.toLowerCase())) return false;
+
     const logs = statusChangelogsByIssue.get(issue.key) ?? [];
     return logs.some(
       (cl) =>

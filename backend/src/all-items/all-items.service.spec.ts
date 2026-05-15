@@ -875,9 +875,9 @@ describe('AllItemsService', () => {
     const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
     // 3 issues enter the board this week; 3 are completed this week
     const issues = [
-      makeIssue({ key: 'PLAT-1', boardId: 'PLAT' }),
-      makeIssue({ key: 'PLAT-2', boardId: 'PLAT' }),
-      makeIssue({ key: 'PLAT-3', boardId: 'PLAT' }),
+      makeIssue({ key: 'PLAT-1', boardId: 'PLAT', status: 'Done' }),
+      makeIssue({ key: 'PLAT-2', boardId: 'PLAT', status: 'Done' }),
+      makeIssue({ key: 'PLAT-3', boardId: 'PLAT', status: 'Done' }),
     ];
     const entryChangelogs = issues.map((iss, i) =>
       makeChangelog({
@@ -917,7 +917,7 @@ describe('AllItemsService', () => {
     const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
     // 5 issues enter; only 3 are done within the week
     const issues = Array.from({ length: 5 }, (_, i) =>
-      makeIssue({ key: `PLAT-${i + 1}`, boardId: 'PLAT' }),
+      makeIssue({ key: `PLAT-${i + 1}`, boardId: 'PLAT', status: i < 3 ? 'Done' : 'In Progress' }),
     );
     const entryChangelogs = issues.map((iss, i) =>
       makeChangelog({
@@ -962,8 +962,8 @@ describe('AllItemsService', () => {
     // test the cap anyway to confirm Math.min is applied.
     const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
     const issues = [
-      makeIssue({ key: 'PLAT-1', boardId: 'PLAT' }),
-      makeIssue({ key: 'PLAT-2', boardId: 'PLAT' }),
+      makeIssue({ key: 'PLAT-1', boardId: 'PLAT', status: 'Done' }),
+      makeIssue({ key: 'PLAT-2', boardId: 'PLAT', status: 'Done' }),
     ];
     const entryChangelogs = issues.map((iss, i) =>
       makeChangelog({
@@ -1062,13 +1062,13 @@ describe('AllItemsService', () => {
     const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
     // 2 items entered this week (working set), 3 items entered prior weeks
     const enteredThisWeek = [
-      makeIssue({ key: 'PLAT-1', boardId: 'PLAT' }),
+      makeIssue({ key: 'PLAT-1', boardId: 'PLAT', status: 'Done' }),
       makeIssue({ key: 'PLAT-2', boardId: 'PLAT' }),
     ];
     const enteredPriorWeeks = [
-      makeIssue({ key: 'PLAT-3', boardId: 'PLAT' }),
-      makeIssue({ key: 'PLAT-4', boardId: 'PLAT' }),
-      makeIssue({ key: 'PLAT-5', boardId: 'PLAT' }),
+      makeIssue({ key: 'PLAT-3', boardId: 'PLAT', status: 'Done' }),
+      makeIssue({ key: 'PLAT-4', boardId: 'PLAT', status: 'Done' }),
+      makeIssue({ key: 'PLAT-5', boardId: 'PLAT', status: 'Done' }),
     ];
     const allIssues = [...enteredThisWeek, ...enteredPriorWeeks];
 
@@ -1132,7 +1132,7 @@ describe('AllItemsService', () => {
       makeIssue({ key: `PLAT-${i + 1}`, boardId: 'PLAT' }),
     );
     const fromPriorWeek = Array.from({ length: 3 }, (_, i) =>
-      makeIssue({ key: `PLAT-${i + 10}`, boardId: 'PLAT' }),
+      makeIssue({ key: `PLAT-${i + 10}`, boardId: 'PLAT', status: 'Done' }),
     );
     const allIssues = [...enteredThisWeek, ...fromPriorWeek];
 

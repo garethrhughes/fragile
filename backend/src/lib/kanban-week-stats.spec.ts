@@ -220,8 +220,8 @@ describe('getKanbanPulledIn', () => {
 
 describe('getKanbanCompletedThisWeek', () => {
   it('returns issues with a done-transition within the week, regardless of when they entered', () => {
-    const enteredThisWeek = makeIssue({ key: 'PLAT-1' });
-    const enteredPriorWeek = makeIssue({ key: 'PLAT-2' });
+    const enteredThisWeek = makeIssue({ key: 'PLAT-1', status: 'done' });
+    const enteredPriorWeek = makeIssue({ key: 'PLAT-2', status: 'done' });
     const clsByIssue = new Map([
       ['PLAT-1', [
         makeCl({ issueKey: 'PLAT-1', toValue: 'To Do', changedAt: new Date('2026-05-12T08:00:00Z') }),
@@ -285,7 +285,7 @@ describe('getKanbanCompletedThisWeek', () => {
   });
 
   it('is case-insensitive for doneStatuses matching', () => {
-    const issue = makeIssue({ key: 'PLAT-1' });
+    const issue = makeIssue({ key: 'PLAT-1', status: 'DONE' });
     const clsByIssue = new Map([
       ['PLAT-1', [
         makeCl({ issueKey: 'PLAT-1', toValue: 'DONE', changedAt: new Date('2026-05-14T15:00:00Z') }),
@@ -301,6 +301,26 @@ describe('getKanbanCompletedThisWeek', () => {
     );
 
     expect(result).toHaveLength(1);
+  });
+  it('does not count an issue that passed through a done status but is currently in a non-done status', () => {
+    // PLAT-1279 scenario: Done → Scheduled within the same week
+    const issue = makeIssue({ key: 'PLAT-1', status: 'Scheduled' });
+    const clsByIssue = new Map([
+      ['PLAT-1', [
+        makeCl({ issueKey: 'PLAT-1', toValue: 'Done', changedAt: new Date('2026-05-12T08:00:00Z') }),
+        makeCl({ issueKey: 'PLAT-1', toValue: 'Scheduled', changedAt: new Date('2026-05-12T09:00:00Z') }),
+      ]],
+    ]);
+
+    const result = getKanbanCompletedThisWeek(
+      [issue],
+      clsByIssue,
+      DONE_STATUSES,
+      WEEK_START,
+      WEEK_END,
+    );
+
+    expect(result).toHaveLength(0);
   });
 });
 
