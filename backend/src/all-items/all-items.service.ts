@@ -305,7 +305,7 @@ export class AllItemsService {
     const triagePrefix = triageBoardKey ? `${triageBoardKey}-` : null;
 
     const linksByIssue = new Map<string, JiraIssueLink[]>();
-    if (supportLinkTypes.length > 0 && triageBoardKey) {
+    if (supportLinkTypes.length > 0 && triageBoardKey && workingSetKeys.length > 0) {
       const links = await this.issueLinkRepo
         .createQueryBuilder('lnk')
         .where('lnk.sourceIssueKey IN (:...keys)', { keys: workingSetKeys })

@@ -225,7 +225,28 @@ describe('AllItemsService', () => {
     expect(result.boards[0].summary.totalItems).toBe(0);
   });
 
-  // -------------------------------------------------------------------------
+  it('does not crash with QueryFailedError when working set is empty and supportLinkTypes is configured', async () => {
+    // Regression test: empty working set produced `IN ()` which PostgreSQL rejects.
+    // Affects kanban boards during weeks when no issues were pulled in.
+    const board = makeBoard({ boardType: 'kanban', supportLinkTypes: ['clones'], triageBoardKey: 'TTB' });
+    boardConfigRepo.find.mockResolvedValue([board]);
+    // Board has issues but none entered the board this week → kanban workingSet = []
+    issueRepo.find.mockResolvedValue([makeIssue({ status: 'In Progress', inBacklog: false } as never)]);
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    // Simulate Postgres rejecting `IN ()` — this is what happened in production
+    const emptyInQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockRejectedValue(new Error('syntax error at or near ")"')),
+    };
+    issueLinkRepo.createQueryBuilder.mockReturnValue(emptyInQb as never);
+
+    // Must resolve without throwing — the guard must prevent issuing `IN ()`
+    await expect(service.getAllItems('2026-W11', undefined)).resolves.toBeDefined();
+  });
   // Scrum: future sprints are excluded
   // -------------------------------------------------------------------------
 
