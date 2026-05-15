@@ -490,12 +490,15 @@ export class AllItemsService {
         });
       }
 
-      // In-flight: all on-board issues that are not done and not cancelled.
-      // This is a board-state snapshot — independent of the week window.
+      // In-flight: on-board issues that entered BEFORE this week, not done, not cancelled.
+      // Issues that entered this week are "Pulled In" — excluded from In Flight.
       const inFlightIssues = getKanbanInFlight(
         filteredBoardIssues,
         doneStatuses,
         cancelledStatuses,
+        kanbanBoardEntryDateByKey,
+        weekStart,
+        weekEnd,
       );
       summary.inFlightCount = inFlightIssues.length;
 

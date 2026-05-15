@@ -562,14 +562,18 @@ export class WeekDetailService {
     // Step 8c — In-flight issues
     //
     // Issues currently on the board that are not done and not cancelled.
-    // Added to the results list if not already present (some in-flight issues
-    // may have entered the board this week and already be in weekIssues).
+    // Added to the results list if not already present.
+    // Issues that entered the board this week are excluded — those are
+    // "Pulled In" and distinct from "In Flight".
     // -----------------------------------------------------------------------
     const cancelledStatusSet = new Set(cancelledStatusNames.map((s) => s.toLowerCase()));
     const inFlightIssues = getKanbanInFlight(
       startBoundedIssues,
       doneStatusesSet,
       cancelledStatusSet,
+      boardEntryDateByKey,
+      weekStart,
+      weekEnd,
     );
     const existingResultKeys = new Set(results.map((r) => r.key));
     for (const issue of inFlightIssues) {

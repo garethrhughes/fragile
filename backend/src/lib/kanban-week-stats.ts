@@ -162,21 +162,30 @@ export function getKanbanCompletedThisWeek(
 // ---------------------------------------------------------------------------
 // getKanbanInFlight
 //
-// Returns all issues in the filtered pool whose current status is neither a
-// done status nor a cancelled status. These are issues currently being worked
-// on — a board-state snapshot, independent of the week window.
+// Returns all issues in the filtered pool that are currently being worked on:
+//   - entered the board BEFORE this week (not the "pulled in" set)
+//   - not in a done status
+//   - not in a cancelled status
 //
-// Both doneStatuses and cancelledStatuses must be pre-lowercased by the caller.
+// "Pulled in" issues (boardEntryDate >= weekStart) are explicitly excluded —
+// those belong to the Pulled In count, not In Flight.
+//
+// All status sets must be pre-lowercased by the caller.
 // ---------------------------------------------------------------------------
 
 export function getKanbanInFlight(
   filteredIssues: JiraIssue[],
-  doneStatuses: Set<string>,      // must be pre-lowercased
-  cancelledStatuses: Set<string>, // must be pre-lowercased
+  doneStatuses: Set<string>,         // must be pre-lowercased
+  cancelledStatuses: Set<string>,    // must be pre-lowercased
+  boardEntryDateByKey: Map<string, Date>,
+  weekStart: Date,
+  weekEnd: Date,
 ): JiraIssue[] {
-  return filteredIssues.filter(
-    (issue) =>
-      !doneStatuses.has(issue.status.toLowerCase()) &&
-      !cancelledStatuses.has(issue.status.toLowerCase()),
-  );
+  return filteredIssues.filter((issue) => {
+    if (doneStatuses.has(issue.status.toLowerCase())) return false;
+    if (cancelledStatuses.has(issue.status.toLowerCase())) return false;
+    // Exclude issues that entered this week — those are "Pulled In"
+    const entryDate = boardEntryDateByKey.get(issue.key) ?? issue.createdAt;
+    return entryDate < weekStart;
+  });
 }

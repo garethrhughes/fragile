@@ -334,7 +334,14 @@ describe('getKanbanCompletedThisWeek', () => {
 // ---------------------------------------------------------------------------
 
 describe('getKanbanInFlight', () => {
-  it('returns issues that are not in a done or cancelled status', () => {
+  const boardEntryDateByKey = new Map([
+    ['PLAT-1', new Date('2026-04-01T08:00:00Z')], // prior week — in-flight candidate
+    ['PLAT-2', new Date('2026-04-01T08:00:00Z')],
+    ['PLAT-3', new Date('2026-04-01T08:00:00Z')],
+    ['PLAT-4', new Date('2026-04-01T08:00:00Z')],
+  ]);
+
+  it('returns issues that are not in a done or cancelled status and entered before this week', () => {
     const active = makeIssue({ key: 'PLAT-1', status: 'In Progress' });
     const done   = makeIssue({ key: 'PLAT-2', status: 'Done' });
     const cancelled = makeIssue({ key: 'PLAT-3', status: 'Cancelled' });
@@ -344,18 +351,46 @@ describe('getKanbanInFlight', () => {
       [active, done, cancelled, todo],
       DONE_STATUSES,
       new Set(['cancelled']),
+      boardEntryDateByKey,
+      WEEK_START,
+      WEEK_END,
     );
 
     expect(result.map(i => i.key)).toEqual(['PLAT-1', 'PLAT-4']);
   });
 
+  it('excludes issues that entered the board this week (those are Pulled In, not In Flight)', () => {
+    const priorWeek = makeIssue({ key: 'PLAT-1', status: 'In Progress' });
+    const thisWeek  = makeIssue({ key: 'PLAT-2', status: 'In Progress' });
+
+    const entryDates = new Map([
+      ['PLAT-1', new Date('2026-04-01T08:00:00Z')], // prior week
+      ['PLAT-2', new Date('2026-05-12T08:00:00Z')], // this week (W20)
+    ]);
+
+    const result = getKanbanInFlight(
+      [priorWeek, thisWeek],
+      DONE_STATUSES,
+      new Set(['cancelled']),
+      entryDates,
+      WEEK_START,
+      WEEK_END,
+    );
+
+    expect(result.map(i => i.key)).toEqual(['PLAT-1']); // PLAT-2 excluded — entered this week
+  });
+
   it('is case-insensitive for status matching', () => {
     const issue = makeIssue({ key: 'PLAT-1', status: 'DONE' });
+    const entryDates = new Map([['PLAT-1', new Date('2026-04-01T08:00:00Z')]]);
 
     const result = getKanbanInFlight(
       [issue],
-      DONE_STATUSES, // contains 'done' lowercase
+      DONE_STATUSES,
       new Set(['cancelled']),
+      entryDates,
+      WEEK_START,
+      WEEK_END,
     );
 
     expect(result).toHaveLength(0);
@@ -367,27 +402,43 @@ describe('getKanbanInFlight', () => {
       makeIssue({ key: 'PLAT-2', status: 'Released' }),
       makeIssue({ key: 'PLAT-3', status: 'Cancelled' }),
     ];
+    const entryDates = new Map([
+      ['PLAT-1', new Date('2026-04-01T08:00:00Z')],
+      ['PLAT-2', new Date('2026-04-01T08:00:00Z')],
+      ['PLAT-3', new Date('2026-04-01T08:00:00Z')],
+    ]);
 
     const result = getKanbanInFlight(
       issues,
       new Set(['done', 'released']),
       new Set(['cancelled']),
+      entryDates,
+      WEEK_START,
+      WEEK_END,
     );
 
     expect(result).toHaveLength(0);
   });
 
-  it('returns all issues when none are done or cancelled', () => {
+  it('returns all prior-week issues when none are done or cancelled', () => {
     const issues = [
       makeIssue({ key: 'PLAT-1', status: 'To Do' }),
       makeIssue({ key: 'PLAT-2', status: 'In Progress' }),
       makeIssue({ key: 'PLAT-3', status: 'In Review' }),
     ];
+    const entryDates = new Map([
+      ['PLAT-1', new Date('2026-04-01T08:00:00Z')],
+      ['PLAT-2', new Date('2026-04-01T08:00:00Z')],
+      ['PLAT-3', new Date('2026-04-01T08:00:00Z')],
+    ]);
 
     const result = getKanbanInFlight(
       issues,
       DONE_STATUSES,
       new Set(['cancelled']),
+      entryDates,
+      WEEK_START,
+      WEEK_END,
     );
 
     expect(result).toHaveLength(3);
