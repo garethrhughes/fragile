@@ -19,6 +19,12 @@ import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
 import { dateParts, startOfDayInTz } from '../metrics/tz-utils.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
 import { extractCycles, resolveResetNames } from '../metrics/cycle.js';
+import {
+  buildKanbanBoardEntryDateMap,
+  filterKanbanIssues,
+  getKanbanCompletedThisWeek,
+  DEFAULT_BOARD_ENTRY_STATUSES,
+} from '../lib/kanban-week-stats.js';
 
 // ---------------------------------------------------------------------------
 // Response interfaces (exported for use by the controller and frontend types)
@@ -180,6 +186,8 @@ export class WeekDetailService {
     }
 
     const doneStatuses: string[] = boardConfig?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
+    // Pre-lowercased Set for the shared helper functions
+    const doneStatusesSet = new Set(doneStatuses.map((s) => s.toLowerCase()));
     const cancelledStatusNames: string[] = boardConfig?.cancelledStatusNames ?? ['Cancelled', "Won't Do"];
     const inProgressStatusNames: string[] = boardConfig?.inProgressStatusNames ?? ['In Progress'];
     const incidentIssueTypes: string[] = boardConfig?.incidentIssueTypes ?? ['Bug', 'Incident'];
@@ -239,51 +247,28 @@ export class WeekDetailService {
     // entry/staging status).  This matches the algorithm used by the planning
     // overview (getKanbanWeeks) so both views agree on which week an issue
     // entered the board.
-    //
-    // Previous implementation used fromValue === 'To Do' (first transition
-    // *out of* To Do).  That direction is wrong and hard-coded to a single
-    // status — it caused "1 ticket in overview, 0 in detail" divergence for
-    // issues that entered via Backlog, Open, or any other configured entry
-    // status.
     // -----------------------------------------------------------------------
-    const boardEntryStatuses: string[] = boardConfig?.boardEntryStatuses ?? [
-      'To Do', 'Backlog', 'Open', 'New', 'TODO', 'OPEN', 'Selected for Development',
-    ];
+    const boardEntryStatusList: string[] =
+      boardConfig?.boardEntryStatuses ?? [...DEFAULT_BOARD_ENTRY_STATUSES];
+    const boardEntryStatusSet = new Set(boardEntryStatusList.map((s) => s.toLowerCase()));
 
-    const boardEntryDateByKey = new Map<string, Date>();
+    // Use shared helper: consistent with all-items and planning services.
+    const boardEntryDateByKey = buildKanbanBoardEntryDateMap(
+      issues,
+      changelogsByIssue,
+      boardEntryStatusSet,
+    );
 
-    for (const issue of issues) {
-      const issueChangelogs = changelogsByIssue.get(issue.key) ?? [];
-
-      const entryTransition = issueChangelogs.find(
-        (cl) =>
-          cl.field === 'status' &&
-          cl.toValue !== null &&
-          boardEntryStatuses.map((s) => s.toLowerCase()).includes(cl.toValue.toLowerCase()),
-      );
-      const entryDate = entryTransition ? entryTransition.changedAt : issue.createdAt;
-
-      boardEntryDateByKey.set(issue.key, entryDate);
-    }
-
-    // Exclude pure-backlog issues (never pulled onto the board).
-    // Primary: statusId is in backlogStatusIds. Fallback: no status changelog at all.
-    const filteredIssues = issues.filter((issue) => {
-      if (backlogStatusIds.length > 0 && issue.statusId !== null) {
-        return !backlogStatusIds.includes(issue.statusId);
-      }
-      return issueKeysWithStatusChangelog.has(issue.key);
-    });
-
-    // Apply dataStartDate lower bound filter (before the week window filter)
+    // Apply backlogStatusIds + dataStartDate filters using the shared helper.
     const dataStartDate = boardConfig?.dataStartDate ?? null;
-    const startBound = dataStartDate ? new Date(dataStartDate) : null;
-    const startBoundedIssues = startBound
-      ? filteredIssues.filter((issue) => {
-          const entryDate = boardEntryDateByKey.get(issue.key) ?? issue.createdAt;
-          return entryDate >= startBound;
-        })
-      : filteredIssues;
+    const dataStartBound = dataStartDate ? new Date(dataStartDate) : null;
+    const startBoundedIssues = filterKanbanIssues({
+      issues,
+      backlogStatusIds,
+      issueKeysWithStatusChangelog,
+      dataStartBound,
+      boardEntryDateByKey,
+    });
 
     // -----------------------------------------------------------------------
     // Step 6 — Filter issues to those whose boardEntryDate falls within the week
@@ -523,24 +508,20 @@ export class WeekDetailService {
     // to Done this week, not just those that entered the board this week.
     // Issues that completed from prior weeks are added to the results list so
     // the user can see which tickets drove the completedCount.
+    // Uses the shared helper — consistent with all-items and planning services.
     // -----------------------------------------------------------------------
     const weekIssueKeySet = new Set(weekIssues.map((i) => i.key));
-    for (const issue of startBoundedIssues) {
-      // Only process issues NOT already in the weekIssues set
-      if (weekIssueKeySet.has(issue.key)) continue;
-      const issueChangelogs = changelogsByIssue.get(issue.key) ?? [];
-      const completedInWeek = issueChangelogs.some(
-        (cl) =>
-          cl.field === 'status' &&
-          cl.toValue !== null &&
-          doneStatuses.includes(cl.toValue) &&
-          cl.changedAt >= weekStart &&
-          cl.changedAt <= weekEnd,
-      );
-      if (!completedInWeek) continue;
+    const priorWeekCompleters = getKanbanCompletedThisWeek(
+      startBoundedIssues.filter((i) => !weekIssueKeySet.has(i.key)),
+      changelogsByIssue,
+      doneStatusesSet,
+      weekStart,
+      weekEnd,
+    );
 
+    const jiraBaseUrl = this.configService.get<string>('JIRA_BASE_URL', '');
+    for (const issue of priorWeekCompleters) {
       const boardEntryDate = boardEntryDateByKey.get(issue.key) ?? issue.createdAt;
-      const jiraBaseUrl = this.configService.get<string>('JIRA_BASE_URL', '');
       const jiraUrl = jiraBaseUrl ? `${jiraBaseUrl}/browse/${issue.key}` : '';
 
       results.push({

@@ -26,6 +26,13 @@ import {
   resolveEpicIdeas,
   type EpicConflictResolution,
 } from '../roadmap/resolve-epic-ideas.js';
+import {
+  buildKanbanBoardEntryDateMap,
+  filterKanbanIssues,
+  getKanbanPulledIn,
+  getKanbanCompletedThisWeek,
+  DEFAULT_BOARD_ENTRY_STATUSES,
+} from '../lib/kanban-week-stats.js';
 import type {
   AllItemsIssue,
   AllItemsBoardResult,
@@ -131,16 +138,15 @@ export class AllItemsService {
   ): Promise<AllItemsBoardResult> {
     const boardId = config.boardId;
     const isKanban = config.boardType === 'kanban';
-    const doneStatuses = new Set(config.doneStatusNames ?? ['Done', 'Closed', 'Released']);
+    const doneStatuses = new Set(
+      (config.doneStatusNames ?? ['Done', 'Closed', 'Released']).map((s) => s.toLowerCase()),
+    );
     const cancelledStatuses = new Set(
-      config.cancelledStatusNames ?? ['Cancelled', "Won't Do"],
+      (config.cancelledStatusNames ?? ['Cancelled', "Won't Do"]).map((s) => s.toLowerCase()),
     );
     const inProgressStatuses = new Set(config.inProgressStatusNames ?? ['In Progress']);
-    // 7-entry default matches week-detail and all other kanban services (proposal 0066)
     const boardEntryStatuses = new Set(
-      (config.boardEntryStatuses ?? [
-        'To Do', 'Backlog', 'Open', 'New', 'TODO', 'OPEN', 'Selected for Development',
-      ]).map((s) => s.toLowerCase()),
+      (config.boardEntryStatuses ?? [...DEFAULT_BOARD_ENTRY_STATUSES]).map((s) => s.toLowerCase()),
     );
     const backlogStatusIds: string[] = config.backlogStatusIds ?? [];
     const dataStartBound: Date | null = config.dataStartDate
@@ -192,38 +198,36 @@ export class AllItemsService {
     let workingSet: JiraIssue[];
     let addedMidSprintKeys = new Set<string>();
     let sprintNameByIssue = new Map<string, string>();
-    // Kanban-only: populated below, used in classification loop
+    // Kanban-only: board-entry date map used by working set filter and completion scan
     let kanbanBoardEntryDateByKey = new Map<string, Date>();
-    let kanbanGracePeriodEnd: Date | null = null;
 
     if (isKanban) {
-      // 1-day grace period: issues entering on day 1 (Monday) are "committed";
-      // issues entering after day 1 are "added mid-week" (matches week-detail).
-      kanbanGracePeriodEnd = new Date(weekStart.getTime() + 1 * 24 * 60 * 60 * 1000);
+      // Compute board-entry date for every board issue using the shared helper
+      kanbanBoardEntryDateByKey = buildKanbanBoardEntryDateMap(
+        allBoardIssues,
+        statusChangelogsByIssue,
+        boardEntryStatuses,
+      );
 
-      // Pre-compute board-entry date for every issue (needed for both the
-      // working-set filter and the kanbanAdd grace-period classification).
-      for (const issue of allBoardIssues) {
-        const statusLogs = statusChangelogsByIssue.get(issue.key) ?? [];
-        const entryDate = this.detectBoardEntryDate(statusLogs, boardEntryStatuses);
-        kanbanBoardEntryDateByKey.set(issue.key, entryDate ?? issue.createdAt);
-      }
-
-      // Kanban: include only issues whose board-entry date is within the week,
-      // after applying backlogStatusIds, dataStartDate, and cancelled filters
-      // (proposal 0066 — matches week-detail filter chain exactly).
-      workingSet = allBoardIssues.filter((issue) => {
-        // Exclude cancelled issues
-        if (cancelledStatuses.has(issue.status)) return false;
-        // Exclude issues still in a configured backlog status (pre-board)
-        if (backlogStatusIds.length > 0 && issue.statusId !== null &&
-            backlogStatusIds.includes(issue.statusId)) return false;
-        const effectiveEntry = kanbanBoardEntryDateByKey.get(issue.key)!;
-        // Exclude issues whose board-entry predates the data start bound
-        if (dataStartBound !== null && effectiveEntry < dataStartBound) return false;
-        // Issue must have entered within the week window
-        return effectiveEntry >= weekStart && effectiveEntry <= weekEnd;
+      // Apply backlogStatusIds + dataStartDate filters, then scope to issues
+      // that entered the board this week (proposal 0066).
+      // Cancelled issues are excluded at this stage — consistent across all services.
+      const issueKeysWithStatusChangelog = new Set(statusChangelogsByIssue.keys());
+      const filteredBoardIssues = filterKanbanIssues({
+        issues: allBoardIssues.filter((i) => !cancelledStatuses.has(i.status.toLowerCase())),
+        backlogStatusIds,
+        issueKeysWithStatusChangelog,
+        dataStartBound,
+        boardEntryDateByKey: kanbanBoardEntryDateByKey,
       });
+
+      workingSet = getKanbanPulledIn(
+        filteredBoardIssues,
+        kanbanBoardEntryDateByKey,
+        weekStart,
+        weekEnd,
+        cancelledStatuses,
+      );
     } else {
       // Scrum: find sprints that overlap the week window, reconstruct
       // membership, and take the union of committedKeys ∪ addedKeys.
@@ -346,12 +350,9 @@ export class AllItemsService {
 
       // addedMidSprint (scrum) / kanbanAdd (kanban)
       const addedMidSprint = !isKanban && addedMidSprintKeys.has(issue.key);
-      // kanbanAdd: entered the board after the 1-day grace period (matches week-detail).
-      // false for Monday-entry issues (considered "committed"); true for Tuesday+.
-      const kanbanAdd = isKanban && (() => {
-        const entryDate = kanbanBoardEntryDateByKey.get(issue.key) ?? issue.createdAt;
-        return entryDate > kanbanGracePeriodEnd!;
-      })();
+      // kanbanAdd is always false for kanban — mid-week concept removed (proposal 0066).
+      // Kanban boards don't have a meaningful committed-vs-added split.
+      const kanbanAdd = false;
 
       // onRoadmap: completed within roadmap idea target date
       const onRoadmap = this.classifyRoadmap(issue, completedAt, epicIdeaMap, directLinkIdeaMap);
@@ -402,76 +403,93 @@ export class AllItemsService {
       });
     }
 
-    // Apply filters and build summary from the full (unfiltered) working set.
-    // NOTE: filteredItems is re-computed AFTER the kanban completion scan so
-    // that prior-week completers are included before filtering is applied.
+    // Build summary from the working-set items ONLY — before the kanban
+    // completion scan expands the items array with prior-week completers.
+    // This ensures summary.totalItems = workingSet.length (proposal 0066).
     const summary = this.buildSummary(items);
 
-    // Kanban: completedCount and onRoadmapCount are computed over ALL filtered
-    // board issues that completed this week — not just those that entered this
-    // week (proposal 0065). Apply the same backlogStatusIds / dataStartDate /
-    // cancelledStatuses gates as the working set (proposal 0066).
-    // Issues from prior weeks that completed this week are also added to the
-    // item list so the user can see which tickets drive the numbers.
     if (isKanban) {
-      let kanbanCompletedCount = 0;
-      let kanbanOnRoadmapCount = 0;
-      const workingSetKeys = new Set(workingSet.map((i) => i.key));
+      // addedMidSprintCount has no meaning for kanban — zero it out (proposal 0066).
+      summary.addedMidSprintCount = 0;
 
-      for (const issue of allBoardIssues) {
-        // Apply the same filter chain as the working set
-        if (cancelledStatuses.has(issue.status)) continue;
-        if (backlogStatusIds.length > 0 && issue.statusId !== null &&
-            backlogStatusIds.includes(issue.statusId)) continue;
-        const effectiveEntry = kanbanBoardEntryDateByKey.get(issue.key)!;
-        if (dataStartBound !== null && effectiveEntry < dataStartBound) continue;
+      // Board-wide completion scan using the shared helper.
+      // Candidate pool: all filtered board issues (same backlogStatusIds +
+      // dataStartDate + cancelled gates as the working set).
+      const issueKeysWithStatusChangelog = new Set(statusChangelogsByIssue.keys());
+      const filteredBoardIssues = filterKanbanIssues({
+        issues: allBoardIssues.filter((i) => !cancelledStatuses.has(i.status.toLowerCase())),
+        backlogStatusIds,
+        issueKeysWithStatusChangelog,
+        dataStartBound,
+        boardEntryDateByKey: kanbanBoardEntryDateByKey,
+      });
+
+      // doneStatuses is already lowercased (Set built at top of method)
+      const completedIssues = getKanbanCompletedThisWeek(
+        filteredBoardIssues,
+        statusChangelogsByIssue,
+        doneStatuses,
+        weekStart,
+        weekEnd,
+      );
+
+      summary.completedCount = completedIssues.length;
+      summary.onRoadmapCount = completedIssues.filter((issue) => {
+        // completedAt is guaranteed within the week — use any done-transition in window
+        const statusLogs = statusChangelogsByIssue.get(issue.key) ?? [];
+        const completedAt = statusLogs
+          .filter((cl) => cl.field === 'status' && cl.toValue !== null &&
+            doneStatuses.has(cl.toValue.toLowerCase()) &&
+            cl.changedAt >= weekStart && cl.changedAt <= weekEnd)
+          .at(-1)?.changedAt ?? null;
+        return this.classifyRoadmap(issue, completedAt, epicIdeaMap, directLinkIdeaMap);
+      }).length;
+
+      // Add prior-week completers to the item list so the user can see which
+      // tickets contributed to completedCount (they do not affect summary counts).
+      const workingSetKeySet = new Set(workingSet.map((i) => i.key));
+      for (const issue of completedIssues) {
+        if (workingSetKeySet.has(issue.key)) continue; // already in list
 
         const statusLogs = statusChangelogsByIssue.get(issue.key) ?? [];
-        const completedAt = this.detectCompletionDate(statusLogs, doneStatuses, weekStart, weekEnd);
-        if (completedAt !== null) {
-          kanbanCompletedCount++;
-          if (this.classifyRoadmap(issue, completedAt, epicIdeaMap, directLinkIdeaMap)) {
-            kanbanOnRoadmapCount++;
-          }
-          // If this issue completed this week but was NOT in the working set
-          // (it entered the board in a prior week), add it to the item list
-          // so the user can see which tickets contributed to completedCount.
-          if (!workingSetKeys.has(issue.key)) {
-            const onRoadmap = this.classifyRoadmap(issue, completedAt, epicIdeaMap, directLinkIdeaMap);
-            const isSupport = (config.supportEpics ?? []).some(
-              (e) => issue.epicKey?.toUpperCase() === e.toUpperCase(),
-            ) || (config.supportLabels ?? []).some(
-              (l) => (Array.isArray(issue.labels) ? (issue.labels as string[]) : []).includes(l),
-            );
-            items.push({
-              key: issue.key,
-              summary: issue.summary,
-              issueType: issue.issueType,
-              status: issue.status,
-              boardId,
-              assignee: issue.assignee ?? null,
-              points: issue.points ?? null,
-              labels: Array.isArray(issue.labels) ? (issue.labels as string[]) : [],
-              jiraUrl: this.jiraBaseUrl ? `${this.jiraBaseUrl}/browse/${issue.key}` : '',
-              epicKey: issue.epicKey ?? null,
-              sprintName: null,
-              started: false,
-              addedMidSprint: false,
-              kanbanAdd: false,
-              completed: true,
-              onRoadmap,
-              isSupport,
-              isTtbSupport: false,
-            });
-          }
-        }
+        const completedAt = statusLogs
+          .filter((cl) => cl.field === 'status' && cl.toValue !== null &&
+            doneStatuses.has(cl.toValue.toLowerCase()) &&
+            cl.changedAt >= weekStart && cl.changedAt <= weekEnd)
+          .at(-1)?.changedAt ?? null;
+
+        const onRoadmap = this.classifyRoadmap(issue, completedAt, epicIdeaMap, directLinkIdeaMap);
+        const isSupport =
+          (config.supportEpics ?? []).some((e) => issue.epicKey?.toUpperCase() === e.toUpperCase()) ||
+          (config.supportLabels ?? []).some(
+            (l) => (Array.isArray(issue.labels) ? (issue.labels as string[]) : []).includes(l),
+          );
+
+        items.push({
+          key: issue.key,
+          summary: issue.summary,
+          issueType: issue.issueType,
+          status: issue.status,
+          boardId,
+          assignee: issue.assignee ?? null,
+          points: issue.points ?? null,
+          labels: Array.isArray(issue.labels) ? (issue.labels as string[]) : [],
+          jiraUrl: this.jiraBaseUrl ? `${this.jiraBaseUrl}/browse/${issue.key}` : '',
+          epicKey: issue.epicKey ?? null,
+          sprintName: null,
+          started: false,
+          addedMidSprint: false,
+          kanbanAdd: false,
+          completed: true,
+          onRoadmap,
+          isSupport,
+          isTtbSupport: false,
+        });
       }
-      summary.completedCount = kanbanCompletedCount;
-      summary.onRoadmapCount = kanbanOnRoadmapCount;
     }
 
     // Apply filters after the kanban item list has been expanded with
-    // completed-from-prior-week issues.
+    // prior-week completers.
     const filteredItems = this.applyFilters(items, filters);
 
     const healthScore = this.calculateHealthScore(summary, isKanban ? 'kanban' : 'scrum');
@@ -539,7 +557,7 @@ export class AllItemsService {
 
   private detectCompletionDate(
     statusLogs: JiraChangelog[],
-    doneStatuses: Set<string>,
+    doneStatuses: Set<string>, // must be pre-lowercased
     weekStart: Date,
     weekEnd: Date,
   ): Date | null {
@@ -548,7 +566,7 @@ export class AllItemsService {
       .find(
         (cl) =>
           cl.toValue !== null &&
-          doneStatuses.has(cl.toValue) &&
+          doneStatuses.has(cl.toValue.toLowerCase()) &&
           cl.changedAt >= weekStart &&
           cl.changedAt <= weekEnd,
       );

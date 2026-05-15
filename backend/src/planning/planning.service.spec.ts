@@ -749,32 +749,24 @@ describe('PlanningService', () => {
           priority: null, points: null, statusId: null } as unknown as JiraIssue,
       ]);
 
-      let qbCallCount = 0;
-      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
-        qbCallCount++;
-        const qb = {
-          where: jest.fn().mockReturnThis(),
-          andWhere: jest.fn().mockReturnThis(),
-          select: jest.fn().mockReturnThis(),
-          orderBy: jest.fn().mockReturnThis(),
-          getMany: jest.fn().mockResolvedValue([]),
-          getRawMany: jest.fn().mockResolvedValue([]),
-        };
-
-        if (qbCallCount === 1) {
-          qb.getMany.mockResolvedValue([
-            { issueKey: 'PLAT-1', field: 'status', fromValue: 'To Do', toValue: 'In Progress',
-              changedAt: new Date('2026-01-06T09:00:00Z') },
-          ]);
-        } else if (qbCallCount === 2) {
-          qb.getRawMany.mockResolvedValue([{ issueKey: 'PLAT-1' }]);
-        } else if (qbCallCount === 3) {
-          qb.getMany.mockResolvedValue([
-            { issueKey: 'PLAT-1', field: 'status', fromValue: 'In Progress', toValue: 'Done',
-              changedAt: new Date('2026-01-08T09:00:00Z') },
-          ]);
-        }
-        return qb;
+      // New code uses a single bulk status changelog query — return all changelogs at once
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn().mockResolvedValue([{ issueKey: 'PLAT-1' }]),
+        getMany: jest.fn().mockResolvedValue([
+          // Board-entry transition (To Do) on Jan 5 (W02)
+          { issueKey: 'PLAT-1', field: 'status', fromValue: null, toValue: 'To Do',
+            changedAt: new Date('2026-01-05T08:00:00Z') },
+          // In-progress on Jan 6
+          { issueKey: 'PLAT-1', field: 'status', fromValue: 'To Do', toValue: 'In Progress',
+            changedAt: new Date('2026-01-06T09:00:00Z') },
+          // Done on Jan 8 (still W02)
+          { issueKey: 'PLAT-1', field: 'status', fromValue: 'In Progress', toValue: 'Done',
+            changedAt: new Date('2026-01-08T09:00:00Z') },
+        ]),
       });
 
       const result = await service.getKanbanWeeks('PLAT');
@@ -782,6 +774,58 @@ describe('PlanningService', () => {
       expect(result[0].week).toBe('2026-W02');
       expect(result[0].issuesPulledIn).toBe(1);
       expect(result[0].completed).toBe(1);
+    });
+
+    it('completed counts issues that completed this week from prior weeks (board-wide throughput)', async () => {
+      // PLAT-1 entered W01, PLAT-2 entered W02 — both complete in W02.
+      // completed for W02 should be 2 (board-wide), not 1 (cohort-only).
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardId: 'PLAT',
+        boardType: 'kanban',
+        doneStatusNames: ['Done'],
+        backlogStatusIds: [],
+        dataStartDate: null,
+      } as unknown as BoardConfig);
+
+      issueRepo.find.mockResolvedValue([
+        { key: 'PLAT-1', boardId: 'PLAT', issueType: 'Story', summary: 'Older', status: 'Done',
+          labels: [], epicKey: null, fixVersion: null, sprintId: null,
+          createdAt: new Date('2025-12-28T00:00:00Z'), priority: null, points: null, statusId: null } as unknown as JiraIssue,
+        { key: 'PLAT-2', boardId: 'PLAT', issueType: 'Story', summary: 'New', status: 'Done',
+          labels: [], epicKey: null, fixVersion: null, sprintId: null,
+          createdAt: new Date('2026-01-05T00:00:00Z'), priority: null, points: null, statusId: null } as unknown as JiraIssue,
+      ]);
+
+      // All changelogs returned in a single bulk call
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn().mockResolvedValue([{ issueKey: 'PLAT-1' }, { issueKey: 'PLAT-2' }]),
+        getMany: jest.fn().mockResolvedValue([
+          // PLAT-1 entered W01 (Dec 29)
+          { issueKey: 'PLAT-1', field: 'status', fromValue: null, toValue: 'To Do',
+            changedAt: new Date('2025-12-29T08:00:00Z') },
+          // PLAT-2 entered W02 (Jan 5)
+          { issueKey: 'PLAT-2', field: 'status', fromValue: null, toValue: 'To Do',
+            changedAt: new Date('2026-01-05T08:00:00Z') },
+          // Both complete in W02 (Jan 8)
+          { issueKey: 'PLAT-1', field: 'status', fromValue: 'In Progress', toValue: 'Done',
+            changedAt: new Date('2026-01-08T10:00:00Z') },
+          { issueKey: 'PLAT-2', field: 'status', fromValue: 'In Progress', toValue: 'Done',
+            changedAt: new Date('2026-01-08T11:00:00Z') },
+        ]),
+      });
+
+      const result = await service.getKanbanWeeks('PLAT');
+
+      const w02 = result.find((r) => r.week === '2026-W02');
+      expect(w02).toBeDefined();
+      // totalItems / issuesPulledIn = 1 (only PLAT-2 entered W02)
+      expect(w02!.issuesPulledIn).toBe(1);
+      // completed = 2 (both PLAT-1 and PLAT-2 completed in W02 — board-wide throughput)
+      expect(w02!.completed).toBe(2);
     });
   });
 

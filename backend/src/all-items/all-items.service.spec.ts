@@ -570,7 +570,7 @@ describe('AllItemsService', () => {
     expect(result.boards[0].summary.totalItems).toBe(1);
   });
 
-  it('marks kanbanAdd=true for all kanban working-set items', async () => {
+  it('marks kanbanAdd=false for all kanban working-set items (mid-week concept removed for kanban)', async () => {
     const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
     const issue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT' });
     const cl = makeChangelog({
@@ -592,7 +592,7 @@ describe('AllItemsService', () => {
     const result = await service.getAllItems('2026-W20', undefined);
     const item = result.boards[0].items.find((i) => i.key === 'PLAT-1');
 
-    expect(item?.kanbanAdd).toBe(true);
+    expect(item?.kanbanAdd).toBe(false);
     expect(item?.addedMidSprint).toBe(false);
   });
 
@@ -1423,12 +1423,11 @@ describe('AllItemsService', () => {
     expect(result.boards[0].summary.completedCount).toBe(1);
   });
 
-  // 6. 1-day grace period — kanbanAdd false for Monday entry
-  it('kanbanAdd is false for issues entering on Monday (day 1 grace period)', async () => {
+  // 6. kanbanAdd is always false for kanban (mid-week concept removed)
+  it('kanbanAdd is false for kanban issues entering on Monday', async () => {
     const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
     const mondayIssue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT' });
 
-    // W20 starts Mon 2026-05-11 00:00:00 UTC — entering Monday is within grace period
     const mondayEntry = makeChangelog({
       id: 1, issueKey: 'PLAT-1', field: 'status', fromValue: null, toValue: 'To Do',
       changedAt: new Date('2026-05-11T09:00:00Z'), // Monday
@@ -1445,11 +1444,11 @@ describe('AllItemsService', () => {
     const result = await service.getAllItems('2026-W20', undefined);
 
     const item = result.boards[0].items[0];
-    expect(item.kanbanAdd).toBe(false); // Monday — within grace period
+    expect(item.kanbanAdd).toBe(false);
   });
 
-  // 7. 1-day grace period — kanbanAdd true for Tuesday+ entry
-  it('kanbanAdd is true for issues entering after Monday (added mid-week)', async () => {
+  // 7. kanbanAdd is always false for kanban issues entering on Tuesday+
+  it('kanbanAdd is false for kanban issues entering on Tuesday (mid-week concept removed)', async () => {
     const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
     const tuesdayIssue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT' });
 
@@ -1468,12 +1467,11 @@ describe('AllItemsService', () => {
 
     const result = await service.getAllItems('2026-W20', undefined);
 
-    const item = result.boards[0].items[0];
-    expect(item.kanbanAdd).toBe(true); // Tuesday — beyond grace period
+    expect(result.boards[0].items[0].kanbanAdd).toBe(false);
   });
 
-  // 8. addedMidSprintCount reflects grace period, not always totalItems
-  it('kanban addedMidSprintCount counts only post-grace-period entries, not all items', async () => {
+  // 8. addedMidSprintCount is always 0 for kanban boards
+  it('kanban addedMidSprintCount is 0 regardless of when issues entered', async () => {
     const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
     const mondayIssue = makeIssue({ key: 'PLAT-1', boardId: 'PLAT' });
     const tuesdayIssue = makeIssue({ key: 'PLAT-2', boardId: 'PLAT' });
@@ -1496,8 +1494,7 @@ describe('AllItemsService', () => {
     const result = await service.getAllItems('2026-W20', undefined);
 
     expect(result.boards[0].summary.totalItems).toBe(3);
-    // Only Tue+Wed entries are "added mid-week"; Mon is within grace period
-    expect(result.boards[0].summary.addedMidSprintCount).toBe(2);
+    expect(result.boards[0].summary.addedMidSprintCount).toBe(0);
   });
 
   // 9. Expanded item list — completed-from-prior-week issues appear in items
@@ -1556,5 +1553,45 @@ describe('AllItemsService', () => {
     expect(item.started).toBe(false);
     expect(item.kanbanAdd).toBe(false);
     expect(item.completed).toBe(true);
+  });
+
+  // 11. totalItems does NOT include prior-week completers (regression guard for buildSummary call order)
+  it('kanban totalItems equals working-set size only, not working-set + prior-week completers', async () => {
+    const kanbanBoard = makeBoard({ boardId: 'PLAT', boardType: 'kanban' });
+    // 2 issues entered this week, 5 entered prior weeks and complete this week
+    const enteredThisWeek = Array.from({ length: 2 }, (_, i) =>
+      makeIssue({ key: `PLAT-${i + 1}`, boardId: 'PLAT', status: 'To Do' }),
+    );
+    const priorWeekCompleters = Array.from({ length: 5 }, (_, i) =>
+      makeIssue({ key: `PLAT-${i + 10}`, boardId: 'PLAT', status: 'Done' }),
+    );
+
+    const thisWeekEntryCls = enteredThisWeek.map((iss, i) =>
+      makeChangelog({ id: i + 1, issueKey: iss.key, field: 'status', fromValue: null, toValue: 'To Do', changedAt: new Date('2026-05-12T08:00:00Z') }),
+    );
+    const priorEntryCls = priorWeekCompleters.map((iss, i) =>
+      makeChangelog({ id: i + 10, issueKey: iss.key, field: 'status', fromValue: null, toValue: 'To Do', changedAt: new Date('2026-04-01T08:00:00Z') }),
+    );
+    const doneCls = priorWeekCompleters.map((iss, i) =>
+      makeChangelog({ id: i + 20, issueKey: iss.key, field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-05-14T10:00:00Z') }),
+    );
+
+    boardConfigRepo.find.mockResolvedValue([kanbanBoard]);
+    issueRepo.find.mockResolvedValue([...enteredThisWeek, ...priorWeekCompleters]);
+    sprintRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    roadmapConfigRepo.find.mockResolvedValue([]);
+    changelogRepo.createQueryBuilder.mockReturnValue(makeQb([...thisWeekEntryCls, ...priorEntryCls, ...doneCls]));
+    issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    jpdIdeaRepo.find.mockResolvedValue([]);
+
+    const result = await service.getAllItems('2026-W20', undefined);
+
+    // summary.totalItems must be 2 (working set only), not 7 (working set + completers)
+    expect(result.boards[0].summary.totalItems).toBe(2);
+    expect(result.boards[0].summary.addedMidSprintCount).toBe(0);
+    // item list has 2 + 5 = 7 items
+    expect(result.boards[0].items).toHaveLength(7);
+    // completedCount = 5 (board-wide)
+    expect(result.boards[0].summary.completedCount).toBe(5);
   });
 });

@@ -67,4 +67,4 @@
 | [0063](0063-all-items-correct-issue-population.md) | All Items Weekly Report: Correct Issue Population | Accepted | 2026-05-13 |
 | [0064](0064-kanban-stability-score-throughput-balance.md) | Kanban Stability Score: Throughput Balance | Accepted | 2026-05-15 |
 | [0065](0065-kanban-pulse-decouple-completed-from-entry-date.md) | Kanban Pulse Report: Decouple Completed Count from Working Set Entry Date | Accepted | 2026-05-15 |
-| [0066](0066-align-pulse-kanban-with-week-detail.md) | Align Pulse Kanban Metrics with Week Detail Report | Draft | 2026-05-15 |
+| [0066](0066-align-pulse-kanban-with-week-detail.md) | Align Pulse Kanban Metrics with Week Detail Report | Accepted | 2026-05-15 |

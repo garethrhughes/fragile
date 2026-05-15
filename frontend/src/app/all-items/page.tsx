@@ -175,11 +175,11 @@ function BoardCard({ board }: { board: AllItemsBoardResult }) {
       </div>
 
       {/* Summary counts */}
-      <div className="grid grid-cols-3 divide-x divide-border border-b border-border sm:grid-cols-6">
+      <div className={`grid divide-x divide-border border-b border-border ${board.boardType === 'kanban' ? 'grid-cols-3 sm:grid-cols-5' : 'grid-cols-3 sm:grid-cols-6'}`}>
         {[
           { label: 'Total', value: summary.totalItems },
-          { label: 'Started', value: summary.startedCount },
-          { label: 'Added', value: summary.addedMidSprintCount },
+          ...(board.boardType === 'scrum' ? [{ label: 'Started', value: summary.startedCount }] : []),
+          ...(board.boardType === 'scrum' ? [{ label: 'Added', value: summary.addedMidSprintCount }] : []),
           { label: 'Completed', value: summary.completedCount },
           { label: 'On roadmap', value: summary.onRoadmapCount },
           { label: 'Support', value: summary.supportCount },
