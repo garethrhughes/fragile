@@ -159,23 +159,15 @@ function BoardCard({ board }: { board: AllItemsBoardResult }) {
   return (
     <div className="rounded-xl border border-border bg-card shadow-sm">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <div className="flex items-center gap-3">
-          <span className="font-mono text-sm font-bold text-foreground">{board.boardId}</span>
-          <span className="rounded-full border border-border bg-surface-alt px-2 py-0.5 text-xs text-muted">
-            {board.boardType}
-          </span>
-        </div>
-        <div className="flex items-center gap-3">
-          <Tooltip text="Overall health score: average of Roadmap alignment and Stability. Higher is better. Support burden is shown separately but does not affect this score.">
-            <span className="text-xs text-muted underline decoration-dotted">Health</span>
-          </Tooltip>
-          <HealthBadge score={healthScore.overall} />
-        </div>
+      <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+        <span className="font-mono text-sm font-bold text-foreground">{board.boardId}</span>
+        <span className="rounded-full border border-border bg-surface-alt px-2 py-0.5 text-xs text-muted">
+          {board.boardType}
+        </span>
       </div>
 
-      {/* Summary counts */}
-      <div className={`grid divide-x divide-border border-b border-border ${board.boardType === 'kanban' ? 'grid-cols-3 sm:grid-cols-5' : 'grid-cols-3 sm:grid-cols-6'}`}>
+      {/* Summary counts + roadmap/stability scores + health badge — all one row */}
+      <div className={`grid divide-x divide-border border-b border-border ${board.boardType === 'kanban' ? 'grid-cols-5 sm:grid-cols-8' : 'grid-cols-5 sm:grid-cols-9'}`}>
         {[
           { label: board.boardType === 'kanban' ? 'Pulled In' : 'Total', value: summary.totalItems },
           ...(board.boardType === 'scrum' ? [{ label: 'Started', value: summary.startedCount }] : []),
@@ -190,29 +182,39 @@ function BoardCard({ board }: { board: AllItemsBoardResult }) {
             <div className="text-xs text-muted">{label}</div>
           </div>
         ))}
-      </div>
 
-      {/* Health score breakdown — roadmap + stability only */}
-      <div className="grid grid-cols-2 divide-x divide-border border-b border-border text-xs">
+        {/* Roadmap alignment % */}
         <div className="px-3 py-2 text-center">
           <Tooltip text="Roadmap alignment: percentage of completed items that were delivered on or before their roadmap idea's target date. n/a when nothing was completed this week.">
-            <span className="font-medium underline decoration-dotted">
+            <div className="text-lg font-bold underline decoration-dotted">
               {summary.completedCount === 0 ? 'n/a' : `${healthScore.roadmapAlignmentScore}%`}
-            </span>
+            </div>
           </Tooltip>
-          <div className="mt-0.5 text-muted">Roadmap</div>
+          <div className="text-xs text-muted">Roadmap</div>
         </div>
+
+        {/* Stability % */}
         <div className="px-3 py-2 text-center">
           <Tooltip text={
             board.boardType === 'kanban'
               ? 'Stability (throughput balance): completed items ÷ items entered this week. 100% when the team completes as much as it pulls in.'
               : 'Stability: percentage of sprint items that were committed at sprint start (not added mid-sprint). 100% when no items were added mid-sprint.'
           }>
-            <span className="font-medium underline decoration-dotted">
+            <div className="text-lg font-bold underline decoration-dotted">
               {healthScore.stabilityScore}%
-            </span>
+            </div>
           </Tooltip>
-          <div className="mt-0.5 text-muted">Stability</div>
+          <div className="text-xs text-muted">Stability</div>
+        </div>
+
+        {/* Health badge */}
+        <div className="px-3 py-2 text-center">
+          <Tooltip text="Overall health score: average of Roadmap alignment and Stability. Higher is better. Support burden is shown separately but does not affect this score.">
+            <div className="flex justify-center">
+              <HealthBadge score={healthScore.overall} />
+            </div>
+          </Tooltip>
+          <div className="mt-0.5 text-xs text-muted">Health</div>
         </div>
       </div>
 
@@ -390,75 +392,72 @@ function AllItemsPageInner() {
         </p>
       </div>
 
-      {/* Controls */}
-      <div className="space-y-4 rounded-xl border border-border bg-card p-4">
-        {/* Week picker */}
-        <div>
-          <label className="mb-2 block text-sm font-medium text-muted">Week</label>
-          <div className="flex items-center gap-2">
+      {/* Controls — single flex row, no card wrapper */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Week nav */}
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => replaceParams({ week: prevWeek(weekParam) })}
+            className="rounded border border-border px-2 py-1 text-sm hover:bg-interactive-hover-bg"
+            aria-label="Previous week"
+          >
+            ←
+          </button>
+          <span className="min-w-[80px] text-center font-mono text-sm font-semibold">
+            {formatWeekLabel(weekParam)}
+          </span>
+          <button
+            type="button"
+            onClick={() => replaceParams({ week: nextWeek(weekParam) })}
+            disabled={isCurrentWeek}
+            className="rounded border border-border px-2 py-1 text-sm hover:bg-interactive-hover-bg disabled:opacity-40"
+            aria-label="Next week"
+          >
+            →
+          </button>
+          {!isCurrentWeek && (
             <button
               type="button"
-              onClick={() => replaceParams({ week: prevWeek(weekParam) })}
-              className="rounded border border-border px-2 py-1 text-sm hover:bg-interactive-hover-bg"
-              aria-label="Previous week"
+              onClick={() => replaceParams({ week: currentIsoWeek() })}
+              className="ml-1 rounded border border-border px-2 py-1 text-xs text-muted hover:bg-interactive-hover-bg"
             >
-              ←
+              Current week
             </button>
-            <span className="min-w-[80px] text-center font-mono text-sm font-semibold">
-              {formatWeekLabel(weekParam)}
-            </span>
-            <button
-              type="button"
-              onClick={() => replaceParams({ week: nextWeek(weekParam) })}
-              disabled={isCurrentWeek}
-              className="rounded border border-border px-2 py-1 text-sm hover:bg-interactive-hover-bg disabled:opacity-40"
-              aria-label="Next week"
-            >
-              →
-            </button>
-            {!isCurrentWeek && (
-              <button
-                type="button"
-                onClick={() => replaceParams({ week: currentIsoWeek() })}
-                className="ml-2 rounded border border-border px-2 py-1 text-xs text-muted hover:bg-interactive-hover-bg"
-              >
-                Current week
-              </button>
-            )}
-          </div>
+          )}
         </div>
 
+        {/* Divider */}
+        <span className="text-border select-none">|</span>
+
         {/* Filter chips */}
-        <div>
-          <label className="mb-2 block text-sm font-medium text-muted">Filter</label>
-          <div className="flex flex-wrap gap-2">
-            {ALL_FILTERS.map(({ key, label }) => {
-              const active = activeFilters.includes(key)
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => toggleFilter(key)}
-                  className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                    active
-                      ? 'border-blue-500 bg-blue-100 text-blue-700'
-                      : 'border-border bg-surface-alt text-muted hover:bg-interactive-hover-bg'
-                  }`}
-                >
-                  {label}
-                </button>
-              )
-            })}
-            {activeFilters.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {ALL_FILTERS.map(({ key, label }) => {
+            const active = activeFilters.includes(key)
+            return (
               <button
+                key={key}
                 type="button"
-                onClick={() => replaceParams({ filter: '' })}
-                className="rounded-full border border-border px-3 py-1 text-xs text-muted hover:bg-interactive-hover-bg"
+                onClick={() => toggleFilter(key)}
+                className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                  active
+                    ? 'border-blue-500 bg-blue-100 text-blue-700'
+                    : 'border-border bg-surface-alt text-muted hover:bg-interactive-hover-bg'
+                }`}
               >
-                Clear filters
+                {label}
               </button>
-            )}
-          </div>
+            )
+          })}
+          {activeFilters.length > 0 && (
+            <button
+              type="button"
+              onClick={() => replaceParams({ filter: '' })}
+              className="rounded-full border border-border px-3 py-1 text-xs text-muted hover:bg-interactive-hover-bg"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
       </div>
 
