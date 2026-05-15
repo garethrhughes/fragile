@@ -55,6 +55,7 @@ interface CsvFieldProps {
   label: string;
   value: string[];
   onChange: (values: string[]) => void;
+  hint?: string;
 }
 
 /**
@@ -71,7 +72,7 @@ interface CsvFieldProps {
  * focus (`onBlur`).  When the parent value changes from outside (e.g. a new
  * board is selected) the draft is re-initialised from the incoming array.
  */
-function CsvField({ label, value, onChange }: CsvFieldProps) {
+function CsvField({ label, value, onChange, hint }: CsvFieldProps) {
   // Local free-text draft — the user types into this without any mid-keystroke
   // parsing that would strip commas or spaces.
   const [draft, setDraft] = useState<string>(() => value.join(', '))
@@ -114,6 +115,7 @@ function CsvField({ label, value, onChange }: CsvFieldProps) {
         className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm placeholder:text-muted focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
         placeholder="Value1, Value2, Value3"
       />
+      {hint && <p className="mt-1 text-xs text-muted">{hint}</p>}
     </div>
   )
 }
@@ -486,6 +488,32 @@ export default function SettingsPage() {
                 </p>
               </div>
             </div>
+
+            {/* ── Kanban Board Settings ─────────────────────────────────── */}
+            {config.boardType === 'kanban' && (
+              <div className="rounded-lg border border-border bg-background p-4 space-y-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">Kanban Board Settings</h3>
+                  <p className="mt-0.5 text-xs text-muted">
+                    Controls which issues are considered active on the board. Issues in the backlog statuses are excluded from all kanban metrics (pulled in, completed, in-flight).
+                  </p>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <CsvField
+                    label="Backlog Status IDs"
+                    value={config.backlogStatusIds}
+                    onChange={(v) => updateField('backlogStatusIds', v)}
+                    hint="Jira status IDs (not names) for pre-board backlog statuses. Issues currently in these statuses are excluded from all kanban metrics. Find the ID by inspecting the Jira API or changelog."
+                  />
+                  <CsvField
+                    label="Board Entry Statuses"
+                    value={config.boardEntryStatuses ?? []}
+                    onChange={(v) => updateField('boardEntryStatuses', v.length > 0 ? v : null)}
+                    hint="Status names that mark when an issue enters the board (e.g. To Do, Backlog, Open). Leave blank to use the default: To Do, Backlog, Open, New, TODO, OPEN, Selected for Development."
+                  />
+                </div>
+              </div>
+            )}
 
             {/* ── Workflow Statuses ─────────────────────────────────────── */}
             <div className="rounded-lg border border-border bg-background p-4 space-y-4">

@@ -66,6 +66,17 @@ export class UpdateBoardConfigDto {
   backlogStatusIds?: string[];
 
   @ApiPropertyOptional({
+    type: [String],
+    nullable: true,
+    example: ['To Do', 'Backlog', 'Open'],
+    description: 'Status names that mark when an issue enters the Kanban board. Null means use the default list (To Do, Backlog, Open, New, TODO, OPEN, Selected for Development).',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  boardEntryStatuses?: string[] | null;
+
+  @ApiPropertyOptional({
     type: String,
     example: '2024-01-01',
     description: 'ISO date (YYYY-MM-DD) lower bound for Kanban flow metrics. Issues whose board-entry date is before this date are excluded. Null means no lower bound.',

@@ -26,6 +26,7 @@ export interface BoardConfig {
   recoveryStatusNames: string[];
   incidentLabels: string[];
   backlogStatusIds: string[];
+  boardEntryStatuses: string[] | null;
   dataStartDate: string | null;
   inProgressStatusNames: string[];
   cancelledStatusNames: string[];
