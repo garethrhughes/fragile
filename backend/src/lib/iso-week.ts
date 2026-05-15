@@ -13,7 +13,7 @@
  * ADR 0050 documents the fix and the canonicalisation of date utilities.
  */
 
-import { dateParts } from '../metrics/tz-utils.js';
+import { dateParts, startOfDayInTz } from '../metrics/tz-utils.js';
 
 /**
  * Convert a Date to its ISO 8601 week key (`YYYY-Www`) interpreted in the
@@ -59,4 +59,64 @@ export function dateToIsoWeekKey(date: Date, tz: string = 'UTC'): string {
   const weekNumber = Math.round(diffMs / (7 * 24 * 60 * 60 * 1000)) + 1;
 
   return `${isoYear}-W${String(weekNumber).padStart(2, '0')}`;
+}
+
+/**
+ * Convert an ISO week key (`YYYY-Www`) to its [weekStart, weekEnd] boundaries
+ * in the given IANA timezone.
+ *
+ * weekStart = Monday 00:00:00.000 local time
+ * weekEnd   = Sunday  23:59:59.999 local time
+ *
+ * This is the single canonical implementation — all services must use this
+ * rather than computing week boundaries inline. The previous planning service
+ * implementation computed boundaries in raw UTC, causing a 14-hour offset for
+ * Australia/Sydney (UTC+10) that excluded Monday-morning completions.
+ */
+export function isoWeekKeyToDates(
+  week: string,
+  tz: string = 'UTC',
+): { weekStart: Date; weekEnd: Date } {
+  const match = week.match(/^(\d{4})-W(\d{2})$/);
+  if (!match) {
+    throw new Error(`Invalid week format: "${week}". Expected YYYY-Www e.g. 2026-W20`);
+  }
+
+  const year = parseInt(match[1], 10);
+  const weekNum = parseInt(match[2], 10);
+
+  // Jan 4 is always in ISO week 1. Find its local calendar date in tz.
+  const jan4LocalParts = dateParts(new Date(Date.UTC(year, 0, 4)), tz);
+  const jan4Local = new Date(Date.UTC(jan4LocalParts.year, jan4LocalParts.month, jan4LocalParts.day));
+  const jan4Dow = jan4Local.getUTCDay();
+  const daysToMon = jan4Dow === 0 ? -6 : 1 - jan4Dow;
+
+  // Monday of ISO week 1 in local calendar space
+  const week1Monday = new Date(jan4Local);
+  week1Monday.setUTCDate(jan4Local.getUTCDate() + daysToMon);
+
+  // Monday of the requested week in local calendar space
+  const weekMonday = new Date(week1Monday);
+  weekMonday.setUTCDate(week1Monday.getUTCDate() + (weekNum - 1) * 7);
+
+  // Sunday of the requested week in local calendar space
+  const weekSunday = new Date(weekMonday);
+  weekSunday.setUTCDate(weekMonday.getUTCDate() + 6);
+
+  // Convert to actual UTC timestamps using midnight in the configured timezone
+  const weekStart = startOfDayInTz(
+    weekMonday.getUTCFullYear(),
+    weekMonday.getUTCMonth(),
+    weekMonday.getUTCDate(),
+    tz,
+  );
+  const dayAfterWeekEnd = startOfDayInTz(
+    weekSunday.getUTCFullYear(),
+    weekSunday.getUTCMonth(),
+    weekSunday.getUTCDate() + 1,
+    tz,
+  );
+  const weekEnd = new Date(dayAfterWeekEnd.getTime() - 1);
+
+  return { weekStart, weekEnd };
 }

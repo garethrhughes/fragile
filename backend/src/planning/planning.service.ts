@@ -14,7 +14,7 @@ import {
 } from '../database/entities/index.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { dateParts, midnightInTz } from '../metrics/tz-utils.js';
-import { dateToIsoWeekKey } from '../lib/iso-week.js';
+import { dateToIsoWeekKey, isoWeekKeyToDates } from '../lib/iso-week.js';
 import {
   buildKanbanBoardEntryDateMap,
   filterKanbanIssues,
@@ -674,7 +674,8 @@ export class PlanningService {
 
     for (const wKey of sortedKeys) {
       const issues = weekMap.get(wKey)!;
-      const { weekStart, weekEnd } = this.weekKeyToDates(wKey);
+      const tz = this.configService.get<string>('TIMEZONE', 'UTC');
+      const { weekStart, weekEnd } = isoWeekKeyToDates(wKey, tz);
       const state = wKey === currentWeekKey ? 'active' : 'closed';
 
       // issuesPulledIn = issues that entered the board this week
@@ -761,34 +762,4 @@ export class PlanningService {
     return dateToIsoWeekKey(date, tz);
   }
 
-  private weekKeyToDates(week: string): { weekStart: Date; weekEnd: Date } {
-    const match = week.match(/^(\d{4})-W(\d{2})$/);
-    if (!match) {
-      throw new BadRequestException(
-        `Invalid week format: ${week}. Expected YYYY-Www`,
-      );
-    }
-
-    const year = parseInt(match[1], 10);
-    const weekNum = parseInt(match[2], 10);
-
-    // Jan 4 is always in ISO week 1
-    const jan4 = new Date(Date.UTC(year, 0, 4));
-    const jan4Day = jan4.getUTCDay(); // 0=Sun, 1=Mon, ...
-    // Monday of week 1
-    const mondayOfWeek1 = new Date(jan4);
-    const daysToMon = jan4Day === 0 ? -6 : 1 - jan4Day;
-    mondayOfWeek1.setUTCDate(jan4.getUTCDate() + daysToMon);
-
-    // Monday of the requested week
-    const weekStart = new Date(mondayOfWeek1);
-    weekStart.setUTCDate(mondayOfWeek1.getUTCDate() + (weekNum - 1) * 7);
-
-    // Sunday 23:59:59.999 (6 days after Monday)
-    const weekEnd = new Date(weekStart);
-    weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
-    weekEnd.setUTCHours(23, 59, 59, 999);
-
-    return { weekStart, weekEnd };
-  }
 }
