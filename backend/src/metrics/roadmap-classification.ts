@@ -104,12 +104,13 @@ export function classifyRoadmapStatus(input: RoadmapClassificationInput): Roadma
   // Condition A: delivered on time
   const deliveredOnTime = resolvedDate !== null && resolvedDate <= targetEndOfDay;
 
-  // Condition B: in-flight on an active period with target not yet passed
+  // Condition B: in-flight on an active period with target not yet passed.
+  // Relies on current status checks (not resolvedDate) so that reopened issues
+  // that have a historical done transition are still classified as in-flight.
   const todayStart = input.todayStart ?? defaultTodayStart();
   const isInFlight =
     isPeriodActive &&
     idea.targetDate >= todayStart &&
-    resolvedDate === null &&
     !doneStatusNames.includes(issueStatus) &&
     !isCancelled;
 

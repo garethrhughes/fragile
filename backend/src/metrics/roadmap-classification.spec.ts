@@ -185,6 +185,20 @@ describe('classifyRoadmapStatus', () => {
       }));
       expect(result).toEqual({ status: 'linked', linkSource: 'epic' });
     });
+
+    it('returns in-scope for reopened issue (has resolvedDate but status is not done)', () => {
+      // Issue was previously done (resolvedDate set) but has been reopened
+      // back to In Progress. Should still be in-scope if in-flight conditions met.
+      const result = classifyRoadmapStatus(makeInput({
+        epicIdea: { targetDate: feb15 },
+        resolvedDate: jan15, // historical done transition exists
+        isPeriodActive: true,
+        todayStart: jan15,
+        issueStatus: 'In Progress',
+        doneStatusNames: ['Done', 'Closed'],
+      }));
+      expect(result).toEqual({ status: 'in-scope', linkSource: 'epic' });
+    });
   });
 
   // ---------------------------------------------------------------------------
