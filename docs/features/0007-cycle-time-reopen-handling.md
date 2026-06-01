@@ -1,6 +1,6 @@
 # Feature 0007 — Cycle Time Reopen Handling
 
-**Status:** In Progress
+**Status:** Implemented
 **Proposal:** [0054](../proposals/0054-cycle-time-reopen-handling.md)
 **ADR:** [0056](../decisions/0056-cycle-time-reopen-handling.md)
 **Date:** 2026-05-07

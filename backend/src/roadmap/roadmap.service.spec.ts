@@ -1245,6 +1245,71 @@ describe('RoadmapService', () => {
   });
 
   // -------------------------------------------------------------------------
+  // getKanbanWeeklyAccuracy — inBacklog exclusion (ADR 0067 alignment)
+  //
+  // The roadmap table for Kanban boards was using a legacy backlogStatusIds /
+  // issueKeysWithChangelog heuristic. It must use `issue.inBacklog` (the
+  // authoritative Jira Agile backlog API flag) to match the week detail page
+  // and planning page.
+  // -------------------------------------------------------------------------
+
+  describe('getKanbanWeeklyAccuracy — inBacklog exclusion', () => {
+    const kanbanConfig = {
+      boardId: 'PLAT',
+      boardType: 'kanban',
+      doneStatusNames: ['Done'],
+      cancelledStatusNames: ['Cancelled', "Won't Do"],
+      backlogStatusIds: [],
+      dataStartDate: null,
+      boardEntryStatuses: null,
+    } as unknown as BoardConfig;
+
+    it('excludes issues with inBacklog=true from totalIssues', async () => {
+      boardConfigRepo.findOne.mockResolvedValue(kanbanConfig);
+
+      issueRepo.find.mockResolvedValue([
+        makeIssue({ key: 'PLAT-1', boardId: 'PLAT', inBacklog: false } as Partial<JiraIssue>),
+        makeIssue({ key: 'PLAT-2', boardId: 'PLAT', inBacklog: true } as Partial<JiraIssue>),
+      ]);
+
+      let callCount = 0;
+      changelogRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
+        callCount++;
+        const qb = {
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          orderBy: jest.fn().mockReturnThis(),
+          getMany: jest.fn().mockResolvedValue([]),
+          getRawMany: jest.fn().mockResolvedValue([]),
+        };
+        if (callCount === 1) {
+          // board-entry changelogs — both issues have entries in W02
+          qb.getMany.mockResolvedValue([
+            { issueKey: 'PLAT-1', field: 'status', fromValue: 'Backlog', toValue: 'To Do', changedAt: new Date('2026-01-06T09:00:00Z') },
+            { issueKey: 'PLAT-2', field: 'status', fromValue: 'Backlog', toValue: 'To Do', changedAt: new Date('2026-01-07T09:00:00Z') },
+          ]);
+        } else if (callCount === 2) {
+          qb.getRawMany.mockResolvedValue([{ issueKey: 'PLAT-1' }, { issueKey: 'PLAT-2' }]);
+        } else if (callCount === 3) {
+          qb.getMany.mockResolvedValue([
+            { issueKey: 'PLAT-1', field: 'status', fromValue: 'To Do', toValue: 'In Progress', changedAt: new Date('2026-01-06T10:00:00Z') },
+            { issueKey: 'PLAT-2', field: 'status', fromValue: 'To Do', toValue: 'In Progress', changedAt: new Date('2026-01-07T10:00:00Z') },
+          ]);
+        }
+        return qb;
+      });
+      roadmapConfigRepo.find.mockResolvedValue([]);
+      jpdIdeaRepo.find.mockResolvedValue([]);
+
+      const result = await service.getAccuracy('PLAT', undefined, undefined, '2026-W02');
+      expect(result).toHaveLength(1);
+      // Only PLAT-1 should be counted; PLAT-2 has inBacklog=true
+      expect(result[0].totalIssues).toBe(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // filterIdeasForWindow and isIssueEligibleForRoadmapItem (via getKanbanAccuracy)
   // -------------------------------------------------------------------------
 

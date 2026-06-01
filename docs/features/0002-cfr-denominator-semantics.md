@@ -1,7 +1,7 @@
 # 0002 — CFR Denominator Semantics
 
 **Date:** 2026-05-07
-**Status:** Draft
+**Status:** Implemented
 **Source:** Manual (driven by proposal 0049)
 **Related proposal:** docs/proposals/0049-cfr-denominator-semantics.md
 

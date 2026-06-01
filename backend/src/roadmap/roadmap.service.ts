@@ -26,6 +26,12 @@ import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { dateParts, midnightInTz } from '../metrics/tz-utils.js';
 import { dateToIsoWeekKey } from '../lib/iso-week.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
+import { classifyRoadmapStatus as classifyRoadmap } from '../metrics/roadmap-classification.js';
+import {
+  buildKanbanBoardEntryDateMap,
+  filterKanbanIssues,
+  DEFAULT_BOARD_ENTRY_STATUSES,
+} from '../lib/kanban-week-stats.js';
 import {
   resolveEpicIdeas,
   type EpicConflictResolution,
@@ -45,6 +51,12 @@ export interface RoadmapSprintAccuracy {
    * Used by the frontend to compute a weighted on-time rate denominator.
    */
   linkedCount: number;
+  /**
+   * Number of cancelled issues in the total. Cancelled issues are excluded
+   * from linkedCount regardless of whether they have a roadmap link, so the
+   * frontend must subtract this to compute true Off-Roadmap (unlinked) count.
+   */
+  cancelledCount: number;
   roadmapCoverage: number;
   /**
    * On-time delivery rate: green ÷ (green + amber).
@@ -499,6 +511,8 @@ export class RoadmapService {
   ): Promise<RoadmapSprintAccuracy[]> {
     const doneStatusNames: string[] =
       boardConfig?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
+    const cancelledStatusNamesKanban: string[] =
+      boardConfig?.cancelledStatusNames ?? ['Cancelled', "Won't Do"];
     const backlogStatusIds: string[] = boardConfig?.backlogStatusIds ?? [];
 
     // Load all Kanban issues for this board, excluding Epics and Sub-tasks
@@ -646,6 +660,9 @@ export class RoadmapService {
 
       const totalIssues = issues.length;
       const coveredCount = eligibleCoveredIssues.length;
+      const cancelledCount = issues.filter(
+        (i) => cancelledStatusNamesKanban.includes(i.status),
+      ).length;
       // Issues linked to any active idea but not covered (amber equivalent for Kanban)
       const linkedNotCoveredCount = issues.filter(
         (i) => i.epicKey !== null && activeIdeas.has(i.epicKey) && !eligibleCoveredKeys.has(i.key),
@@ -661,6 +678,7 @@ export class RoadmapService {
         coveredIssues: coveredCount,
         uncoveredIssues: totalIssues - coveredCount,
         linkedCount: totalLinkedKanban,
+        cancelledCount,
         roadmapCoverage:
           totalIssues > 0
             ? Math.round((coveredCount / totalIssues) * 10000) / 100
@@ -830,12 +848,14 @@ export class RoadmapService {
   ): Promise<RoadmapSprintAccuracy[]> {
     const doneStatusNames: string[] =
       boardConfig?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
-    const backlogStatusIds: string[] = boardConfig?.backlogStatusIds ?? [];
+    const cancelledStatusNamesWeekly: string[] =
+      boardConfig?.cancelledStatusNames ?? ['Cancelled', "Won't Do"];
 
-    // C-3: configurable board-entry status list — matches PlanningService.getKanbanWeeks.
+    // Board-entry status list — consistent with planning and week-detail services
     const boardEntryStatuses: string[] = boardConfig?.boardEntryStatuses ?? [
-      'To Do', 'Backlog', 'Open', 'New', 'TODO', 'OPEN', 'Selected for Development',
+      ...DEFAULT_BOARD_ENTRY_STATUSES,
     ];
+    const boardEntryStatusSet = new Set(boardEntryStatuses.map((s) => s.toLowerCase()));
 
     // Load all Kanban issues for this board, excluding Epics and Sub-tasks
     const allIssues = (await this.issueRepo.find({ where: { boardId } })).filter(
@@ -848,85 +868,55 @@ export class RoadmapService {
 
     const issueKeys = allIssues.map((i) => i.key);
 
-    // Bulk-load the earliest board-entry changelog per issue.
-    // Board-entry = first transition *into* a boardEntryStatus (toValue IN list).
-    // This matches PlanningService.getKanbanWeeks — the roadmap table and the
-    // planning table now use the same bucketing logic.
-    const changelogs = await this.changelogRepo
+    // Bulk-load ALL status changelogs for board-entry date computation
+    const allStatusChangelogs = await this.changelogRepo
       .createQueryBuilder('cl')
       .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
       .andWhere('cl.field = :field', { field: 'status' })
-      .andWhere('cl.toValue IN (:...statuses)', { statuses: boardEntryStatuses })
       .orderBy('cl.changedAt', 'ASC')
       .getMany();
 
-    // Build map: issueKey → earliest date it entered the board
-    const boardEntryDate = new Map<string, Date>();
-    for (const cl of changelogs) {
-      if (!boardEntryDate.has(cl.issueKey)) {
-        boardEntryDate.set(cl.issueKey, cl.changedAt);
-      }
+    // Group changelogs by issueKey for shared helpers
+    const changelogsByIssue = new Map<string, JiraChangelog[]>();
+    for (const cl of allStatusChangelogs) {
+      const list = changelogsByIssue.get(cl.issueKey) ?? [];
+      list.push(cl);
+      changelogsByIssue.set(cl.issueKey, list);
     }
 
-    // Build set of issue keys that have any status changelog (fallback heuristic)
-    const issueKeysWithChangelog = new Set<string>(changelogs.map((cl) => cl.issueKey));
-    if (backlogStatusIds.length === 0) {
-      const anyStatusChangelogs = await this.changelogRepo
-        .createQueryBuilder('cl')
-        .select('DISTINCT cl."issueKey"', 'issueKey')
-        .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
-        .andWhere('cl.field = :field', { field: 'status' })
-        .getRawMany<{ issueKey: string }>();
-      for (const row of anyStatusChangelogs) {
-        issueKeysWithChangelog.add(row.issueKey);
-      }
-    }
+    // Board-entry date map — uses shared helper (case-insensitive, consistent
+    // with planning and week-detail services)
+    const boardEntryDateByKey = buildKanbanBoardEntryDateMap(
+      allIssues,
+      changelogsByIssue,
+      boardEntryStatusSet,
+    );
 
-    // Exclude pure-backlog issues
-    const onBoardIssues = allIssues.filter((issue) => {
-      if (backlogStatusIds.length > 0) {
-        if (issue.statusId !== null) {
-          return !backlogStatusIds.includes(issue.statusId);
-        }
-      }
-      return issueKeysWithChangelog.has(issue.key);
+    // Backlog + dataStartDate exclusion — uses shared helper (ADR 0067:
+    // authoritative inBacklog flag from Jira Agile API)
+    const dataStartDate = boardConfig?.dataStartDate ?? null;
+    const dataStartBound = dataStartDate ? new Date(dataStartDate) : null;
+    const boundedIssuesWeekly = filterKanbanIssues({
+      issues: allIssues,
+      dataStartBound,
+      boardEntryDateByKey,
     });
-
-    if (onBoardIssues.length === 0) {
-      return [];
-    }
-
-    // Apply dataStartDate lower bound filter if configured
-    const dataStartDateWeekly = boardConfig?.dataStartDate ?? null;
-    const startBoundWeekly = dataStartDateWeekly ? new Date(dataStartDateWeekly) : null;
-    const boundedIssuesWeekly = startBoundWeekly
-      ? onBoardIssues.filter((issue) => {
-          const entryDate = boardEntryDate.get(issue.key) ?? issue.createdAt;
-          return entryDate >= startBoundWeekly;
-        })
-      : onBoardIssues;
 
     if (boundedIssuesWeekly.length === 0) {
       return [];
     }
 
-    // Bulk-load done-transition changelogs for completion date / activity-start mapping
-    const allWeeklyKeys = boundedIssuesWeekly.map((i) => i.key);
-    const doneChangelogsWeekly = await this.changelogRepo
-      .createQueryBuilder('cl')
-      .where('cl.issueKey IN (:...keys)', { keys: allWeeklyKeys })
-      .andWhere('cl.field = :field', { field: 'status' })
-      .orderBy('cl.changedAt', 'ASC')
-      .getMany();
-
-    // Build map: issueKey → first done-transition changedAt
+    // Build completion date and activity-start date maps from the already-loaded
+    // changelogs (no additional DB query needed — allStatusChangelogs covers all issues).
+    const allWeeklyKeys = new Set(boundedIssuesWeekly.map((i) => i.key));
     const completionDatesWeekly = new Map<string, Date>();
     // Build map: issueKey → first non-done transition changedAt (activity start).
     // NOTE: See getKanbanAccuracy for a note on the intentional difference between
     // this Kanban "board-pull semantics" definition and the sprint path's
     // "first-touch semantics" in calculateSprintAccuracy.
     const activityStartDatesWeekly = new Map<string, Date>();
-    for (const cl of doneChangelogsWeekly) {
+    for (const cl of allStatusChangelogs) {
+      if (!allWeeklyKeys.has(cl.issueKey)) continue;
       if (cl.toValue !== null && doneStatusNames.includes(cl.toValue)) {
         if (!completionDatesWeekly.has(cl.issueKey)) {
           completionDatesWeekly.set(cl.issueKey, cl.changedAt);
@@ -941,7 +931,7 @@ export class RoadmapService {
     // Group issues by the week of their board-entry date (fall back to createdAt)
     const weekMap = new Map<string, JiraIssue[]>();
     for (const issue of boundedIssuesWeekly) {
-      const entryDate = boardEntryDate.get(issue.key) ?? issue.createdAt;
+      const entryDate = boardEntryDateByKey.get(issue.key) ?? issue.createdAt;
       const key = this.dateToWeekKey(entryDate);
       const list = weekMap.get(key) ?? [];
       list.push(issue);
@@ -980,6 +970,9 @@ export class RoadmapService {
 
       const totalIssues = issues.length;
       const coveredCount = eligibleCoveredIssues.length;
+      const cancelledCount = issues.filter(
+        (i) => cancelledStatusNamesWeekly.includes(i.status),
+      ).length;
       // Issues linked to any active idea but not covered (amber equivalent for Kanban weekly)
       const linkedNotCoveredCountWeekly = issues.filter(
         (i) => i.epicKey !== null && activeIdeas.has(i.epicKey) && !eligibleCoveredKeys.has(i.key),
@@ -995,6 +988,7 @@ export class RoadmapService {
         coveredIssues: coveredCount,
         uncoveredIssues: totalIssues - coveredCount,
         linkedCount: totalLinkedWeekly,
+        cancelledCount,
         roadmapCoverage:
           totalIssues > 0
             ? Math.round((coveredCount / totalIssues) * 10000) / 100
@@ -1071,12 +1065,7 @@ export class RoadmapService {
       ruleByJpdKey,
     );
 
-    // Per-issue delivery classification:
-    //   in-scope (green)  = linked to an idea AND:
-    //                         (a) resolvedAt <= idea.targetDate (end-of-day), OR
-    //                         (b) in-flight in active sprint with targetDate not yet lapsed
-    //   linked   (amber)  = linked to an idea AND neither (a) nor (b)
-    //   none              = no roadmap link
+    // Per-issue delivery classification using shared utility
     const coveredIssues: JiraIssue[] = [];
     const linkedNotCoveredIssues: JiraIssue[] = [];
 
@@ -1094,20 +1083,19 @@ export class RoadmapService {
       const idea = epicIdea ?? directIdea;
       if (!idea) continue;
 
-      const targetEndOfDay = this.endOfDayUTC(idea.targetDate);
       const resolvedAt = completionDates.get(issue.key) ?? null;
+      const result = classifyRoadmap({
+        issueStatus: issue.status,
+        isCancelled: cancelledStatusNames.includes(issue.status),
+        epicIdea,
+        directIdea,
+        resolvedDate: resolvedAt,
+        isPeriodActive: sprint.state === 'active',
+        doneStatusNames,
+        todayStart: today,
+      });
 
-      // Condition A: delivered on time
-      const deliveredOnTime = resolvedAt !== null && resolvedAt <= targetEndOfDay;
-
-      // Condition B: in-flight and on track
-      const isInFlight =
-        sprint.state === 'active' &&
-        idea.targetDate >= today &&
-        !doneStatusNames.includes(issue.status) &&
-        !cancelledStatusNames.includes(issue.status);
-
-      if (deliveredOnTime || isInFlight) {
+      if (result.status === 'in-scope') {
         coveredIssues.push(issue);
       } else {
         linkedNotCoveredIssues.push(issue);
@@ -1117,6 +1105,9 @@ export class RoadmapService {
     // Compute metrics
     const totalIssues = filteredIssues.length;
     const coveredCount = coveredIssues.length;
+    const cancelledCount = filteredIssues.filter(
+      (i) => cancelledStatusNames.includes(i.status),
+    ).length;
     const uncoveredIssues = totalIssues - coveredCount;
     const roadmapCoverage =
       totalIssues > 0
@@ -1139,6 +1130,7 @@ export class RoadmapService {
       coveredIssues: coveredCount,
       uncoveredIssues,
       linkedCount: totalLinkedIssues,
+      cancelledCount,
       roadmapCoverage,
       roadmapOnTimeRate,
     };
@@ -1154,21 +1146,10 @@ export class RoadmapService {
       coveredIssues: 0,
       uncoveredIssues: 0,
       linkedCount: 0,
+      cancelledCount: 0,
       roadmapCoverage: 0,
       roadmapOnTimeRate: 0,
     };
-  }
-
-  /**
-   * Extend a date to 23:59:59.999 UTC (end of calendar day).
-   * Polaris stores targetDate as a date-only value (midnight UTC); this
-   * ensures a completion timestamp at any point during the target day
-   * is considered on-time.
-   */
-  private endOfDayUTC(date: Date): Date {
-    const d = new Date(date.getTime());
-    d.setUTCHours(23, 59, 59, 999);
-    return d;
   }
 
   private quarterToDates(quarter: string): { startDate: Date; endDate: Date } {

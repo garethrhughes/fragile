@@ -25,6 +25,7 @@ import {
 } from '../sprint-membership/sprint-membership.service.js';
 import { DEFAULT_IN_PROGRESS_NAMES } from '../metrics/status-defaults.js';
 import { extractCycles, resolveResetNames } from '../metrics/cycle.js';
+import { classifyRoadmapStatus as classifyRoadmap } from '../metrics/roadmap-classification.js';
 
 // ---------------------------------------------------------------------------
 // Response interfaces (exported for use by the controller and frontend types)
@@ -502,45 +503,18 @@ export class SprintDetailService {
         ? doneTransition.changedAt.toISOString()
         : null;
 
-      // roadmapStatus: per-issue delivery against roadmap targetDate
-      //
-      //   in-scope (green)  = linked to idea AND:
-      //                         (a) completed on or before targetDate, OR
-      //                         (b) in-flight in an active sprint with targetDate not yet lapsed
-      //   linked   (amber)  = linked to idea AND neither (a) nor (b)
-      //   none              = no roadmap link, OR issue is cancelled
-      //
-      // Cancelled issues always get 'none' so they don't inflate the amber count
-      // and are excluded from coverage metrics in calculateSprintAccuracy.
-      let roadmapStatus: 'in-scope' | 'linked' | 'none' = 'none';
-      let roadmapLinkSource: 'epic' | 'direct' | null = null;
-      if (!cancelledStatusNames.includes(issue.status)) {
-        // Epic link takes priority; direct link is fallback (ADR 0044)
-        const epicIdea = issue.epicKey !== null ? epicIdeaMap.get(issue.epicKey) : undefined;
-        const directIdea = directLinkIdeaMap.get(issue.key);
-        const idea = epicIdea ?? directIdea;
-        if (idea) {
-          roadmapLinkSource = epicIdea ? 'epic' : 'direct';
-          const targetEndOfDay = new Date(idea.targetDate.getTime());
-          targetEndOfDay.setUTCHours(23, 59, 59, 999);
-
-          const resolvedDate = doneTransition?.changedAt ?? null;
-
-          // Condition A: delivered on time
-          const deliveredOnTime = resolvedDate !== null && resolvedDate <= targetEndOfDay;
-
-          // Condition B: in-flight and on track
-          const todayStart = new Date();
-          todayStart.setUTCHours(0, 0, 0, 0);
-          const isInFlight =
-            sprint.state === 'active' &&
-            idea.targetDate >= todayStart &&
-            !doneStatusNames.includes(issue.status) &&
-            !cancelledStatusNames.includes(issue.status);
-
-          roadmapStatus = deliveredOnTime || isInFlight ? 'in-scope' : 'linked';
-        }
-      }
+      // roadmapStatus: per-issue delivery against roadmap targetDate (shared utility)
+      const roadmapResult = classifyRoadmap({
+        issueStatus: issue.status,
+        isCancelled: cancelledStatusNames.includes(issue.status),
+        epicIdea: issue.epicKey !== null ? epicIdeaMap.get(issue.epicKey) : undefined,
+        directIdea: directLinkIdeaMap.get(issue.key),
+        resolvedDate: doneTransition?.changedAt ?? null,
+        isPeriodActive: sprint.state === 'active',
+        doneStatusNames,
+      });
+      const roadmapStatus = roadmapResult.status;
+      const roadmapLinkSource = roadmapResult.linkSource;
 
       let leadTimeDays: number | null = null;
       if (doneTransition) {

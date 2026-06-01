@@ -16,6 +16,7 @@ import {
 } from '../database/entities/index.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
+import { classifyRoadmapStatus as classifyRoadmap } from '../metrics/roadmap-classification.js';
 import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
 
 // ---------------------------------------------------------------------------
@@ -352,50 +353,27 @@ export class QuarterDetailService {
       // addedMidQuarter: boardEntryDate is strictly after quarterStart
       const addedMidQuarter = boardEntryDate > quarterStart;
 
-      // roadmapStatus — mirrors sprint Condition A + B logic
-      //   in-scope = linked AND (delivered on or before targetDate [A]
-      //              OR in-flight on an active quarter with target not yet passed [B])
-      //   linked   = linked AND not in-scope
-      //   none     = no roadmap link, or issue is cancelled
-      let roadmapStatus: 'in-scope' | 'linked' | 'none' = 'none';
-      let roadmapLinkSource: 'direct' | 'epic' | null = null;
-
-      if (!cancelledStatusNames.includes(issue.status)) {
-        const epicIdea = issue.epicKey !== null ? epicIdeaMap.get(issue.epicKey) : undefined;
-        const directIdea = directLinkIdeaMap.get(issue.key);
-        const idea = epicIdea ?? directIdea;
-        if (idea) {
-          roadmapLinkSource = epicIdea ? 'epic' : 'direct';
-          if (idea.targetDate !== null) {
-            const targetEndOfDay = new Date(idea.targetDate.getTime());
-            targetEndOfDay.setUTCHours(23, 59, 59, 999);
-            const doneTransition = issueChangelogs.find(
-              (cl) =>
-                cl.field === 'status' &&
-                cl.toValue !== null &&
-                doneStatuses.includes(cl.toValue),
-            );
-            const resolvedDate = doneTransition?.changedAt ?? null;
-            // Condition A: delivered on time
-            const deliveredOnTime = resolvedDate !== null && resolvedDate <= targetEndOfDay;
-            // Condition B: in-flight on an active quarter with target not yet passed.
-            // Use UTC midnight so the comparison is stable regardless of time-of-day.
-            // Quarter is active when todayStart falls within [quarterStart, quarterEnd].
-            const todayStart = new Date();
-            todayStart.setUTCHours(0, 0, 0, 0);
-            const isInFlight =
-              todayStart >= quarterStart &&
-              todayStart <= quarterEnd &&
-              idea.targetDate >= todayStart &&
-              resolvedDate === null &&
-              !doneStatuses.includes(issue.status) &&
-              !cancelledStatusNames.includes(issue.status);
-            roadmapStatus = (deliveredOnTime || isInFlight) ? 'in-scope' : 'linked';
-          } else {
-            roadmapStatus = 'linked';
-          }
-        }
-      }
+      // roadmapStatus — shared Condition A + B classification
+      const doneTransitionForRoadmap = issueChangelogs.find(
+        (cl) =>
+          cl.field === 'status' &&
+          cl.toValue !== null &&
+          doneStatuses.includes(cl.toValue),
+      );
+      const todayStartForRoadmap = new Date();
+      todayStartForRoadmap.setUTCHours(0, 0, 0, 0);
+      const roadmapResult = classifyRoadmap({
+        issueStatus: issue.status,
+        isCancelled: cancelledStatusNames.includes(issue.status),
+        epicIdea: issue.epicKey !== null ? epicIdeaMap.get(issue.epicKey) : undefined,
+        directIdea: directLinkIdeaMap.get(issue.key),
+        resolvedDate: doneTransitionForRoadmap?.changedAt ?? null,
+        isPeriodActive: todayStartForRoadmap >= quarterStart && todayStartForRoadmap <= quarterEnd,
+        doneStatusNames: doneStatuses,
+        todayStart: todayStartForRoadmap,
+      });
+      const roadmapStatus = roadmapResult.status;
+      const roadmapLinkSource = roadmapResult.linkSource;
 
       // isIncident: must match type/label AND pass priority AND-gate
       // (consistent with MttrService; incidentPriorities = [] means all priorities qualify)

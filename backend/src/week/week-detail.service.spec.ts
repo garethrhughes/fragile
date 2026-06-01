@@ -1203,6 +1203,60 @@ describe('WeekDetailService', () => {
       const result = await service.getDetail('PLAT', WEEK);
       expect(result.summary.roadmapLinkedCount).toBe(1);
     });
+
+    it('returns roadmapStatus=in-scope for prior-week issue that completed in this week (via epic)', async () => {
+      // Issue entered board in W01 (prior week) but completed in W02 (test week).
+      // It should still get the roadmap classification, not hardcoded 'none'.
+      boardConfigRepo.findOne.mockResolvedValue(
+        kanbanConfig({ cancelledStatusNames: ['Cancelled', "Won't Do"], roadmapLinkTypes: [] }),
+      );
+
+      // Issue entered board in W01 (Dec 29), completed in W02 (Jan 8)
+      issueRepo.find.mockResolvedValue([
+        makeIssue({
+          key: 'PLAT-1',
+          epicKey: 'EPIC-1',
+          status: 'Done',
+          createdAt: new Date('2025-12-01T00:00:00Z'),
+        }),
+      ]);
+      changelogRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          // Board entry: Dec 29 (W01) — BEFORE W02 starts
+          makeChangelog({ issueKey: 'PLAT-1', fromValue: 'Backlog', toValue: 'To Do', changedAt: new Date('2025-12-29T09:00:00Z') }),
+          makeChangelog({ issueKey: 'PLAT-1', field: 'status', fromValue: 'To Do', toValue: 'In Progress', changedAt: new Date('2025-12-30T09:00:00Z') }),
+          // Completed in W02
+          makeChangelog({ issueKey: 'PLAT-1', field: 'status', fromValue: 'In Progress', toValue: 'Done', changedAt: new Date('2026-01-08T10:00:00Z') }),
+        ]),
+      });
+
+      roadmapConfigRepo.find.mockResolvedValue([
+        { id: 1, jpdKey: 'JPD-1', description: null, startDateFieldId: null, targetDateFieldId: null, createdAt: new Date() } as RoadmapConfig,
+      ]);
+      jpdIdeaRepo.find.mockResolvedValue([
+        {
+          key: 'IDEA-1',
+          jpdKey: 'JPD-1',
+          deliveryIssueKeys: ['EPIC-1'],
+          targetDate: new Date('2026-06-30T00:00:00Z'),
+        } as unknown as JpdIdea,
+      ]);
+      issueLinkRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([]),
+      });
+
+      const result = await service.getDetail('PLAT', WEEK);
+      const issue = result.issues.find((i) => i.key === 'PLAT-1');
+      expect(issue).toBeDefined();
+      expect(issue!.roadmapStatus).toBe('in-scope');
+      expect(issue!.roadmapLinkSource).toBe('epic');
+    });
   });
 
   // -------------------------------------------------------------------------

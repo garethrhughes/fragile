@@ -22,6 +22,12 @@ import {
   type RoadmapSprintAccuracy,
 } from '@/lib/api'
 import { getQuarterKey, getCurrentQuarterKey } from '@/lib/quarter-utils'
+import {
+  deriveOnRoadmapLate,
+  deriveOffRoadmap,
+  computeOnRoadmapPercent,
+  computeAggregateOnRoadmapPercent,
+} from '@/lib/roadmap-accuracy'
 import { useBoardsStore } from '@/store/boards-store'
 import { BoardChip } from '@/components/ui/board-chip'
 import { DataTable, type Column } from '@/components/ui/data-table'
@@ -36,8 +42,8 @@ import { EpicDetailPanel } from '@/components/ui/epic-detail-panel'
 
 const ROADMAP_HELP: MetricDefinition[] = [
   {
-    name: 'Roadmap Coverage',
-    description: 'Percentage of sprint issues that are linked to a JPD roadmap item. Higher coverage means more work is aligned to planned initiatives.',
+    name: 'On-Roadmap %',
+    description: 'Percentage of sprint issues that are linked to a JPD roadmap item (regardless of timeliness). Higher means more work is aligned to planned initiatives.',
     formula: 'roadmap-linked issues ÷ total sprint issues × 100',
   },
   {
@@ -55,7 +61,6 @@ interface QuarterRow {
   quarter: string;
   totalIssues: number;
   coveredIssues: number;
-  uncoveredIssues: number;
   linkedCount: number;
   roadmapCoverage: number;
   roadmapOnTimeRate: number;
@@ -78,15 +83,10 @@ function groupByQuarter(sprints: RoadmapSprintAccuracy[], tz: string): QuarterRo
   for (const [quarter, group] of map.entries()) {
     const totalIssues = group.reduce((acc, s) => acc + s.totalIssues, 0);
     const coveredIssues = group.reduce((acc, s) => acc + s.coveredIssues, 0);
-    const uncoveredIssues = group.reduce((acc, s) => acc + s.uncoveredIssues, 0);
     const linkedCount = group.reduce((acc, s) => acc + s.linkedCount, 0);
-    // Recompute from totals for consistency
-    const roadmapCoverage =
-      totalIssues > 0
-        ? Math.round((coveredIssues / totalIssues) * 10000) / 100
-        : 0;
-    // NEW-2 fix: roadmapOnTimeRate = coveredIssues ÷ linkedCount (issues with a roadmap link),
-    // not ÷ totalIssues.  This correctly measures "on-time rate among linked issues only".
+    // On-Roadmap %: linkedCount / totalIssues (all roadmap-linked issues regardless of timeliness)
+    const roadmapCoverage = computeOnRoadmapPercent({ linkedCount, totalIssues });
+    // On-Time Rate: coveredIssues ÷ linkedCount (on-time among linked issues only)
     const roadmapOnTimeRate =
       linkedCount > 0
         ? Math.round((coveredIssues / linkedCount) * 10000) / 100
@@ -95,7 +95,6 @@ function groupByQuarter(sprints: RoadmapSprintAccuracy[], tz: string): QuarterRo
       quarter,
       totalIssues,
       coveredIssues,
-      uncoveredIssues,
       linkedCount,
       roadmapCoverage,
       roadmapOnTimeRate,
@@ -117,14 +116,16 @@ function groupByQuarter(sprints: RoadmapSprintAccuracy[], tz: string): QuarterRo
 // ---------------------------------------------------------------------------
 
 function sprintRowColor(row: RoadmapSprintAccuracy): string {
-  if (row.roadmapCoverage < 50) return 'bg-red-50';
-  if (row.roadmapCoverage < 80) return 'bg-amber-50';
+  const pct = computeOnRoadmapPercent(row);
+  if (pct < 50) return 'bg-red-50';
+  if (pct < 80) return 'bg-amber-50';
   return '';
 }
 
 function quarterRowColor(row: QuarterRow): string {
-  if (row.roadmapCoverage < 50) return 'bg-red-50';
-  if (row.roadmapCoverage < 80) return 'bg-amber-50';
+  const pct = computeOnRoadmapPercent(row);
+  if (pct < 50) return 'bg-red-50';
+  if (pct < 80) return 'bg-amber-50';
   return '';
 }
 
@@ -342,6 +343,16 @@ function RoadmapPageInner() {
   // Quarter rows derived client-side from raw sprint data
   const quarterRows = useMemo(() => groupByQuarter(rawData, timezone), [rawData, timezone]);
 
+  // Rewrite roadmapCoverage on sprint/week rows so DataTable sort aligns with displayed On-Roadmap %
+  const sprintData = useMemo<RoadmapSprintAccuracy[]>(
+    () => rawData.map((r) => ({ ...r, roadmapCoverage: computeOnRoadmapPercent(r) })),
+    [rawData],
+  );
+  const weekData = useMemo<RoadmapSprintAccuracy[]>(
+    () => kanbanWeekData.map((r) => ({ ...r, roadmapCoverage: computeOnRoadmapPercent(r) })),
+    [kanbanWeekData],
+  );
+
   // Summary stats across ALL displayed rows
   const { avgCoverage, avgOnTimeRate } = useMemo(() => {
     const rows: Array<{ coveredIssues: number; totalIssues: number; linkedCount: number }> =
@@ -353,19 +364,17 @@ function RoadmapPageInner() {
           ? quarterRows
           : rawData;
     if (rows.length === 0) return { avgCoverage: 0, avgOnTimeRate: 0 };
-    // NEW-3 fix: use sum-of-counts (weighted mean), not simple mean of per-period percentages.
     const allCovered = rows.reduce((s, r) => s + r.coveredIssues, 0);
-    const allTotal = rows.reduce((s, r) => s + r.totalIssues, 0);
     const allLinked = rows.reduce((s, r) => s + r.linkedCount, 0);
     return {
-      avgCoverage: allTotal > 0 ? Math.round((allCovered / allTotal) * 10000) / 100 : 0,
+      avgCoverage: computeAggregateOnRoadmapPercent(rows),
       avgOnTimeRate: allLinked > 0 ? Math.round((allCovered / allLinked) * 10000) / 100 : 0,
     };
   }, [isKanban, kanbanPeriod, kanbanWeekData, rawData, quarterRows, periodType]);
 
-  // True when at least one period has covered issues (i.e. ideas have dates)
+  // True when at least one period has linked issues (i.e. ideas have dates)
   const roadmapHasDates = useMemo(() => {
-    const rows: Array<{ coveredIssues: number }> =
+    const rows: Array<{ linkedCount: number }> =
       isKanban
         ? kanbanPeriod === 'week'
           ? kanbanWeekData
@@ -373,7 +382,7 @@ function RoadmapPageInner() {
         : periodType === 'quarter'
           ? quarterRows
           : rawData;
-    return rows.some((r) => r.coveredIssues > 0);
+    return rows.some((r) => r.linkedCount > 0);
   }, [isKanban, kanbanPeriod, kanbanWeekData, rawData, quarterRows, periodType]);
 
   // Stat label describing the data range shown
@@ -392,20 +401,20 @@ function RoadmapPageInner() {
     if (isKanban && kanbanPeriod === 'week') {
       const chronological = [...kanbanWeekData].reverse();
       return [
-        chronological.map((w) => ({ label: abbreviateLabel(w.sprintName), value: w.roadmapCoverage })),
+        chronological.map((w) => ({ label: abbreviateLabel(w.sprintName), value: computeOnRoadmapPercent(w) })),
         chronological.map((w) => ({ label: abbreviateLabel(w.sprintName), value: w.roadmapOnTimeRate })),
       ];
     }
     if (isKanban || periodType === 'quarter') {
       const chronological = [...quarterRows].reverse();
       return [
-        chronological.map((q) => ({ label: abbreviateLabel(q.quarter), value: q.roadmapCoverage })),
+        chronological.map((q) => ({ label: abbreviateLabel(q.quarter), value: computeOnRoadmapPercent(q) })),
         chronological.map((q) => ({ label: abbreviateLabel(q.quarter), value: q.roadmapOnTimeRate })),
       ];
     }
     const chronological = [...rawData].reverse();
     return [
-      chronological.map((s) => ({ label: abbreviateLabel(s.sprintName), value: s.roadmapCoverage })),
+      chronological.map((s) => ({ label: abbreviateLabel(s.sprintName), value: computeOnRoadmapPercent(s) })),
       chronological.map((s) => ({ label: abbreviateLabel(s.sprintName), value: s.roadmapOnTimeRate })),
     ];
   }, [isKanban, kanbanPeriod, kanbanWeekData, rawData, quarterRows, periodType]);
@@ -448,14 +457,27 @@ function RoadmapPageInner() {
         },
       },
       { key: 'totalIssues', label: 'Total Issues', sortable: true },
-      { key: 'coveredIssues', label: 'Covered', sortable: true },
-      { key: 'uncoveredIssues', label: 'Uncovered', sortable: true },
+      { key: 'coveredIssues', label: 'On-Roadmap', sortable: true },
+      {
+        key: 'linkedNotCovered',
+        label: 'On-Roadmap (Late)',
+        sortable: true,
+        getValue: (row) => deriveOnRoadmapLate(row),
+        render: (_value, row) => deriveOnRoadmapLate(row),
+      },
+      {
+        key: 'offRoadmap',
+        label: 'Off-Roadmap',
+        sortable: true,
+        getValue: (row) => deriveOffRoadmap(row),
+        render: (_value, row) => deriveOffRoadmap(row),
+      },
       {
         key: 'roadmapCoverage',
-        label: 'Coverage %',
+        label: 'On-Roadmap %',
         sortable: true,
-        render: (value) => {
-          const pct = Number(value);
+        render: (_value, row) => {
+          const pct = computeOnRoadmapPercent(row);
           const color =
             pct < 50
               ? 'text-red-600 font-semibold'
@@ -510,14 +532,27 @@ function RoadmapPageInner() {
         ),
       },
       { key: 'totalIssues', label: 'Total Issues', sortable: true },
-      { key: 'coveredIssues', label: 'Covered', sortable: true },
-      { key: 'uncoveredIssues', label: 'Uncovered', sortable: true },
+      { key: 'coveredIssues', label: 'On-Roadmap', sortable: true },
+      {
+        key: 'linkedNotCovered',
+        label: 'On-Roadmap (Late)',
+        sortable: true,
+        getValue: (row) => deriveOnRoadmapLate(row),
+        render: (_value, row) => deriveOnRoadmapLate(row),
+      },
+      {
+        key: 'offRoadmap',
+        label: 'Off-Roadmap',
+        sortable: true,
+        getValue: (row) => deriveOffRoadmap(row),
+        render: (_value, row) => deriveOffRoadmap(row),
+      },
       {
         key: 'roadmapCoverage',
-        label: 'Coverage %',
+        label: 'On-Roadmap %',
         sortable: true,
-        render: (value) => {
-          const pct = Number(value);
+        render: (_value, row) => {
+          const pct = computeOnRoadmapPercent(row);
           const color =
             pct < 50
               ? 'text-red-600 font-semibold'
@@ -573,14 +608,27 @@ function RoadmapPageInner() {
         },
       },
       { key: 'totalIssues', label: 'Total Issues', sortable: true },
-      { key: 'coveredIssues', label: 'Covered', sortable: true },
-      { key: 'uncoveredIssues', label: 'Uncovered', sortable: true },
+      { key: 'coveredIssues', label: 'On-Roadmap', sortable: true },
+      {
+        key: 'linkedNotCovered',
+        label: 'On-Roadmap (Late)',
+        sortable: true,
+        getValue: (row) => deriveOnRoadmapLate(row),
+        render: (_value, row) => deriveOnRoadmapLate(row),
+      },
+      {
+        key: 'offRoadmap',
+        label: 'Off-Roadmap',
+        sortable: true,
+        getValue: (row) => deriveOffRoadmap(row),
+        render: (_value, row) => deriveOffRoadmap(row),
+      },
       {
         key: 'roadmapCoverage',
-        label: 'Coverage %',
+        label: 'On-Roadmap %',
         sortable: true,
-        render: (value) => {
-          const pct = Number(value);
+        render: (_value, row) => {
+          const pct = computeOnRoadmapPercent(row);
           const color =
             pct < 50
               ? 'text-red-600 font-semibold'
@@ -749,7 +797,7 @@ function RoadmapPageInner() {
               {/* Warn when all ideas lack dates (coverage will be 0% everywhere) */}
               {!roadmapHasDates && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                  <span className="font-semibold">Roadmap coverage shows 0%</span> — JPD ideas have no start/target
+                  <span className="font-semibold">On-Roadmap % shows 0%</span> — JPD ideas have no start/target
                   dates. Verify the date field IDs in{' '}
                   <a href="/settings" className="font-medium underline">
                     Settings
@@ -762,7 +810,7 @@ function RoadmapPageInner() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="rounded-xl border border-border bg-card p-5">
                   <h3 className="text-sm font-medium text-muted">
-                    Avg Roadmap Coverage
+                    Avg On-Roadmap %
                   </h3>
                   <p className="mt-2 text-3xl font-bold">
                     {avgCoverage.toFixed(1)}%
@@ -787,7 +835,7 @@ function RoadmapPageInner() {
               {/* Trend charts */}
               <div className="grid gap-4 lg:grid-cols-2">
                 <TrendChart
-                  title="Roadmap Coverage %"
+                  title="On-Roadmap %"
                   data={chartData[0]}
                   color="#3b82f6"
                   unit="%"
@@ -804,7 +852,7 @@ function RoadmapPageInner() {
               {isKanban && kanbanPeriod === 'week' ? (
                 <DataTable<RoadmapSprintAccuracy>
                   columns={weekColumns}
-                  data={kanbanWeekData}
+                  data={weekData}
                   rowClassName={weekRowColor}
                 />
               ) : isKanban || periodType === 'quarter' ? (
@@ -816,7 +864,7 @@ function RoadmapPageInner() {
               ) : (
                 <DataTable<RoadmapSprintAccuracy>
                   columns={sprintColumns}
-                  data={rawData}
+                  data={sprintData}
                   rowClassName={sprintRowColor}
                 />
               )}
