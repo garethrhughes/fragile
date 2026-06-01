@@ -332,9 +332,12 @@ export class WeekDetailService {
 
     // Direct issue → idea links (ADR 0044 Condition C), using the same
     // roadmapLinkTypes as the roadmap service for consistent coverage.
+    // Uses all bounded issue keys (not just weekIssueKeys) because roadmap
+    // classification is also applied to prior-week completers and in-flight issues.
+    const allBoundedKeys = startBoundedIssues.map((i) => i.key);
     const directLinkIdeaMap = await buildDirectLinkIdeaMap(
       this.issueLinkRepo,
-      weekIssueKeys,
+      allBoundedKeys,
       allIdeas,
       roadmapLinkTypes,
     );

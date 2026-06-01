@@ -28,6 +28,11 @@ import { dateToIsoWeekKey } from '../lib/iso-week.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
 import { classifyRoadmapStatus as classifyRoadmap } from '../metrics/roadmap-classification.js';
 import {
+  buildKanbanBoardEntryDateMap,
+  filterKanbanIssues,
+  DEFAULT_BOARD_ENTRY_STATUSES,
+} from '../lib/kanban-week-stats.js';
+import {
   resolveEpicIdeas,
   type EpicConflictResolution,
   type ResolveIdeaInput,
@@ -831,12 +836,12 @@ export class RoadmapService {
   ): Promise<RoadmapSprintAccuracy[]> {
     const doneStatusNames: string[] =
       boardConfig?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
-    const backlogStatusIds: string[] = boardConfig?.backlogStatusIds ?? [];
 
-    // C-3: configurable board-entry status list — matches PlanningService.getKanbanWeeks.
+    // Board-entry status list — consistent with planning and week-detail services
     const boardEntryStatuses: string[] = boardConfig?.boardEntryStatuses ?? [
-      'To Do', 'Backlog', 'Open', 'New', 'TODO', 'OPEN', 'Selected for Development',
+      ...DEFAULT_BOARD_ENTRY_STATUSES,
     ];
+    const boardEntryStatusSet = new Set(boardEntryStatuses.map((s) => s.toLowerCase()));
 
     // Load all Kanban issues for this board, excluding Epics and Sub-tasks
     const allIssues = (await this.issueRepo.find({ where: { boardId } })).filter(
@@ -849,85 +854,55 @@ export class RoadmapService {
 
     const issueKeys = allIssues.map((i) => i.key);
 
-    // Bulk-load the earliest board-entry changelog per issue.
-    // Board-entry = first transition *into* a boardEntryStatus (toValue IN list).
-    // This matches PlanningService.getKanbanWeeks — the roadmap table and the
-    // planning table now use the same bucketing logic.
-    const changelogs = await this.changelogRepo
+    // Bulk-load ALL status changelogs for board-entry date computation
+    const allStatusChangelogs = await this.changelogRepo
       .createQueryBuilder('cl')
       .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
       .andWhere('cl.field = :field', { field: 'status' })
-      .andWhere('cl.toValue IN (:...statuses)', { statuses: boardEntryStatuses })
       .orderBy('cl.changedAt', 'ASC')
       .getMany();
 
-    // Build map: issueKey → earliest date it entered the board
-    const boardEntryDate = new Map<string, Date>();
-    for (const cl of changelogs) {
-      if (!boardEntryDate.has(cl.issueKey)) {
-        boardEntryDate.set(cl.issueKey, cl.changedAt);
-      }
+    // Group changelogs by issueKey for shared helpers
+    const changelogsByIssue = new Map<string, JiraChangelog[]>();
+    for (const cl of allStatusChangelogs) {
+      const list = changelogsByIssue.get(cl.issueKey) ?? [];
+      list.push(cl);
+      changelogsByIssue.set(cl.issueKey, list);
     }
 
-    // Build set of issue keys that have any status changelog (fallback heuristic)
-    const issueKeysWithChangelog = new Set<string>(changelogs.map((cl) => cl.issueKey));
-    if (backlogStatusIds.length === 0) {
-      const anyStatusChangelogs = await this.changelogRepo
-        .createQueryBuilder('cl')
-        .select('DISTINCT cl."issueKey"', 'issueKey')
-        .where('cl.issueKey IN (:...keys)', { keys: issueKeys })
-        .andWhere('cl.field = :field', { field: 'status' })
-        .getRawMany<{ issueKey: string }>();
-      for (const row of anyStatusChangelogs) {
-        issueKeysWithChangelog.add(row.issueKey);
-      }
-    }
+    // Board-entry date map — uses shared helper (case-insensitive, consistent
+    // with planning and week-detail services)
+    const boardEntryDateByKey = buildKanbanBoardEntryDateMap(
+      allIssues,
+      changelogsByIssue,
+      boardEntryStatusSet,
+    );
 
-    // Exclude pure-backlog issues
-    const onBoardIssues = allIssues.filter((issue) => {
-      if (backlogStatusIds.length > 0) {
-        if (issue.statusId !== null) {
-          return !backlogStatusIds.includes(issue.statusId);
-        }
-      }
-      return issueKeysWithChangelog.has(issue.key);
+    // Backlog + dataStartDate exclusion — uses shared helper (ADR 0067:
+    // authoritative inBacklog flag from Jira Agile API)
+    const dataStartDate = boardConfig?.dataStartDate ?? null;
+    const dataStartBound = dataStartDate ? new Date(dataStartDate) : null;
+    const boundedIssuesWeekly = filterKanbanIssues({
+      issues: allIssues,
+      dataStartBound,
+      boardEntryDateByKey,
     });
-
-    if (onBoardIssues.length === 0) {
-      return [];
-    }
-
-    // Apply dataStartDate lower bound filter if configured
-    const dataStartDateWeekly = boardConfig?.dataStartDate ?? null;
-    const startBoundWeekly = dataStartDateWeekly ? new Date(dataStartDateWeekly) : null;
-    const boundedIssuesWeekly = startBoundWeekly
-      ? onBoardIssues.filter((issue) => {
-          const entryDate = boardEntryDate.get(issue.key) ?? issue.createdAt;
-          return entryDate >= startBoundWeekly;
-        })
-      : onBoardIssues;
 
     if (boundedIssuesWeekly.length === 0) {
       return [];
     }
 
-    // Bulk-load done-transition changelogs for completion date / activity-start mapping
-    const allWeeklyKeys = boundedIssuesWeekly.map((i) => i.key);
-    const doneChangelogsWeekly = await this.changelogRepo
-      .createQueryBuilder('cl')
-      .where('cl.issueKey IN (:...keys)', { keys: allWeeklyKeys })
-      .andWhere('cl.field = :field', { field: 'status' })
-      .orderBy('cl.changedAt', 'ASC')
-      .getMany();
-
-    // Build map: issueKey → first done-transition changedAt
+    // Build completion date and activity-start date maps from the already-loaded
+    // changelogs (no additional DB query needed — allStatusChangelogs covers all issues).
+    const allWeeklyKeys = new Set(boundedIssuesWeekly.map((i) => i.key));
     const completionDatesWeekly = new Map<string, Date>();
     // Build map: issueKey → first non-done transition changedAt (activity start).
     // NOTE: See getKanbanAccuracy for a note on the intentional difference between
     // this Kanban "board-pull semantics" definition and the sprint path's
     // "first-touch semantics" in calculateSprintAccuracy.
     const activityStartDatesWeekly = new Map<string, Date>();
-    for (const cl of doneChangelogsWeekly) {
+    for (const cl of allStatusChangelogs) {
+      if (!allWeeklyKeys.has(cl.issueKey)) continue;
       if (cl.toValue !== null && doneStatusNames.includes(cl.toValue)) {
         if (!completionDatesWeekly.has(cl.issueKey)) {
           completionDatesWeekly.set(cl.issueKey, cl.changedAt);
@@ -942,7 +917,7 @@ export class RoadmapService {
     // Group issues by the week of their board-entry date (fall back to createdAt)
     const weekMap = new Map<string, JiraIssue[]>();
     for (const issue of boundedIssuesWeekly) {
-      const entryDate = boardEntryDate.get(issue.key) ?? issue.createdAt;
+      const entryDate = boardEntryDateByKey.get(issue.key) ?? issue.createdAt;
       const key = this.dateToWeekKey(entryDate);
       const list = weekMap.get(key) ?? [];
       list.push(issue);

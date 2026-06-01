@@ -462,12 +462,14 @@ function RoadmapPageInner() {
         key: 'linkedNotCovered',
         label: 'On-Roadmap (Late)',
         sortable: true,
+        getValue: (row) => deriveOnRoadmapLate(row),
         render: (_value, row) => deriveOnRoadmapLate(row),
       },
       {
         key: 'offRoadmap',
         label: 'Off-Roadmap',
         sortable: true,
+        getValue: (row) => deriveOffRoadmap(row),
         render: (_value, row) => deriveOffRoadmap(row),
       },
       {
@@ -535,12 +537,14 @@ function RoadmapPageInner() {
         key: 'linkedNotCovered',
         label: 'On-Roadmap (Late)',
         sortable: true,
+        getValue: (row) => deriveOnRoadmapLate(row),
         render: (_value, row) => deriveOnRoadmapLate(row),
       },
       {
         key: 'offRoadmap',
         label: 'Off-Roadmap',
         sortable: true,
+        getValue: (row) => deriveOffRoadmap(row),
         render: (_value, row) => deriveOffRoadmap(row),
       },
       {
@@ -609,12 +613,14 @@ function RoadmapPageInner() {
         key: 'linkedNotCovered',
         label: 'On-Roadmap (Late)',
         sortable: true,
+        getValue: (row) => deriveOnRoadmapLate(row),
         render: (_value, row) => deriveOnRoadmapLate(row),
       },
       {
         key: 'offRoadmap',
         label: 'Off-Roadmap',
         sortable: true,
+        getValue: (row) => deriveOffRoadmap(row),
         render: (_value, row) => deriveOffRoadmap(row),
       },
       {

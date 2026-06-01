@@ -12,6 +12,8 @@ export interface Column<T> {
   label: string;
   sortable?: boolean;
   render?: (value: unknown, row: T) => ReactNode;
+  /** Custom sort value accessor for derived columns not present on the row data. */
+  getValue?: (row: T) => unknown;
 }
 
 interface DataTableProps<T> {
@@ -52,9 +54,10 @@ export function DataTable<T extends Record<string, unknown> | object>({
 
   const sortedData = useMemo(() => {
     if (!sortKey) return data;
+    const col = columns.find((c) => c.key === sortKey);
     return [...data].sort((a, b) => {
-      const aVal = getField(a, sortKey);
-      const bVal = getField(b, sortKey);
+      const aVal = col?.getValue ? col.getValue(a) : getField(a, sortKey);
+      const bVal = col?.getValue ? col.getValue(b) : getField(b, sortKey);
       if (aVal == null && bVal == null) return 0;
       if (aVal == null) return 1;
       if (bVal == null) return -1;
@@ -67,7 +70,7 @@ export function DataTable<T extends Record<string, unknown> | object>({
       }
       return sortDir === 'asc' ? cmp : -cmp;
     });
-  }, [data, sortKey, sortDir]);
+  }, [data, columns, sortKey, sortDir]);
 
   function SortIcon({ columnKey }: { columnKey: string }) {
     if (sortKey !== columnKey) {
