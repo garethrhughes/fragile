@@ -390,7 +390,7 @@ export class RoadmapService {
     if (epicKeys.length > 0) {
       const epicRows = await this.issueRepo.find({
         where: { key: In(epicKeys) },
-        select: ['key', 'summary'],
+        select: { key: true, summary: true },
       });
       for (const r of epicRows) {
         epicSummaryByKey.set(r.key, r.summary ?? null);

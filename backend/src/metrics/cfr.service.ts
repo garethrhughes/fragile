@@ -69,7 +69,7 @@ export class CfrService {
     // for CFR classification.
     const allIssues = await this.issueRepo.find({
       where: { boardId },
-      select: ['key', 'issueType', 'fixVersion', 'labels'],
+      select: { key: true, issueType: true, fixVersion: true, labels: true },
     });
 
     // Released versions in period (primary signal — ADR 0001).

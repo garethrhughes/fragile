@@ -65,7 +65,7 @@ export class LeadTimeService {
     // changelog prevents loading thousands of historical issues + their changelogs for
     // boards like PLAT (1000+ Kanban issues) where most never appear in the period.
     const [allBoardKeyRows, releasedVersions] = await Promise.all([
-      this.issueRepo.find({ where: { boardId }, select: ['key'] }),
+      this.issueRepo.find({ where: { boardId }, select: { key: true } }),
       this.versionRepo.find({
         where: {
           projectKey: boardId,
@@ -103,7 +103,7 @@ export class LeadTimeService {
     if (releasedVersionNames.length > 0) {
       const fixVersionRows = await this.issueRepo.find({
         where: { boardId, fixVersion: In(releasedVersionNames) },
-        select: ['key', 'issueType'],
+        select: { key: true, issueType: true },
       });
       for (const i of fixVersionRows) {
         if (isWorkItem(i.issueType)) candidateKeys.add(i.key);
@@ -115,7 +115,7 @@ export class LeadTimeService {
     // Step 2: Load only candidate issues with minimal column projection
     const issues = (await this.issueRepo.find({
       where: { boardId, key: In([...candidateKeys]) },
-      select: ['key', 'issueType', 'fixVersion'],
+      select: { key: true, issueType: true, fixVersion: true },
     })).filter((i) => isWorkItem(i.issueType));
 
     if (issues.length === 0) return { observations: [], anomalyCount: 0 };

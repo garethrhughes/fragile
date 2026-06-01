@@ -138,7 +138,7 @@ export class MetricsController {
   })
   @Get('dora/snapshot/status')
   async getSnapshotStatus(): Promise<BoardSnapshotStatus[]> {
-    const configs = await this.boardConfigRepo.find({ select: ['boardId'] });
+    const configs = await this.boardConfigRepo.find({ select: { boardId: true } });
     const boardIds = configs.map((c) => c.boardId);
     return this.doraSnapshotReadService.getSnapshotStatus(boardIds);
   }

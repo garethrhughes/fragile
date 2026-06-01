@@ -104,7 +104,7 @@ export class TrendDataLoader {
       this.workingTimeService.getConfig(),
       this.issueRepo.find({
         where: { boardId },
-        select: ['key', 'issueType', 'fixVersion', 'labels', 'priority', 'createdAt'],
+        select: { key: true, issueType: true, fixVersion: true, labels: true, priority: true, createdAt: true },
       }),
     ]);
 
@@ -140,7 +140,7 @@ export class TrendDataLoader {
       }),
       this.issueLinkRepo.find({
         where: { sourceIssueKey: In(issueKeys) },
-        select: ['sourceIssueKey', 'linkTypeName'],
+        select: { sourceIssueKey: true, linkTypeName: true },
       }),
     ]);
 

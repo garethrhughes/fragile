@@ -335,7 +335,7 @@ export const handler = async (event: SnapshotHandlerEvent): Promise<void> => {
   // to produce the org aggregate and trend rows. This avoids reloading all raw
   // Jira data (which caused the previous approach to time out on large boards).
   if (orgSnapshot) {
-    const allBoardConfigs = await boardConfigRepo.find({ select: ['boardId', 'boardType'] });
+    const allBoardConfigs = await boardConfigRepo.find({ select: { boardId: true, boardType: true } });
     const allBoardIds = allBoardConfigs
       .map((bc) => bc.boardId)
       .filter((id) => id !== ORG_SNAPSHOT_KEY);
