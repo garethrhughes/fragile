@@ -51,6 +51,12 @@ export interface RoadmapSprintAccuracy {
    * Used by the frontend to compute a weighted on-time rate denominator.
    */
   linkedCount: number;
+  /**
+   * Number of cancelled issues in the total. Cancelled issues are excluded
+   * from linkedCount regardless of whether they have a roadmap link, so the
+   * frontend must subtract this to compute true Off-Roadmap (unlinked) count.
+   */
+  cancelledCount: number;
   roadmapCoverage: number;
   /**
    * On-time delivery rate: green ÷ (green + amber).
@@ -505,6 +511,8 @@ export class RoadmapService {
   ): Promise<RoadmapSprintAccuracy[]> {
     const doneStatusNames: string[] =
       boardConfig?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
+    const cancelledStatusNamesKanban: string[] =
+      boardConfig?.cancelledStatusNames ?? ['Cancelled', "Won't Do"];
     const backlogStatusIds: string[] = boardConfig?.backlogStatusIds ?? [];
 
     // Load all Kanban issues for this board, excluding Epics and Sub-tasks
@@ -652,6 +660,9 @@ export class RoadmapService {
 
       const totalIssues = issues.length;
       const coveredCount = eligibleCoveredIssues.length;
+      const cancelledCount = issues.filter(
+        (i) => cancelledStatusNamesKanban.includes(i.status),
+      ).length;
       // Issues linked to any active idea but not covered (amber equivalent for Kanban)
       const linkedNotCoveredCount = issues.filter(
         (i) => i.epicKey !== null && activeIdeas.has(i.epicKey) && !eligibleCoveredKeys.has(i.key),
@@ -667,6 +678,7 @@ export class RoadmapService {
         coveredIssues: coveredCount,
         uncoveredIssues: totalIssues - coveredCount,
         linkedCount: totalLinkedKanban,
+        cancelledCount,
         roadmapCoverage:
           totalIssues > 0
             ? Math.round((coveredCount / totalIssues) * 10000) / 100
@@ -836,6 +848,8 @@ export class RoadmapService {
   ): Promise<RoadmapSprintAccuracy[]> {
     const doneStatusNames: string[] =
       boardConfig?.doneStatusNames ?? ['Done', 'Closed', 'Released'];
+    const cancelledStatusNamesWeekly: string[] =
+      boardConfig?.cancelledStatusNames ?? ['Cancelled', "Won't Do"];
 
     // Board-entry status list — consistent with planning and week-detail services
     const boardEntryStatuses: string[] = boardConfig?.boardEntryStatuses ?? [
@@ -956,6 +970,9 @@ export class RoadmapService {
 
       const totalIssues = issues.length;
       const coveredCount = eligibleCoveredIssues.length;
+      const cancelledCount = issues.filter(
+        (i) => cancelledStatusNamesWeekly.includes(i.status),
+      ).length;
       // Issues linked to any active idea but not covered (amber equivalent for Kanban weekly)
       const linkedNotCoveredCountWeekly = issues.filter(
         (i) => i.epicKey !== null && activeIdeas.has(i.epicKey) && !eligibleCoveredKeys.has(i.key),
@@ -971,6 +988,7 @@ export class RoadmapService {
         coveredIssues: coveredCount,
         uncoveredIssues: totalIssues - coveredCount,
         linkedCount: totalLinkedWeekly,
+        cancelledCount,
         roadmapCoverage:
           totalIssues > 0
             ? Math.round((coveredCount / totalIssues) * 10000) / 100
@@ -1087,6 +1105,9 @@ export class RoadmapService {
     // Compute metrics
     const totalIssues = filteredIssues.length;
     const coveredCount = coveredIssues.length;
+    const cancelledCount = filteredIssues.filter(
+      (i) => cancelledStatusNames.includes(i.status),
+    ).length;
     const uncoveredIssues = totalIssues - coveredCount;
     const roadmapCoverage =
       totalIssues > 0
@@ -1109,6 +1130,7 @@ export class RoadmapService {
       coveredIssues: coveredCount,
       uncoveredIssues,
       linkedCount: totalLinkedIssues,
+      cancelledCount,
       roadmapCoverage,
       roadmapOnTimeRate,
     };
@@ -1124,6 +1146,7 @@ export class RoadmapService {
       coveredIssues: 0,
       uncoveredIssues: 0,
       linkedCount: 0,
+      cancelledCount: 0,
       roadmapCoverage: 0,
       roadmapOnTimeRate: 0,
     };

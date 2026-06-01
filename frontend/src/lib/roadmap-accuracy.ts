@@ -15,6 +15,7 @@ interface LinkedRow {
 interface TotalRow {
   totalIssues: number;
   linkedCount: number;
+  cancelledCount?: number;
 }
 
 interface AggregateRow {
@@ -33,9 +34,11 @@ export function deriveOnRoadmapLate(row: LinkedRow): number {
 
 /**
  * Off-Roadmap: issues with no roadmap link at all.
+ * Excludes cancelled issues which are in totalIssues but deliberately
+ * excluded from linkedCount regardless of whether they have a link.
  */
 export function deriveOffRoadmap(row: TotalRow): number {
-  return row.totalIssues - row.linkedCount;
+  return row.totalIssues - row.linkedCount - (row.cancelledCount ?? 0);
 }
 
 /**

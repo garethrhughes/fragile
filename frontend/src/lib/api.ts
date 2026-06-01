@@ -444,6 +444,8 @@ export interface RoadmapSprintAccuracy {
   uncoveredIssues: number;
   /** Issues linked to a roadmap idea (green + amber). Used as on-time rate denominator. */
   linkedCount: number;
+  /** Cancelled issues in the total (excluded from linkedCount regardless of link status). */
+  cancelledCount: number;
   roadmapCoverage: number;
   /** On-time delivery rate: green ÷ (green + amber). 0 when no linked issues. */
   roadmapOnTimeRate: number;

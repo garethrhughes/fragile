@@ -62,7 +62,9 @@ export interface RoadmapClassificationResult {
  *
  * - **Condition A (delivered on time):** resolvedDate <= idea.targetDate (end of day)
  * - **Condition B (in-flight on track):** period is active AND target not yet passed
- *   AND issue is not resolved AND issue is not in a done or cancelled status
+ *   AND issue's current status is not in the done or cancelled list. Note: the
+ *   existence of a historical done transition (resolvedDate) does NOT disqualify
+ *   an issue — reopened work that is currently in progress still qualifies.
  *
  * Returns 'in-scope' when either condition is met, 'linked' when an idea exists
  * but neither condition applies, and 'none' when no roadmap link exists or the
