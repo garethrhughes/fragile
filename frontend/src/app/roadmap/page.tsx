@@ -343,6 +343,16 @@ function RoadmapPageInner() {
   // Quarter rows derived client-side from raw sprint data
   const quarterRows = useMemo(() => groupByQuarter(rawData, timezone), [rawData, timezone]);
 
+  // Rewrite roadmapCoverage on sprint/week rows so DataTable sort aligns with displayed On-Roadmap %
+  const sprintData = useMemo<RoadmapSprintAccuracy[]>(
+    () => rawData.map((r) => ({ ...r, roadmapCoverage: computeOnRoadmapPercent(r) })),
+    [rawData],
+  );
+  const weekData = useMemo<RoadmapSprintAccuracy[]>(
+    () => kanbanWeekData.map((r) => ({ ...r, roadmapCoverage: computeOnRoadmapPercent(r) })),
+    [kanbanWeekData],
+  );
+
   // Summary stats across ALL displayed rows
   const { avgCoverage, avgOnTimeRate } = useMemo(() => {
     const rows: Array<{ coveredIssues: number; totalIssues: number; linkedCount: number }> =
@@ -836,7 +846,7 @@ function RoadmapPageInner() {
               {isKanban && kanbanPeriod === 'week' ? (
                 <DataTable<RoadmapSprintAccuracy>
                   columns={weekColumns}
-                  data={kanbanWeekData}
+                  data={weekData}
                   rowClassName={weekRowColor}
                 />
               ) : isKanban || periodType === 'quarter' ? (
@@ -848,7 +858,7 @@ function RoadmapPageInner() {
               ) : (
                 <DataTable<RoadmapSprintAccuracy>
                   columns={sprintColumns}
-                  data={rawData}
+                  data={sprintData}
                   rowClassName={sprintRowColor}
                 />
               )}
