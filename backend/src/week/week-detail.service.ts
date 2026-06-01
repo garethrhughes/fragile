@@ -539,10 +539,16 @@ export class WeekDetailService {
 
     for (const issue of priorWeekCompleters) {
       const boardEntryDate = boardEntryDateByKey.get(issue.key) ?? issue.createdAt;
-      results.push(this.buildExtraWeekDetailIssue(issue, week, boardEntryDate, {
+      const extra = this.buildExtraWeekDetailIssue(issue, week, boardEntryDate, {
         completedInWeek: true,
         inFlight: false,
-      }));
+      });
+      // Apply roadmap classification (same logic as Step 8 main loop)
+      this.classifyRoadmapStatus(
+        extra, issue, changelogsByIssue.get(issue.key) ?? [], epicIdeaMap,
+        directLinkIdeaMap, doneStatuses, cancelledStatusNames, weekStart, weekEnd,
+      );
+      results.push(extra);
     }
 
     // -----------------------------------------------------------------------
@@ -570,10 +576,16 @@ export class WeekDetailService {
         continue;
       }
       const boardEntryDate = boardEntryDateByKey.get(issue.key) ?? issue.createdAt;
-      results.push(this.buildExtraWeekDetailIssue(issue, week, boardEntryDate, {
+      const extra = this.buildExtraWeekDetailIssue(issue, week, boardEntryDate, {
         completedInWeek: false,
         inFlight: true,
-      }));
+      });
+      // Apply roadmap classification (same logic as Step 8 main loop)
+      this.classifyRoadmapStatus(
+        extra, issue, changelogsByIssue.get(issue.key) ?? [], epicIdeaMap,
+        directLinkIdeaMap, doneStatuses, cancelledStatusNames, weekStart, weekEnd,
+      );
+      results.push(extra);
     }
 
     // -----------------------------------------------------------------------
@@ -655,6 +667,55 @@ export class WeekDetailService {
       jiraUrl: this.jiraBaseUrl ? `${this.jiraBaseUrl}/browse/${issue.key}` : '',
       ...overrides,
     };
+  }
+
+  /**
+   * Apply roadmap classification to a WeekDetailIssue.
+   * Mirrors the Condition A + B logic from Step 8 main loop.
+   */
+  private classifyRoadmapStatus(
+    result: WeekDetailIssue,
+    issue: JiraIssue,
+    issueChangelogs: JiraChangelog[],
+    epicIdeaMap: Map<string, JpdIdea>,
+    directLinkIdeaMap: Map<string, { targetDate: Date }>,
+    doneStatuses: string[],
+    cancelledStatusNames: string[],
+    weekStart: Date,
+    weekEnd: Date,
+  ): void {
+    if (cancelledStatusNames.includes(issue.status)) return;
+
+    const epicIdea = issue.epicKey !== null ? epicIdeaMap.get(issue.epicKey) : undefined;
+    const directIdea = directLinkIdeaMap.get(issue.key);
+    const idea = epicIdea ?? directIdea;
+    if (!idea) return;
+
+    result.roadmapLinkSource = epicIdea ? 'epic' : 'direct';
+    if (idea.targetDate !== null) {
+      const targetEndOfDay = new Date(idea.targetDate.getTime());
+      targetEndOfDay.setUTCHours(23, 59, 59, 999);
+      const doneTransition = issueChangelogs.find(
+        (cl) =>
+          cl.field === 'status' &&
+          cl.toValue !== null &&
+          doneStatuses.includes(cl.toValue),
+      );
+      const resolvedDate = doneTransition?.changedAt ?? null;
+      const deliveredOnTime = resolvedDate !== null && resolvedDate <= targetEndOfDay;
+      const todayStart = new Date();
+      todayStart.setUTCHours(0, 0, 0, 0);
+      const isInFlight =
+        todayStart >= weekStart &&
+        todayStart <= weekEnd &&
+        idea.targetDate >= todayStart &&
+        resolvedDate === null &&
+        !doneStatuses.includes(issue.status) &&
+        !cancelledStatusNames.includes(issue.status);
+      result.roadmapStatus = (deliveredOnTime || isInFlight) ? 'in-scope' : 'linked';
+    } else {
+      result.roadmapStatus = 'linked';
+    }
   }
 
   private buildEmptyResponse(
