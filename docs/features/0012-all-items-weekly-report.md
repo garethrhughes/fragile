@@ -1,7 +1,7 @@
 # 0012 — All Items Weekly Report
 
 **Date:** 2026-05-13
-**Status:** In Progress
+**Status:** Implemented
 **Source:** Manual
 **Related proposal:** docs/proposals/0062-all-items-weekly-report.md
 

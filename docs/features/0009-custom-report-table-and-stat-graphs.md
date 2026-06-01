@@ -1,7 +1,7 @@
 # 0009 — Custom Report Table and Stat Graph Kinds
 
 **Date:** 2026-05-08
-**Status:** In Progress
+**Status:** Implemented
 **Source:** Manual
 **Related proposal:** docs/proposals/0057-custom-report-table-and-stat-graphs.md
 

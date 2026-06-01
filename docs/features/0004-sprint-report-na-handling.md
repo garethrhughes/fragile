@@ -1,7 +1,7 @@
 # 0004 — Sprint Report Scoring: N/A Handling and Weight Renormalisation
 
 **Date:** 2026-05-07
-**Status:** In Progress
+**Status:** Implemented
 **Source:** Manual (driven by proposal 0051)
 **Related proposal:** docs/proposals/0051-sprint-report-scoring-na-handling.md
 **Related decision:** docs/decisions/0053-sprint-report-na-handling-and-weight-renormalisation.md (to be written)

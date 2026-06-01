@@ -1,7 +1,7 @@
 # 0013 — Roadmap Accuracy Column Relabelling
 
 **Date:** 2026-06-01
-**Status:** In Progress
+**Status:** Implemented
 **Source:** Manual
 **Related proposal:** N/A (trivial UI relabelling — no proposal required)
 
