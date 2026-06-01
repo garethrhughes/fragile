@@ -390,7 +390,7 @@ export class RoadmapService {
     if (epicKeys.length > 0) {
       const epicRows = await this.issueRepo.find({
         where: { key: In(epicKeys) },
-        select: ['key', 'summary'],
+        select: { key: true, summary: true },
       });
       for (const r of epicRows) {
         epicSummaryByKey.set(r.key, r.summary ?? null);
@@ -1025,13 +1025,42 @@ export class RoadmapService {
       return this.emptyAccuracy(sprint);
     }
 
-    // Build epicKey → targetDate map scoped to the sprint window.
-    // filterIdeasForWindow excludes ideas without both dates (decision 2)
-    // and applies the date-window overlap filter. Conflict resolution
-    // follows each roadmap's epicConflictResolution policy (proposal 0053).
-    const sprintStart = sprint.startDate ?? new Date();
-    const sprintEnd = sprint.endDate ?? new Date();
-    const epicIdeaMap = this.filterIdeasForWindow(allIdeas, sprintStart, sprintEnd, ruleByJpdKey);
+    // Build epicKey → idea map for sprint-scoped accuracy.
+    //
+    // For CLOSED sprints: use filterIdeasForWindow to scope ideas to those
+    // whose [startDate, targetDate] overlaps [sprintStart, sprintEnd]. This
+    // ensures historical sprints only show ideas that were relevant at the time.
+    //
+    // For ACTIVE sprints: include ALL ideas with non-null targetDate (no window
+    // filter), matching the sprint-detail service. filterIdeasForWindow
+    // excludes ideas with null startDate, which drops legitimate roadmap links
+    // and causes the roadmap page to disagree with the sprint detail page.
+    //
+    // Conflict resolution follows each roadmap's epicConflictResolution
+    // policy (proposal 0053 / ADR 0055).
+    let epicIdeaMap: Map<string, RoadmapItemWindow>;
+    if (sprint.state === 'active') {
+      const ideasWithTarget: ResolveIdeaInput[] = allIdeas.filter(
+        (idea): idea is JpdIdea & { targetDate: Date } =>
+          idea.targetDate !== null && (idea.deliveryIssueKeys?.length ?? 0) > 0,
+      );
+      const resolvedEpics = resolveEpicIdeas(
+        ideasWithTarget,
+        (idea) => ruleByJpdKey.get((idea as JpdIdea).jpdKey) ?? 'earliest',
+      );
+      epicIdeaMap = new Map<string, RoadmapItemWindow>();
+      for (const [epicKey, entry] of resolvedEpics) {
+        epicIdeaMap.set(epicKey, {
+          ideaKey: entry.primaryIdea.ideaKey,
+          startDate: entry.primaryIdea.startDate ?? entry.primaryIdea.targetDate,
+          targetDate: entry.primaryIdea.targetDate,
+        });
+      }
+    } else {
+      const sprintStart = sprint.startDate ?? new Date();
+      const sprintEnd = sprint.endDate ?? new Date();
+      epicIdeaMap = this.filterIdeasForWindow(allIdeas, sprintStart, sprintEnd, ruleByJpdKey);
+    }
 
     // Query ALL done-status transitions for sprint issues — no date restriction
     // and no needsChangelogCheck split.  This ensures issues that were already

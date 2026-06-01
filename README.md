@@ -668,6 +668,8 @@ the Settings UI.
 | `roadmap.yaml` | `backend/config/roadmap.yaml` | JPD project date-field mappings |
 | `boards.example.yaml` | `backend/config/boards.example.yaml` | Annotated template — tracked in git |
 | `roadmap.example.yaml` | `backend/config/roadmap.example.yaml` | Annotated template — tracked in git |
+| `backend.tf` | `infra/terraform/environments/prod/backend.tf` | Terraform S3 backend config (bucket name, state key) |
+| `backend.tf.example` | `infra/terraform/environments/prod/backend.tf.example` | Annotated template — tracked in git |
 
 Both live files (`boards.yaml` and `roadmap.yaml`) are excluded from git via `.gitignore` because
 they contain deployment-specific values. The `*.example.yaml` files serve as the canonical field

@@ -77,7 +77,7 @@ export class MttrService {
         ? { boardId }
         // No label config: safely scope to known incident issue types only.
         : { boardId, issueType: In(incidentIssueTypes) },
-      select: ['key', 'issueType', 'labels', 'priority', 'createdAt'],
+      select: { key: true, issueType: true, labels: true, priority: true, createdAt: true },
     })).filter((i) => isWorkItem(i.issueType));
 
     const incidentIssues = allIssues.filter((issue) => {

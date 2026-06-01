@@ -490,7 +490,7 @@ export class SyncService implements OnModuleInit {
   ): Promise<void> {
     const dbIssues = await this.issueRepo.find({
       where: { boardId },
-      select: ['key'],
+      select: { key: true },
     });
 
     const returnedKeySet = new Set(returnedKeys);

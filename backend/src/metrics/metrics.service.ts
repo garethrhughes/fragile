@@ -615,7 +615,7 @@ export class MetricsService {
     if (boardId) {
       return boardId.split(',').map((id) => id.trim());
     }
-    const configs = await this.boardConfigRepo.find({ select: ['boardId'] });
+    const configs = await this.boardConfigRepo.find({ select: { boardId: true } });
     return configs.map((c) => c.boardId);
   }
 

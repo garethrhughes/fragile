@@ -55,7 +55,7 @@ export class InProcessSnapshotService {
 
     const boardConfig = await this.boardConfigRepo.findOne({
       where: { boardId },
-      select: ['boardType'],
+      select: { boardType: true },
     });
     const isKanban = boardConfig?.boardType === 'kanban';
 
@@ -126,7 +126,7 @@ export class InProcessSnapshotService {
     const currentQuarter = listRecentQuarters(1)[0].label;
     const quarters = listRecentQuarters(TREND_QUARTERS);
 
-    const configs = await this.boardConfigRepo.find({ select: ['boardId'] });
+    const configs = await this.boardConfigRepo.find({ select: { boardId: true } });
     const allBoardIdStr = configs.map((c) => c.boardId).join(',');
 
     // Org aggregate: current quarter, all boards

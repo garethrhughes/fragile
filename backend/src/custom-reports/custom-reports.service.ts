@@ -66,7 +66,7 @@ export class CustomReportsService {
   async getReport(slug: string): Promise<CustomReportWithMeta> {
     const report = await this.reportRepo.findOne({
       where: { slug },
-      relations: ['widgets', 'widgets.dataPoints', 'filters'],
+      relations: { widgets: { dataPoints: true }, filters: true },
       order: {
         widgets: { position: 'ASC' },
         filters: { position: 'ASC' },

@@ -70,7 +70,7 @@ export class DeploymentFrequencyService {
     // Board issues (work items only — ADR 0018 enforced inside deriveDeploymentEvents).
     const allBoardIssues = await this.issueRepo.find({
       where: { boardId },
-      select: ['key', 'issueType', 'fixVersion'],
+      select: { key: true, issueType: true, fixVersion: true },
     });
 
     // Status changelog entries for issues with no fixVersion in the period

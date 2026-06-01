@@ -158,7 +158,7 @@ export class SprintMembershipService {
     // Closed sprints on this board — used for carry-over detection.
     const closed = await this.sprintRepo.find({
       where: { boardId, state: 'closed' },
-      select: ['id', 'name', 'endDate'],
+      select: { id: true, name: true, endDate: true },
     });
     const closedSprintNames = new Set(closed.map((s) => s.name));
     const closedSprintIds = new Set(closed.map((s) => s.id));
