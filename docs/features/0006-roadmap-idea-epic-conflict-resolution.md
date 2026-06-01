@@ -1,6 +1,6 @@
 # Feature 0006 — Roadmap Idea↔Epic Conflict Resolution
 
-**Status:** In Progress
+**Status:** Implemented
 **Proposal:** [0053](../proposals/0053-roadmap-idea-epic-conflict-resolution.md)
 **ADR:** [0055](../decisions/0055-roadmap-idea-epic-conflict-resolution.md) (pending)
 **Date:** 2026-05-07

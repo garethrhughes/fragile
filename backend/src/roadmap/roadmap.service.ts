@@ -26,6 +26,7 @@ import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { dateParts, midnightInTz } from '../metrics/tz-utils.js';
 import { dateToIsoWeekKey } from '../lib/iso-week.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
+import { classifyRoadmapStatus as classifyRoadmap } from '../metrics/roadmap-classification.js';
 import {
   resolveEpicIdeas,
   type EpicConflictResolution,
@@ -1071,12 +1072,7 @@ export class RoadmapService {
       ruleByJpdKey,
     );
 
-    // Per-issue delivery classification:
-    //   in-scope (green)  = linked to an idea AND:
-    //                         (a) resolvedAt <= idea.targetDate (end-of-day), OR
-    //                         (b) in-flight in active sprint with targetDate not yet lapsed
-    //   linked   (amber)  = linked to an idea AND neither (a) nor (b)
-    //   none              = no roadmap link
+    // Per-issue delivery classification using shared utility
     const coveredIssues: JiraIssue[] = [];
     const linkedNotCoveredIssues: JiraIssue[] = [];
 
@@ -1094,20 +1090,19 @@ export class RoadmapService {
       const idea = epicIdea ?? directIdea;
       if (!idea) continue;
 
-      const targetEndOfDay = this.endOfDayUTC(idea.targetDate);
       const resolvedAt = completionDates.get(issue.key) ?? null;
+      const result = classifyRoadmap({
+        issueStatus: issue.status,
+        isCancelled: cancelledStatusNames.includes(issue.status),
+        epicIdea,
+        directIdea,
+        resolvedDate: resolvedAt,
+        isPeriodActive: sprint.state === 'active',
+        doneStatusNames,
+        todayStart: today,
+      });
 
-      // Condition A: delivered on time
-      const deliveredOnTime = resolvedAt !== null && resolvedAt <= targetEndOfDay;
-
-      // Condition B: in-flight and on track
-      const isInFlight =
-        sprint.state === 'active' &&
-        idea.targetDate >= today &&
-        !doneStatusNames.includes(issue.status) &&
-        !cancelledStatusNames.includes(issue.status);
-
-      if (deliveredOnTime || isInFlight) {
+      if (result.status === 'in-scope') {
         coveredIssues.push(issue);
       } else {
         linkedNotCoveredIssues.push(issue);
@@ -1157,18 +1152,6 @@ export class RoadmapService {
       roadmapCoverage: 0,
       roadmapOnTimeRate: 0,
     };
-  }
-
-  /**
-   * Extend a date to 23:59:59.999 UTC (end of calendar day).
-   * Polaris stores targetDate as a date-only value (midnight UTC); this
-   * ensures a completion timestamp at any point during the target day
-   * is considered on-time.
-   */
-  private endOfDayUTC(date: Date): Date {
-    const d = new Date(date.getTime());
-    d.setUTCHours(23, 59, 59, 999);
-    return d;
   }
 
   private quarterToDates(quarter: string): { startDate: Date; endDate: Date } {

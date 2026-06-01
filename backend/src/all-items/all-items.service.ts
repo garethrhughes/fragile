@@ -20,6 +20,7 @@ import {
 } from '../database/entities/index.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
+import { isDeliveredOnRoadmap } from '../metrics/roadmap-classification.js';
 import { isoWeekKeyToDates } from '../lib/iso-week.js';
 import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
 import {
@@ -651,17 +652,9 @@ export class AllItemsService {
     epicIdeaMap: Map<string, { targetDate: Date }>,
     directLinkIdeaMap: Map<string, { targetDate: Date }>,
   ): boolean {
-    // Only mark onRoadmap=true for items completed on or before the idea target date
-    if (completedAt === null) return false;
-
     const epicIdea = issue.epicKey ? epicIdeaMap.get(issue.epicKey) : undefined;
     const directIdea = directLinkIdeaMap.get(issue.key);
-    const idea = epicIdea ?? directIdea;
-    if (!idea) return false;
-
-    const targetEndOfDay = new Date(idea.targetDate.getTime());
-    targetEndOfDay.setUTCHours(23, 59, 59, 999);
-    return completedAt <= targetEndOfDay;
+    return isDeliveredOnRoadmap(epicIdea, directIdea, completedAt);
   }
 
   // ---------------------------------------------------------------------------

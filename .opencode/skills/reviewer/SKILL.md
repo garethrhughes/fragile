@@ -201,6 +201,39 @@ Read the diff and flag any deviation. Severity is determined as follows:
 - Rules under core [Testing](../RULES.md#testing) and [Git & PRs](../RULES.md#git--prs)
   (and overlay testing primitives) → **Major** when violated.
 
+### Design Principles — Clean Code, SOLID, DRY
+
+Pragmatic refactor-time checks. Default severity is **Minor** or **Suggestion**,
+escalating to **Major** only when the violation has produced concrete harm (duplicated
+business logic that has already diverged, a god-class acquiring a further responsibility,
+a `switch` on a domain enum that already breaks LSP, a bypass of DI that breaks tests).
+
+**Clean Code**
+- Functions over ~30 lines or with >3 levels of nesting — flag unless the domain truly
+  requires it
+- Functions with >3 positional parameters — recommend an options object
+- Magic numbers / strings without a named constant
+- Names that obscure intent (`data`, `tmp`, `processItem`, `doStuff`)
+- Side effects in a function whose name implies a pure read
+- Comments that describe *what* instead of *why*
+
+**SOLID**
+- A new class/service with multiple unrelated responsibilities (S)
+- A `switch`/`if-else` on a type discriminator that the PR adds a *third* case to —
+  recommend polymorphism / strategy / registry (O)
+- A subclass throwing `NotImplementedException` / `NotSupportedError` on a method the
+  base implements, or narrowing behaviour callers must special-case (L)
+- An interface forcing consumers to stub methods they don't need (I)
+- Direct instantiation of a service, repository, or HTTP client in a consumer,
+  bypassing DI (D) — **Major** (also breaks testability)
+
+**DRY**
+- Duplicated business logic, validation, or domain constants across modules — extract
+- New code re-implementing an existing shared type, constant, or enum — reuse it
+  (overlaps with *Implementation Consistency > Introduced inconsistencies*)
+- **But:** flag aggressive de-duplication that introduces an abstraction for two callers
+  with subtly different needs — premature abstraction is also a finding (**Minor**)
+
 ### Reviewer-Specific Security Checks (beyond the rule files)
 
 - Credentials, API tokens, or secrets committed in any file (including test fixtures,

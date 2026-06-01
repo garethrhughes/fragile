@@ -1,7 +1,7 @@
 # 0011 — Support Report TTB Filter and Plural Link Types
 
 **Date:** 2026-05-12
-**Status:** In Progress
+**Status:** Implemented
 **Source:** Manual
 **Related proposal:** docs/proposals/0060-support-report-ttb-filter-and-plural-link-types.md
 

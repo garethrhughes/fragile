@@ -1,7 +1,7 @@
 # 0010 — Custom Report Layout Configuration
 
 **Date:** 2026-05-08
-**Status:** In Progress
+**Status:** Implemented
 **Source:** Manual
 **Related proposal:** docs/proposals/0058-custom-report-layout-configuration.md
 
