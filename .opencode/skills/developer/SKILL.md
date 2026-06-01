@@ -142,6 +142,48 @@ Coverage is a *consequence*, not a target. Don't write tests to hit a number. Bu
 service method without a test is a defect; any non-trivial infra module without a test
 is a defect.
 
+## Beyond the rule files — Design Principles
+
+Apply Clean Code, SOLID, and DRY pragmatically. These are guidelines for shaping
+implementations during the **Refactor** step of TDD — not licence to add abstractions
+before they're justified by a real second caller.
+
+### Clean Code
+- **Meaningful names** — variables, functions, classes, parameters describe intent.
+  No bare `data`, `info`, `tmp`, `mgr`, `helper`
+- **Small functions** — each does one thing. If you need an "and" to describe it, split it
+- **Limit parameters** — 3 or fewer positional; beyond that, accept an options object
+- **No magic literals** — extract named constants for numbers/strings whose meaning
+  isn't self-evident
+- **Guard clauses over nested conditionals** — early returns instead of pyramids of `if`
+- **No surprising side effects** — `getX` must not mutate; pair side effects with verbs
+  that signal them (`save`, `apply`, `emit`)
+
+### SOLID
+- **S — Single Responsibility** — each class/module has one reason to change. A service
+  that fetches *and* validates *and* persists is three services in a trench coat
+- **O — Open/Closed** — extend through new types or strategies, not by editing a growing
+  `switch`/`if-else` on a type discriminator. Prefer polymorphism or a registry when a
+  third case appears
+- **L — Liskov Substitution** — subtypes honour the contract of their base type. No
+  throwing on methods the base implements; no surprise narrowing of return types
+- **I — Interface Segregation** — many small, focused interfaces beat one fat one
+- **D — Dependency Inversion** — depend on interfaces/abstractions, not concrete
+  classes. Already enforced via constructor injection in the active overlays — do not
+  bypass DI to `new` a service or repository in a consumer
+
+### DRY
+- Don't duplicate **logic, validation, or domain constants** across modules — extract
+  to a shared module and import. Reuse existing shared types, constants, and enums
+- **Rule of three** — don't extract an abstraction until the same pattern has appeared
+  three times. Two similar paths is coincidence; three is a pattern. Premature
+  abstraction is worse than duplication
+
+### When these principles conflict with simplicity
+TDD's *minimum to make the test pass* and the project preference for *no premature
+abstraction* take precedence. Apply these in the **Refactor** step, not upfront. If
+applying SOLID would add an interface with one implementation and one caller, don't.
+
 ## MCP Tools
 
 ### context7 — Live Documentation
