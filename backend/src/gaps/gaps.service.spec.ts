@@ -660,6 +660,7 @@ describe('GapsService', () => {
     });
 
     it('uses createdAt as fallback when no status changelog and current status is done and in window', async () => {
+      jest.useFakeTimers({ now: Date.UTC(2026, 3, 14) });
       boardConfigRepo.findOne.mockResolvedValue(scrumConfig);
       // createdAt within last 90 days from 2026-04-14 (window starts ~2026-01-14)
       const createdAt = new Date('2026-03-01T08:00:00Z');
@@ -679,6 +680,7 @@ describe('GapsService', () => {
       expect(result.issues).toHaveLength(1);
       expect(result.issues[0].key).toBe('ACC-5');
       expect(result.issues[0].resolvedAt).toBe(createdAt.toISOString());
+      jest.useRealTimers();
     });
 
     it('does NOT use createdAt fallback when status changelogs exist but fall outside the window (regression: SPS-454)', async () => {
@@ -1104,6 +1106,7 @@ describe('GapsService', () => {
     });
 
     it('includes issue with no status changelog at all (boardEntryDate = null) as never-boarded', async () => {
+      jest.useFakeTimers({ now: Date.UTC(2026, 3, 14) });
       boardConfigRepo.findOne.mockResolvedValue(kanbanConfig);
       // Issue is in Done status, no status changelog at all
       const issue = makeIssue({
@@ -1123,6 +1126,7 @@ describe('GapsService', () => {
 
       expect(result.issues).toHaveLength(1);
       expect(result.issues[0].key).toBe('PLAT-2');
+      jest.useRealTimers();
     });
 
     it('includes issue with boardEntryDate > resolvedAt as never-boarded', async () => {
