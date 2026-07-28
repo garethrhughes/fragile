@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Save, Loader2, CheckCircle, XCircle, Plus, Trash2, RefreshCw, X, AlertTriangle } from 'lucide-react';
 import {
   getBoards,
@@ -18,6 +19,8 @@ import {
 } from '@/lib/api'
 import { useBoardsStore } from '@/store/boards-store'
 import { useSyncStore } from '@/store/sync-store'
+import { useAuth } from '@/hooks/use-auth'
+import { UserList } from '@/components/settings/user-list'
 
 // ---------------------------------------------------------------------------
 // Toast helper
@@ -125,6 +128,8 @@ function CsvField({ label, value, onChange, hint }: CsvFieldProps) {
 // ---------------------------------------------------------------------------
 
 export default function SettingsPage() {
+  const router = useRouter();
+  const { loading: authLoading, isAdmin } = useAuth();
   const { toasts, show } = useToast();
 
   // Board config
@@ -279,6 +284,20 @@ export default function SettingsPage() {
   ) {
     if (!config) return;
     setConfig({ ...config, [key]: value });
+  }
+
+  // Auth gate — loading spinner or redirect for non-admins
+  if (authLoading) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-text-muted" />
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    router.replace('/');
+    return null;
   }
 
   return (
@@ -906,6 +925,9 @@ export default function SettingsPage() {
           </div>
         )}
       </section>
+
+      {/* User Management */}
+      <UserList />
     </div>
   );
 }

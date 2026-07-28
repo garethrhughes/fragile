@@ -23,6 +23,21 @@ variable "jira_api_token_secret_arn" {
   type        = string
 }
 
+variable "google_client_id_secret_arn" {
+  description = "ARN of the Secrets Manager secret that holds the Google OAuth client ID."
+  type        = string
+}
+
+variable "google_client_secret_secret_arn" {
+  description = "ARN of the Secrets Manager secret that holds the Google OAuth client secret."
+  type        = string
+}
+
+variable "session_secret_secret_arn" {
+  description = "ARN of the Secrets Manager secret that holds the session signing secret."
+  type        = string
+}
+
 variable "ssm_parameter_path_prefix" {
   description = "SSM parameter path prefix the backend task role may read (e.g. '/fragile/prod/')."
   type        = string

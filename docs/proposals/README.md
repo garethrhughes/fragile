@@ -73,3 +73,4 @@
 | [0071](0071-engineering-health-check-panel.md) | Engineering Health Check Panel | Accepted | 2026-07-28 |
 | [0072](0072-sprint-effective-end-completedate.md) | Use Sprint Actual Close Time (completeDate) for Completion & Metric Windows | Accepted | 2026-07-28 |
 | [0073](0073-health-check-org-scores-and-roadmap-targets.md) | Health Check Org Overall Scores & Per-Team Roadmap Targets | Accepted | 2026-07-28 |
+| [0074](0074-google-sso-authentication.md) | Google SSO Authentication & Role-Based Access Control | Accepted | 2026-07-28 |

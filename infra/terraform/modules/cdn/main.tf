@@ -124,7 +124,6 @@ resource "aws_cloudfront_distribution" "backend" {
   enabled         = true
   is_ipv6_enabled = true
   aliases         = ["${var.backend_subdomain}.${var.domain_name}"]
-  web_acl_id      = var.web_acl_arn
 
   origin {
     origin_id   = "ecs-backend"
@@ -188,7 +187,6 @@ resource "aws_cloudfront_distribution" "frontend" {
   enabled         = true
   is_ipv6_enabled = true
   aliases         = ["${var.frontend_subdomain}.${var.domain_name}"]
-  web_acl_id      = var.web_acl_arn
 
   origin {
     origin_id   = "ecs-frontend"

@@ -1,7 +1,7 @@
 # 0034 — CloudFront-Scoped WAF IP Allowlist as Sole Access-Control Layer
 
 **Date:** 2026-04-23
-**Status:** Accepted (platform updated — see ADR-0043)
+**Status:** Superseded by [0068](0068-google-sso-replaces-waf.md)
 **Deciders:** Architect Agent
 
 ## Context

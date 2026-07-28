@@ -171,6 +171,7 @@ export async function apiFetch<T>(
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     headers,
+    credentials: 'include',
   })
 
   if (!res.ok) {
@@ -756,6 +757,7 @@ export interface DoraTrendParams {
 async function fetchDoraSnapshot<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     next: { revalidate: 60 },
   } as RequestInit)
 
@@ -1480,4 +1482,46 @@ export function getAllItems(week: string, filters?: AllItemsFilter[]): Promise<A
   return apiFetch<AllItemsResponse>(
     `/api/all-items${toQueryString({ week, filter: filterParam })}`,
   )
+}
+
+// ---- Auth (proposal 0074) ------------------------------------------------
+
+export interface AuthUser {
+  id: string
+  email: string
+  name: string
+  role: 'user' | 'admin'
+  avatarUrl: string | null
+}
+
+export function getAuthMe(): Promise<AuthUser> {
+  return apiFetch<AuthUser>('/api/auth/me')
+}
+
+export function postLogout(): Promise<void> {
+  return apiFetch<void>('/api/auth/logout', { method: 'POST' })
+}
+
+// ---- Users (proposal 0074) -----------------------------------------------
+
+export interface UserListItem {
+  id: string
+  email: string
+  name: string
+  role: 'user' | 'admin'
+  avatarUrl: string | null
+  lastLoginAt: string | null
+  createdAt: string
+}
+
+export function getUsers(): Promise<UserListItem[]> {
+  return apiFetch<UserListItem[]>('/api/users')
+}
+
+export function updateUserRole(userId: string, role: 'user' | 'admin'): Promise<UserListItem> {
+  return apiFetch<UserListItem>(`/api/users/${userId}/role`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role }),
+  })
 }

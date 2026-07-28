@@ -1,7 +1,8 @@
-import { Controller, Post, Get, HttpCode, HttpStatus, Res } from '@nestjs/common';
+import { Controller, Post, Get, HttpCode, HttpStatus, Res, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { SyncService } from './sync.service.js';
+import { AdminGuard } from '../auth/guards/admin.guard.js';
 
 @ApiTags('sync')
 @Controller('api/sync')
@@ -9,6 +10,7 @@ export class SyncController {
   constructor(private readonly syncService: SyncService) {}
 
   @ApiOperation({ summary: 'Trigger a full sync of all boards (fire-and-forget)' })
+  @UseGuards(AdminGuard)
   @Post()
   @HttpCode(202)
   triggerSync(@Res({ passthrough: true }) res: Response) {

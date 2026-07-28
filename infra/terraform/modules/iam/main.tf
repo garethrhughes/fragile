@@ -63,6 +63,9 @@ data "aws_iam_policy_document" "ecs_execution_secrets" {
     resources = [
       var.db_password_secret_arn,
       var.jira_api_token_secret_arn,
+      var.google_client_id_secret_arn,
+      var.google_client_secret_secret_arn,
+      var.session_secret_secret_arn,
     ]
   }
 
@@ -118,7 +121,7 @@ resource "aws_iam_role" "backend_task" {
 }
 
 data "aws_iam_policy_document" "backend_task_permissions" {
-  # Secrets Manager -- DB password and Jira API token
+  # Secrets Manager -- DB password, Jira API token, and OAuth secrets
   statement {
     sid    = "ReadSecrets"
     effect = "Allow"
@@ -129,6 +132,9 @@ data "aws_iam_policy_document" "backend_task_permissions" {
     resources = [
       var.db_password_secret_arn,
       var.jira_api_token_secret_arn,
+      var.google_client_id_secret_arn,
+      var.google_client_secret_secret_arn,
+      var.session_secret_secret_arn,
     ]
   }
 

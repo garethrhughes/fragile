@@ -3,6 +3,9 @@ import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import session from 'express-session';
+import connectPgSimple from 'connect-pg-simple';
+import passport from 'passport';
 import { AppModule } from './app.module.js';
 
 async function bootstrap() {
@@ -22,6 +25,38 @@ async function bootstrap() {
     }
     throw e;
   }
+
+  // Session store — PostgreSQL-backed via connect-pg-simple
+  const PgSession = connectPgSimple(session);
+  const sessionSecret = configService.get<string>('SESSION_SECRET', 'change-me');
+  const sessionMaxAge = configService.get<number>('SESSION_MAX_AGE_MS', 604800000); // 7 days
+
+  app.use(
+    session({
+      store: new PgSession({
+        conObject: {
+          host: configService.get<string>('DB_HOST', 'localhost'),
+          port: configService.get<number>('DB_PORT', 5432),
+          user: configService.get<string>('DB_USERNAME', 'postgres'),
+          password: configService.get<string>('DB_PASSWORD', 'postgres'),
+          database: configService.get<string>('DB_DATABASE', 'fragile'),
+        },
+        createTableIfMissing: true,
+      }),
+      secret: sessionSecret,
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: sessionMaxAge,
+      },
+    }),
+  );
+
+  app.use(passport.initialize());
+  app.use(passport.session());
 
   app.enableCors({
     origin: configService.get<string>('FRONTEND_URL', 'http://localhost:3000'),

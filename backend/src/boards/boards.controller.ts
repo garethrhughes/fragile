@@ -7,12 +7,14 @@ import {
   Param,
   Post,
   Put,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { BoardsService } from './boards.service.js';
 import { CreateBoardDto } from './dto/create-board.dto.js';
 import { UpdateBoardConfigDto } from './dto/update-board-config.dto.js';
 import { BoardConfig } from '../database/entities/board-config.entity.js';
+import { AdminGuard } from '../auth/guards/admin.guard.js';
 
 @ApiTags('boards')
 @Controller('api/boards')
@@ -40,6 +42,7 @@ export class BoardsController {
 
   @ApiOperation({ summary: 'Update board configuration' })
   @ApiParam({ name: 'boardId', description: 'Board identifier (e.g. ACC, PLAT)' })
+  @UseGuards(AdminGuard)
   @Put(':boardId/config')
   async updateConfig(
     @Param('boardId') boardId: string,
