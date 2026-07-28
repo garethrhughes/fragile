@@ -27,6 +27,7 @@ import { dateParts, midnightInTz } from '../metrics/tz-utils.js';
 import { dateToIsoWeekKey } from '../lib/iso-week.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
 import { classifyRoadmapStatus as classifyRoadmap } from '../metrics/roadmap-classification.js';
+import { effectiveSprintEnd } from '../lib/sprint-window.js';
 import {
   buildKanbanBoardEntryDateMap,
   filterKanbanIssues,
@@ -322,7 +323,7 @@ export class RoadmapService {
     const { ideas: allIdeas, ruleByJpdKey } = await this.loadAllIdeas();
 
     const sprintStart = sprint.startDate ?? new Date();
-    const sprintEnd = sprint.endDate ?? new Date();
+    const sprintEnd = effectiveSprintEnd(sprint);
 
     // In-window idea filter (same logic as filterIdeasForWindow but we keep
     // the full conflict graph here).
@@ -1058,7 +1059,7 @@ export class RoadmapService {
       }
     } else {
       const sprintStart = sprint.startDate ?? new Date();
-      const sprintEnd = sprint.endDate ?? new Date();
+      const sprintEnd = effectiveSprintEnd(sprint);
       epicIdeaMap = this.filterIdeasForWindow(allIdeas, sprintStart, sprintEnd, ruleByJpdKey);
     }
 

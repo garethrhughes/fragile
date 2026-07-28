@@ -21,7 +21,16 @@ import {
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
 import { isDeliveredOnRoadmap } from '../metrics/roadmap-classification.js';
-import { isoWeekKeyToDates } from '../lib/iso-week.js';
+import { isoWeekKeyToDates, dateToIsoWeekKey } from '../lib/iso-week.js';
+import {
+  classifyHealthBand,
+  buildBandDistribution,
+  classifyRoadmapBand,
+  roadmapAttainment,
+  buildDistributionFromBands,
+  mean,
+  type HealthBand,
+} from '../lib/health-check-bands.js';
 import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
 import {
   resolveEpicIdeas,
@@ -42,9 +51,29 @@ import type {
   AllItemsTotals,
   AllItemsBoardSummary,
   BoardHealthScore,
+  HealthCheckReport,
+  HealthCheckBoard,
+  HealthCheckTrendPoint,
+  HealthCheckVolume,
 } from './dto/all-items-response.dto.js';
 
 type ActiveFilter = 'added-mid-sprint' | 'not-on-roadmap' | 'support' | 'ttb-support';
+
+/**
+ * Fallback roadmap-delivery target (%) when a board has no config row.
+ * Mirrors the BoardConfig column default (proposal 0073).
+ */
+const DEFAULT_ROADMAP_TARGET = 80;
+
+/**
+ * Internal per-board result — the public AllItemsBoardResult plus the raw
+ * volume figures needed by the Health Check (feature 0014, proposal 0071).
+ * The extra `volume` field is stripped before the board is placed on the
+ * public AllItemsResponse.
+ */
+interface BoardResultWithVolume extends AllItemsBoardResult {
+  volume: HealthCheckVolume;
+}
 
 @Injectable()
 export class AllItemsService {
@@ -113,7 +142,7 @@ export class AllItemsService {
     // processing multiple boards in parallel.
     const { allIdeas, ruleByJpdKey } = await this.loadAllIdeas();
 
-    const boardResults: AllItemsBoardResult[] = await Promise.all(
+    const boardResults: BoardResultWithVolume[] = await Promise.all(
       configs.map((config) =>
         this.processBoardForWeek(config, week, weekStart, weekEnd, filters, allIdeas, ruleByJpdKey),
       ),
@@ -125,13 +154,182 @@ export class AllItemsService {
     const totals = this.aggregateTotals(boardResults);
     const overallScore = this.calculateOverallScore(boardResults);
 
+    // Health Check (feature 0014, proposal 0071): computed only for completed
+    // weeks — never for the current in-progress week or a future week.
+    const healthCheck = this.isCompletedWeek(week, tz)
+      ? await this.buildHealthCheck(week, boardResults, configs, allIdeas, ruleByJpdKey, tz)
+      : undefined;
+
+    // Strip the internal `volume` field before exposing boards publicly.
+    const publicBoards: AllItemsBoardResult[] = boardResults.map(
+      ({ volume: _volume, ...board }) => board,
+    );
+
     return {
       week,
       weekStart: weekStart.toISOString(),
       weekEnd: weekEnd.toISOString(),
-      boards: boardResults,
+      boards: publicBoards,
       totals,
       overallScore,
+      ...(healthCheck ? { healthCheck } : {}),
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Health Check (feature 0014, proposal 0071)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A week is "completed" when its window has fully elapsed — i.e. its weekEnd
+   * is strictly before "now" AND it is not the current ISO week. This mirrors
+   * the Pulse page's current-week gate (weekParam !== currentIsoWeek()).
+   */
+  private isCompletedWeek(week: string, tz: string): boolean {
+    const currentWeek = dateToIsoWeekKey(new Date(), tz);
+    if (week === currentWeek) return false;
+    try {
+      const { weekEnd } = isoWeekKeyToDates(week, tz);
+      return weekEnd.getTime() < Date.now();
+    } catch {
+      return false;
+    }
+  }
+
+  /** Returns the ISO week key `count` weeks before the given week. */
+  private priorWeekKeys(week: string, tz: string, count: number): string[] {
+    const keys: string[] = [];
+    let cursor = week;
+    for (let i = 0; i < count; i += 1) {
+      const { weekStart } = isoWeekKeyToDates(cursor, tz);
+      const prior = new Date(weekStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+      cursor = dateToIsoWeekKey(prior, tz);
+      keys.push(cursor);
+    }
+    return keys;
+  }
+
+  /**
+   * Extract the roadmap-delivery score for a board result: null when the board
+   * completed nothing that week (roadmap alignment is n/a), matching the Pulse
+   * UI's `n/a` treatment.
+   */
+  private roadmapScoreOf(board: BoardResultWithVolume): number | null {
+    return board.summary.completedCount === 0
+      ? null
+      : board.healthScore.roadmapAlignmentScore;
+  }
+
+  private async buildHealthCheck(
+    week: string,
+    currentBoards: BoardResultWithVolume[],
+    configs: BoardConfig[],
+    allIdeas: JpdIdea[],
+    ruleByJpdKey: Map<string, EpicConflictResolution>,
+    tz: string,
+  ): Promise<HealthCheckReport> {
+    const configByBoardId = new Map(configs.map((c) => [c.boardId, c]));
+
+    // Compute the 3 prior weeks' board results (selected week reuses the
+    // already-computed currentBoards). Trend order is oldest-first.
+    const priorKeys = this.priorWeekKeys(week, tz, 3); // [W-1, W-2, W-3]
+
+    const priorResultsByWeek = new Map<string, BoardResultWithVolume[]>();
+    await Promise.all(
+      priorKeys.map(async (pw) => {
+        const { weekStart, weekEnd } = isoWeekKeyToDates(pw, tz);
+        const results = await Promise.all(
+          configs.map((config) =>
+            this.processBoardForWeek(
+              config,
+              pw,
+              weekStart,
+              weekEnd,
+              new Set<ActiveFilter>(),
+              allIdeas,
+              ruleByJpdKey,
+            ),
+          ),
+        );
+        priorResultsByWeek.set(pw, results);
+      }),
+    );
+
+    const boards: HealthCheckBoard[] = currentBoards.map((board) => {
+      const roadmapScore = this.roadmapScoreOf(board);
+
+      // Build trend: oldest first (W-3, W-2, W-1, W).
+      const trend: HealthCheckTrendPoint[] = [];
+      for (const pw of [...priorKeys].reverse()) {
+        const priorBoard = priorResultsByWeek
+          .get(pw)
+          ?.find((b) => b.boardId === board.boardId);
+        if (priorBoard) {
+          trend.push({
+            week: pw,
+            stabilityScore: priorBoard.healthScore.stabilityScore,
+            roadmapScore: this.roadmapScoreOf(priorBoard),
+          });
+        }
+      }
+      trend.push({
+        week,
+        stabilityScore: board.healthScore.stabilityScore,
+        roadmapScore,
+      });
+
+      // boardType is available on the config; fall back to the result's type.
+      const boardType = configByBoardId.get(board.boardId)?.boardType === 'kanban'
+        ? 'kanban'
+        : board.boardType;
+
+      // Per-team roadmap-delivery target (proposal 0073). Default 80 when a
+      // board has no config row (should not happen, but keep it safe).
+      const roadmapDeliveryTarget =
+        configByBoardId.get(board.boardId)?.roadmapDeliveryTarget ?? DEFAULT_ROADMAP_TARGET;
+
+      return {
+        boardId: board.boardId,
+        boardType,
+        stabilityScore: board.healthScore.stabilityScore,
+        stabilityBand: classifyHealthBand(board.healthScore.stabilityScore),
+        roadmapScore,
+        roadmapBand:
+          roadmapScore === null ? null : classifyRoadmapBand(roadmapScore, roadmapDeliveryTarget),
+        roadmapDeliveryTarget,
+        volume: board.volume,
+        trend,
+      };
+    });
+
+    const stabilityDistribution = buildBandDistribution(
+      boards.map((b) => b.stabilityScore),
+    );
+    // Roadmap bands are target-relative, so aggregate the pre-computed bands
+    // rather than re-classifying against a global threshold (proposal 0073).
+    const roadmapDistribution = buildDistributionFromBands(
+      boards.map((b): HealthBand | null => b.roadmapBand),
+    );
+
+    // Org overall scores (proposal 0073):
+    //   stability — simple mean of team stability scores (fixed 85/70 banding).
+    //   roadmap   — mean of each team's attainment vs its own target, capped at
+    //               100; teams with no completions (null roadmap) are excluded.
+    const overallStabilityScore = mean(boards.map((b) => b.stabilityScore)) ?? 100;
+    const overallRoadmapScore = mean(
+      boards.map((b) =>
+        b.roadmapScore === null
+          ? null
+          : roadmapAttainment(b.roadmapScore, b.roadmapDeliveryTarget),
+      ),
+    );
+
+    return {
+      boards,
+      stabilityDistribution,
+      roadmapDistribution,
+      overallStabilityScore,
+      overallRoadmapScore,
     };
   }
 
@@ -147,7 +345,7 @@ export class AllItemsService {
     filters: Set<ActiveFilter>,
     allIdeas: JpdIdea[],
     ruleByJpdKey: Map<string, EpicConflictResolution>,
-  ): Promise<AllItemsBoardResult> {
+  ): Promise<BoardResultWithVolume> {
     const boardId = config.boardId;
     const isKanban = config.boardType === 'kanban';
     const doneStatuses = new Set(
@@ -555,12 +753,24 @@ export class AllItemsService {
       isKanban ? undefined : scrumTotalAdded,
     );
 
+    const volume: HealthCheckVolume = isKanban
+      ? { boardType: 'kanban', pulledIn: summary.totalItems, completed: summary.completedCount, onRoadmap: summary.onRoadmapCount, support: summary.supportCount }
+      : {
+          boardType: 'scrum',
+          committed: scrumTotalCommitted,
+          added: scrumTotalAdded,
+          completed: summary.completedCount,
+          onRoadmap: summary.onRoadmapCount,
+          support: summary.supportCount,
+        };
+
     return {
       boardId,
       boardType: isKanban ? 'kanban' : 'scrum',
       items: filteredItems,
       summary,
       healthScore,
+      volume,
     };
   }
 
@@ -889,7 +1099,7 @@ export class AllItemsService {
   private emptyBoardResult(
     boardId: string,
     boardType: 'scrum' | 'kanban',
-  ): AllItemsBoardResult {
+  ): BoardResultWithVolume {
     const summary: AllItemsBoardSummary = {
       totalItems: 0,
       startedCount: 0,
@@ -900,12 +1110,17 @@ export class AllItemsService {
       ttbSupportCount: 0,
       inFlightCount: 0,
     };
+    const volume: HealthCheckVolume =
+      boardType === 'kanban'
+        ? { boardType: 'kanban', pulledIn: 0, completed: 0, onRoadmap: 0, support: 0 }
+        : { boardType: 'scrum', committed: 0, added: 0, completed: 0, onRoadmap: 0, support: 0 };
     return {
       boardId,
       boardType,
       items: [],
       summary,
       healthScore: { overall: 100, roadmapAlignmentScore: 100, supportBurdenScore: 100, stabilityScore: 100 },
+      volume,
     };
   }
 }

@@ -34,6 +34,8 @@ export interface SprintReportResponse {
   sprintName: string;
   startDate: string | null;
   endDate: string | null;
+  /** ISO 8601 — actual sprint close time (Jira completeDate); null if not closed. */
+  completeDate: string | null;
   /** null when no dimension has data — UI shows "Insufficient data". */
   compositeScore: number | null;
   /** null when compositeScore is null. */
@@ -284,6 +286,7 @@ export class SprintReportService {
       sprintName: sprint.name,
       startDate: sprint.startDate ? sprint.startDate.toISOString() : null,
       endDate: sprint.endDate ? sprint.endDate.toISOString() : null,
+      completeDate: sprint.completeDate ? sprint.completeDate.toISOString() : null,
       compositeScore,
       compositeBand,
       scores,

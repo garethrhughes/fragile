@@ -1,7 +1,7 @@
 # 0020 — No Application-Level Authentication; CORS as Sole Access Control
 
 **Date:** 2026-04-12
-**Status:** Accepted
+**Status:** Superseded by [0068](0068-google-sso-replaces-waf.md)
 **Deciders:** Architect Agent
 **Proposal:** [0009 — Remove API Key Authentication](../proposals/0009-remove-api-key-auth.md)
 **Supersedes:** [ADR-0004 — Single-User API Key Auth via Passport HeaderAPIKeyStrategy](0004-single-user-api-key-auth.md)

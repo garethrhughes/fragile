@@ -44,6 +44,60 @@ resource "aws_secretsmanager_secret_version" "jira_api_token_placeholder" {
   }
 }
 
+resource "aws_secretsmanager_secret" "google_client_id" {
+  name        = "fragile/${var.environment}/google-client-id"
+  description = "Google OAuth client ID for the Fragile application."
+
+  tags = {
+    Name = "fragile-${var.environment}-google-client-id"
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "google_client_id_placeholder" {
+  secret_id     = aws_secretsmanager_secret.google_client_id.id
+  secret_string = "REPLACE_ME"
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
+resource "aws_secretsmanager_secret" "google_client_secret" {
+  name        = "fragile/${var.environment}/google-client-secret"
+  description = "Google OAuth client secret for the Fragile application."
+
+  tags = {
+    Name = "fragile-${var.environment}-google-client-secret"
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "google_client_secret_placeholder" {
+  secret_id     = aws_secretsmanager_secret.google_client_secret.id
+  secret_string = "REPLACE_ME"
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
+resource "aws_secretsmanager_secret" "session_secret" {
+  name        = "fragile/${var.environment}/session-secret"
+  description = "Session signing secret for the Fragile application."
+
+  tags = {
+    Name = "fragile-${var.environment}-session-secret"
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "session_secret_placeholder" {
+  secret_id     = aws_secretsmanager_secret.session_secret.id
+  secret_string = "REPLACE_ME"
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
 # ── SSM Parameters (Standard tier — no cost) ─────────────────────────────────
 # Non-sensitive configuration injected into the backend ECS task.
 # Values are placeholder strings; the operator fills them in after first apply.

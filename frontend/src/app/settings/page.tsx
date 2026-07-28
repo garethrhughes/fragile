@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Save, Loader2, CheckCircle, XCircle, Plus, Trash2, RefreshCw, X, AlertTriangle } from 'lucide-react';
 import {
   getBoards,
@@ -18,6 +19,7 @@ import {
 } from '@/lib/api'
 import { useBoardsStore } from '@/store/boards-store'
 import { useSyncStore } from '@/store/sync-store'
+import { useAuth } from '@/hooks/use-auth'
 
 // ---------------------------------------------------------------------------
 // Toast helper
@@ -125,6 +127,8 @@ function CsvField({ label, value, onChange, hint }: CsvFieldProps) {
 // ---------------------------------------------------------------------------
 
 export default function SettingsPage() {
+  const router = useRouter();
+  const { loading: authLoading, isAdmin } = useAuth();
   const { toasts, show } = useToast();
 
   // Board config
@@ -279,6 +283,20 @@ export default function SettingsPage() {
   ) {
     if (!config) return;
     setConfig({ ...config, [key]: value });
+  }
+
+  // Auth gate — loading spinner or redirect for non-admins
+  if (authLoading) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-text-muted" />
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    router.replace('/');
+    return null;
   }
 
   return (
@@ -485,6 +503,27 @@ export default function SettingsPage() {
                 />
                 <p className="mt-1 text-xs text-muted">
                   Issues with a board-entry date before this date are excluded from all Kanban metrics. Leave blank for no lower bound.
+                </p>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">
+                  Roadmap Delivery Target (%)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={config.roadmapDeliveryTarget ?? 80}
+                  onChange={(e) => {
+                    const n = Math.max(0, Math.min(100, Math.round(Number(e.target.value))))
+                    updateField('roadmapDeliveryTarget', Number.isNaN(n) ? 80 : n)
+                  }}
+                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm"
+                />
+                <p className="mt-1 text-xs text-muted">
+                  Health Check target for this team. Roadmap delivery is graded relative to this value
+                  (healthy ≥ target, watch ≥ target−15, at-risk below) and contributes its attainment
+                  (score ÷ target, capped at 100%) to the org roadmap score. Default 80; e.g. Platform 50.
                 </p>
               </div>
             </div>
@@ -885,6 +924,7 @@ export default function SettingsPage() {
           </div>
         )}
       </section>
+
     </div>
   );
 }

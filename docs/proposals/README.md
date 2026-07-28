@@ -57,9 +57,6 @@
 | [0053](0053-roadmap-idea-epic-conflict-resolution.md) | Roadmap Idea ↔ Epic Conflict Resolution | Draft | 2026-05-06 |
 | [0054](0054-cycle-time-reopen-handling.md) | Cycle Time Reopen Handling: Pairing First-InProgress with Last-Done | Draft | 2026-05-06 |
 | [0055](0055-third-audit-clear-bug-fix-batch.md) | Third Audit: Clear Bug Fix Batch | Accepted | 2026-05-06 |
-| [0056](0056-custom-reports.md) | Custom Reports | Accepted | 2026-05-08 |
-| [0057](0057-custom-report-table-and-stat-graphs.md) | Custom Report Widgets: Table, Stat, and Widget Rename | Accepted | 2026-05-08 |
-| [0058](0058-custom-report-layout-configuration.md) | Custom Report Layout Configuration | Accepted | 2026-05-08 |
 | [0059](0059-dora-aggregate-quarter-selection-and-partial-period.md) | DORA Aggregate: Quarter Selection and Partial-Period Awareness | Accepted | 2026-05-11 |
 | [0060](0060-support-report-ttb-filter-and-plural-link-types.md) | Support Report: TTB Filter and Plural Link Types | Accepted | 2026-05-12 |
 | [0061](0061-timezone-aware-sync-schedule.md) | Timezone-Aware Sync Schedule | Accepted | 2026-05-12 |
@@ -70,3 +67,8 @@
 | [0066](0066-align-pulse-kanban-with-week-detail.md) | Align Pulse Kanban Metrics with Week Detail Report | Accepted | 2026-05-15 |
 | [0067](0067-kanban-backlog-membership-via-agile-api.md) | Kanban Backlog Membership via Jira Agile Backlog API | Accepted | 2026-05-15 |
 | [0068](0068-sync-deleted-jira-issues.md) | Sync Deleted Jira Issues: Reconcile DB Against JQL Response | Accepted | 2026-05-15 |
+| [0071](0071-engineering-health-check-panel.md) | Engineering Health Check Panel | Accepted | 2026-07-28 |
+| [0072](0072-sprint-effective-end-completedate.md) | Use Sprint Actual Close Time (completeDate) for Completion & Metric Windows | Accepted | 2026-07-28 |
+| [0073](0073-health-check-org-scores-and-roadmap-targets.md) | Health Check Org Overall Scores & Per-Team Roadmap Targets | Accepted | 2026-07-28 |
+| [0074](0074-google-sso-authentication.md) | Google SSO Authentication & Role-Based Access Control | Accepted | 2026-07-28 |
+| [0075](0075-remove-custom-reports-and-api-key-auth.md) | Remove Custom Reports & Add API-Key Authentication | Accepted | 2026-07-28 |

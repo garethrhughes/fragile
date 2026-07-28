@@ -35,6 +35,8 @@ export interface BoardConfig {
   supportLinkTypes: string[];
   triageBoardKey: string | null;
   supportEpics: string[];
+  /** Roadmap-delivery target (%) for the Health Check; default 80. */
+  roadmapDeliveryTarget: number;
 }
 
 export interface SprintAccuracy {
@@ -169,6 +171,7 @@ export async function apiFetch<T>(
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     headers,
+    credentials: 'include',
   })
 
   if (!res.ok) {
@@ -598,6 +601,8 @@ export interface SprintDetailResponse {
   state: string
   startDate: string | null
   endDate: string | null
+  /** Actual sprint close time (Jira completeDate); null if not closed. */
+  completeDate: string | null
   boardConfig: SprintDetailBoardConfig
   summary: SprintDetailSummary
   issues: SprintDetailIssue[]
@@ -752,6 +757,7 @@ export interface DoraTrendParams {
 async function fetchDoraSnapshot<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     next: { revalidate: 60 },
   } as RequestInit)
 
@@ -1028,6 +1034,8 @@ export interface SprintReportResponse {
   sprintName: string
   startDate: string | null
   endDate: string | null
+  /** Actual sprint close time (Jira completeDate); null if not closed. */
+  completeDate: string | null
   /** null = no dimension had data; UI shows "Insufficient data". */
   compositeScore: number | null
   /** null when compositeScore is null. */
@@ -1177,170 +1185,6 @@ export function getSupportSummary(
   )
 }
 
-// ---- Custom Reports -------------------------------------------------------
-
-export type WidgetKind = 'line' | 'bar' | 'area' | 'table' | 'stat'
-export type StatBand = 'elite' | 'high' | 'medium' | 'low' | 'none'
-export type ColumnType = 'text' | 'number' | 'status' | 'priority' | 'issue' | 'link' | 'icon'
-export type FilterKind = 'select' | 'multiselect'
-
-export interface ColumnDefinition {
-  key: string
-  label: string
-  type: ColumnType
-  sortable?: boolean
-}
-
-export interface CustomReportDataPoint {
-  id: string
-  x: string
-  y: number
-  series: string | null
-  dimensions: Record<string, string> | null
-  createdAt: string
-}
-
-export interface CustomReportWidget {
-  id: string
-  customReportId: string
-  kind: WidgetKind
-  title: string
-  seriesKey: string | null
-  xAxisLabel: string | null
-  yAxisLabel: string | null
-  position: number
-  columns: ColumnDefinition[] | null
-  statUnit: string | null
-  statSubtitle: string | null
-  statBand: StatBand | null
-  createdAt: string
-  dataPoints: CustomReportDataPoint[]
-}
-
-export interface CustomReportFilter {
-  id: string
-  customReportId: string
-  key: string
-  label: string
-  kind: FilterKind
-  defaultValue: string | string[] | null
-  position: number
-}
-
-export interface CustomReport {
-  id: string
-  slug: string
-  title: string
-  description: string | null
-  layout: import('./report-layout').ReportLayout | null
-  createdAt: string
-  updatedAt: string
-  widgets: CustomReportWidget[]
-  filters: CustomReportFilter[]
-  jiraBaseUrl: string
-}
-
-export interface CustomReportSummary {
-  id: string
-  slug: string
-  title: string
-  description: string | null
-  createdAt: string
-  updatedAt: string
-}
-
-export interface CreateCustomReportBody {
-  slug: string
-  title: string
-  description?: string
-  layout?: import('./report-layout').ReportLayout
-}
-
-export interface CreateWidgetBody {
-  kind: WidgetKind
-  title: string
-  seriesKey?: string
-  xAxisLabel?: string
-  yAxisLabel?: string
-  position?: number
-  columns?: ColumnDefinition[]
-  statUnit?: string
-  statSubtitle?: string
-  statBand?: StatBand
-}
-
-export interface AppendDataPointsBody {
-  points: Array<{
-    x: string
-    y: number
-    series?: string
-    dimensions?: Record<string, string>
-  }>
-}
-
-export interface CreateFilterBody {
-  key: string
-  label: string
-  kind: FilterKind
-  defaultValue?: string | string[]
-  position?: number
-}
-
-export function listCustomReports(): Promise<CustomReportSummary[]> {
-  return apiFetch('/api/custom-reports')
-}
-
-export function getCustomReport(slug: string): Promise<CustomReport> {
-  return apiFetch(`/api/custom-reports/${encodeURIComponent(slug)}`)
-}
-
-export function createCustomReport(body: CreateCustomReportBody): Promise<CustomReport> {
-  return apiFetch('/api/custom-reports', { method: 'POST', body: JSON.stringify(body) })
-}
-
-export function updateCustomReport(
-  slug: string,
-  body: Partial<Pick<CreateCustomReportBody, 'title' | 'description' | 'layout'>>,
-): Promise<CustomReport> {
-  return apiFetch(`/api/custom-reports/${encodeURIComponent(slug)}`, {
-    method: 'PATCH',
-    body: JSON.stringify(body),
-  })
-}
-
-export function deleteCustomReport(slug: string): Promise<void> {
-  return apiFetch(`/api/custom-reports/${encodeURIComponent(slug)}`, { method: 'DELETE' })
-}
-
-export function addCustomReportWidget(slug: string, body: CreateWidgetBody): Promise<CustomReportWidget> {
-  return apiFetch(`/api/custom-reports/${encodeURIComponent(slug)}/widgets`, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  })
-}
-
-export function appendCustomReportData(
-  slug: string,
-  widgetId: string,
-  body: AppendDataPointsBody,
-): Promise<{ appended: number }> {
-  return apiFetch(
-    `/api/custom-reports/${encodeURIComponent(slug)}/widgets/${encodeURIComponent(widgetId)}/data-points`,
-    { method: 'POST', body: JSON.stringify(body) },
-  )
-}
-
-export function replaceCustomReportData(
-  slug: string,
-  widgetId: string,
-  body: AppendDataPointsBody,
-): Promise<{ replaced: number }> {
-  return apiFetch(
-    `/api/custom-reports/${encodeURIComponent(slug)}/widgets/${encodeURIComponent(widgetId)}/data-points`,
-    { method: 'PUT', body: JSON.stringify(body) },
-  )
-}
-
 // ---------------------------------------------------------------------------
 // All Items — bespoke MyPass weekly cross-board report (feature 0012)
 // NOTE: Not for upstreaming. Isolated to this project.
@@ -1416,6 +1260,55 @@ export interface AllItemsResponse {
   totals: AllItemsTotals
   /** Mean of all boards' healthScore.overall. 100 when no boards. */
   overallScore: number
+  /**
+   * Engineering Health Check (feature 0014, proposal 0071).
+   * Present only for completed (non-current) weeks; absent otherwise.
+   */
+  healthCheck?: HealthCheckReport
+}
+
+// --- Engineering Health Check (feature 0014, proposal 0071) ---
+
+export type HealthBand = 'healthy' | 'watch' | 'at-risk'
+
+export type HealthCheckVolume =
+  | { boardType: 'scrum'; committed: number; added: number; completed: number; onRoadmap: number; support: number }
+  | { boardType: 'kanban'; pulledIn: number; completed: number; onRoadmap: number; support: number }
+
+export interface HealthCheckTrendPoint {
+  week: string
+  stabilityScore: number
+  roadmapScore: number | null
+}
+
+export interface HealthCheckBoard {
+  boardId: string
+  boardType: 'scrum' | 'kanban'
+  stabilityScore: number
+  stabilityBand: HealthBand
+  roadmapScore: number | null
+  roadmapBand: HealthBand | null
+  /** This team's roadmap-delivery target (%), used for banding + attainment. */
+  roadmapDeliveryTarget: number
+  volume: HealthCheckVolume
+  trend: HealthCheckTrendPoint[]
+}
+
+export interface HealthBandDistribution {
+  healthy: number
+  watch: number
+  atRisk: number
+  na: number
+}
+
+export interface HealthCheckReport {
+  boards: HealthCheckBoard[]
+  stabilityDistribution: HealthBandDistribution
+  roadmapDistribution: HealthBandDistribution
+  /** Org overall stability: mean of team stability scores. */
+  overallStabilityScore: number
+  /** Org overall roadmap delivery: mean attainment vs each team's target; null if all n/a. */
+  overallRoadmapScore: number | null
 }
 
 export type AllItemsFilter = 'added-mid-sprint' | 'not-on-roadmap' | 'support' | 'ttb-support'
@@ -1425,4 +1318,79 @@ export function getAllItems(week: string, filters?: AllItemsFilter[]): Promise<A
   return apiFetch<AllItemsResponse>(
     `/api/all-items${toQueryString({ week, filter: filterParam })}`,
   )
+}
+
+// ---- Auth (proposal 0074) ------------------------------------------------
+
+export interface AuthUser {
+  id: string
+  email: string
+  name: string
+  role: 'user' | 'admin'
+  avatarUrl: string | null
+}
+
+export function getAuthMe(): Promise<AuthUser> {
+  return apiFetch<AuthUser>('/api/auth/me')
+}
+
+export function postLogout(): Promise<void> {
+  return apiFetch<void>('/api/auth/logout', { method: 'POST' })
+}
+
+// ---- Users (proposal 0074) -----------------------------------------------
+
+export interface UserListItem {
+  id: string
+  email: string
+  name: string
+  role: 'user' | 'admin'
+  avatarUrl: string | null
+  lastLoginAt: string | null
+  createdAt: string
+}
+
+export function getUsers(): Promise<UserListItem[]> {
+  return apiFetch<UserListItem[]>('/api/users')
+}
+
+export function updateUserRole(userId: string, role: 'user' | 'admin'): Promise<UserListItem> {
+  return apiFetch<UserListItem>(`/api/users/${userId}/role`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role }),
+  })
+}
+
+// ---- API keys (proposal 0075) --------------------------------------------
+
+export interface ApiKeyMetadata {
+  id: string
+  name: string
+  lastUsedAt: string | null
+  createdAt: string
+}
+
+export interface CreatedApiKey {
+  id: string
+  name: string
+  /** The raw key — returned once at creation, shown to the user, never retrievable again. */
+  rawKey: string
+  createdAt: string
+}
+
+export function getApiKeys(): Promise<ApiKeyMetadata[]> {
+  return apiFetch<ApiKeyMetadata[]>('/api/keys')
+}
+
+export function createApiKey(name: string): Promise<CreatedApiKey> {
+  return apiFetch<CreatedApiKey>('/api/keys', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+}
+
+export function revokeApiKey(id: string): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(`/api/keys/${id}`, { method: 'DELETE' })
 }

@@ -106,6 +106,7 @@ const SPRINT: JiraSprint = {
   startDate: new Date('2026-01-05T00:00:00Z'),
   endDate: new Date('2026-01-19T00:00:00Z'),
   goal: '',
+  completeDate: null,
 } as JiraSprint;
 
 const SHARED_MEMBERSHIP: SprintMembership = {

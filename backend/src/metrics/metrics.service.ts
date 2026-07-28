@@ -36,6 +36,7 @@ import { percentile, round2 } from './statistics.js';
 import { listRecentQuarters, quarterToDates } from './period-utils.js';
 import { DoraCacheService } from './dora-cache.service.js';
 import { TrendDataLoader, type TrendDataSlice } from './trend-data-loader.service.js';
+import { effectiveSprintEnd } from '../lib/sprint-window.js';
 
 export interface DoraMetricsResult {
   boardId: string;
@@ -213,7 +214,7 @@ export class MetricsService {
       }
 
       const startDate = sprint.startDate;
-      const endDate = sprint.endDate;
+      const endDate = effectiveSprintEnd(sprint);
       const sprintLabel = sprint.name;
       const boardIds = await this.resolveBoardIds(query.boardId);
 
@@ -465,7 +466,7 @@ export class MetricsService {
       });
       if (sprint?.startDate && sprint?.endDate) {
         startDate = sprint.startDate;
-        endDate = sprint.endDate;
+        endDate = effectiveSprintEnd(sprint);
       }
     }
 
@@ -521,7 +522,7 @@ export class MetricsService {
       const points = await Promise.all(
         sprints.map(async (sprint): Promise<CycleTimeTrendPoint> => {
           const start = sprint.startDate ?? new Date();
-          const end = sprint.endDate ?? new Date();
+          const end = effectiveSprintEnd(sprint);
           const result = await this.cycleTimeService.calculate(
             boardId,
             start,
@@ -606,7 +607,7 @@ export class MetricsService {
   ): Promise<{ startDate: Date; endDate: Date }> {
     const sprint = await this.sprintRepo.findOne({ where: { id: sprintId } });
     if (sprint?.startDate && sprint?.endDate) {
-      return { startDate: sprint.startDate, endDate: sprint.endDate };
+      return { startDate: sprint.startDate, endDate: effectiveSprintEnd(sprint) };
     }
     return { startDate: fallbackStart, endDate: fallbackEnd };
   }

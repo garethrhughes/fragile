@@ -86,6 +86,21 @@ variable "jira_api_token_secret_arn" {
   type        = string
 }
 
+variable "google_client_id_secret_arn" {
+  description = "ARN of the Secrets Manager secret containing the Google OAuth client ID."
+  type        = string
+}
+
+variable "google_client_secret_secret_arn" {
+  description = "ARN of the Secrets Manager secret containing the Google OAuth client secret."
+  type        = string
+}
+
+variable "session_secret_secret_arn" {
+  description = "ARN of the Secrets Manager secret containing the session signing secret."
+  type        = string
+}
+
 variable "jira_base_url_param_arn" {
   description = "ARN of the SSM parameter for the Jira base URL."
   type        = string

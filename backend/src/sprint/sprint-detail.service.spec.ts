@@ -121,6 +121,7 @@ const SPRINT: JiraSprint = {
   startDate: new Date('2026-01-05T00:00:00Z'),
   endDate: new Date('2026-01-19T00:00:00Z'),
   goal: '',
+  completeDate: null,
 } as JiraSprint;
 
 // ---------------------------------------------------------------------------
@@ -375,6 +376,97 @@ describe('SprintDetailService', () => {
 
     expect(result.issues[0].completedInSprint).toBe(true);
     expect(result.summary.completedInSprintCount).toBe(1);
+  });
+
+  it('marks completedInSprint=true when transition falls after scheduled end but before actual close (proposal 0072)', async () => {
+    // Regression for DATA/4129: sprint held open past its scheduled endDate and
+    // closed late. A Done transition between endDate and completeDate must count.
+    const lateClosedSprint = {
+      ...SPRINT,
+      state: 'closed',
+      startDate: new Date('2026-06-21T16:00:00Z'),
+      endDate: new Date('2026-07-02T16:00:00Z'), // scheduled end
+      completeDate: new Date('2026-07-06T00:12:00Z'), // actual close (3.5 days later)
+    } as JiraSprint;
+    sprintRepo.findOne.mockResolvedValue(lateClosedSprint);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'DATA-413', status: 'Done' }),
+    ]);
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['DATA-413']),
+    );
+    changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(
+      makeStatusQb([
+        {
+          issueKey: 'DATA-413',
+          field: 'status',
+          toValue: 'In Progress',
+          changedAt: new Date('2026-06-28T00:00:00Z'),
+        },
+        {
+          issueKey: 'DATA-413',
+          field: 'status',
+          toValue: 'Done',
+          // After scheduled endDate (07-02) but before actual close (07-06)
+          changedAt: new Date('2026-07-03T01:16:00Z'),
+        },
+      ]),
+    );
+
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    expect(result.issues[0].completedInSprint).toBe(true);
+    expect(result.summary.completedInSprintCount).toBe(1);
+  });
+
+  it('does NOT count a Done transition after the actual close time (proposal 0072)', async () => {
+    const lateClosedSprint = {
+      ...SPRINT,
+      state: 'closed',
+      startDate: new Date('2026-06-21T16:00:00Z'),
+      endDate: new Date('2026-07-02T16:00:00Z'),
+      completeDate: new Date('2026-07-06T00:12:00Z'),
+    } as JiraSprint;
+    sprintRepo.findOne.mockResolvedValue(lateClosedSprint);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    issueRepo.find.mockResolvedValue([
+      makeIssue({ key: 'DATA-999', status: 'Done' }),
+    ]);
+    sprintMembership.reconstruct.mockResolvedValue(
+      committedMembership(['DATA-999']),
+    );
+    changelogRepo.createQueryBuilder = jest.fn().mockReturnValue(
+      makeStatusQb([
+        {
+          issueKey: 'DATA-999',
+          field: 'status',
+          toValue: 'Done',
+          // A full day AFTER the actual close — outside the window (beyond grace)
+          changedAt: new Date('2026-07-07T00:12:00Z'),
+        },
+      ]),
+    );
+
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    expect(result.issues[0].completedInSprint).toBe(false);
+  });
+
+  it('exposes completeDate on the response (proposal 0072)', async () => {
+    const lateClosedSprint = {
+      ...SPRINT,
+      state: 'closed',
+      completeDate: new Date('2026-01-20T09:00:00Z'),
+    } as JiraSprint;
+    sprintRepo.findOne.mockResolvedValue(lateClosedSprint);
+    boardConfigRepo.findOne.mockResolvedValue(defaultBoardConfig());
+    issueRepo.find.mockResolvedValue([]);
+    sprintMembership.reconstruct.mockResolvedValue(committedMembership([]));
+
+    const result = await service.getDetail('ACC', 'sprint-1');
+
+    expect(result.completeDate).toBe('2026-01-20T09:00:00.000Z');
   });
 
   it('falls back to current status when no status changelog exists', async () => {

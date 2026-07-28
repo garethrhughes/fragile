@@ -40,12 +40,6 @@ variable "frontend_image_tag" {
   default     = "latest"
 }
 
-variable "allowed_cidrs" {
-  description = "IPv4 CIDRs permitted to reach the frontend and backend via WAF. All other traffic is blocked."
-  type        = list(string)
-  # No default — must be supplied in terraform.tfvars.
-}
-
 # ── ECS ALB Target Group ARNs ─────────────────────────────────────────────────
 # The ECS Express Gateway creates and owns these TGs. We pass their ARNs in
 # so that the standard aws_ecs_service load_balancer blocks can reference them,

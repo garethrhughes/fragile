@@ -130,6 +130,7 @@ describe('PlanningService', () => {
       startDate: new Date('2025-01-01T00:00:00Z'),
       endDate: new Date('2025-01-14T23:59:59Z'),
       goal: '',
+      completeDate: null,
     } as JiraSprint;
 
     const activeSprint: JiraSprint = {
@@ -545,6 +546,7 @@ describe('PlanningService', () => {
         startDate: new Date('2026-01-06'),
         endDate: new Date('2026-01-20'),
         goal: '',
+        completeDate: null,
       } as JiraSprint;
 
       sprintRepo.findOne.mockResolvedValue(sprint);

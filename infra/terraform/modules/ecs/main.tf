@@ -85,11 +85,14 @@ resource "aws_ecs_task_definition" "backend" {
       ]
 
       secrets = [
-        { name = "DB_PASSWORD",     valueFrom = var.db_password_secret_arn },
-        { name = "JIRA_API_TOKEN",  valueFrom = var.jira_api_token_secret_arn },
-        { name = "JIRA_BASE_URL",   valueFrom = var.jira_base_url_param_arn },
-        { name = "JIRA_USER_EMAIL", valueFrom = var.jira_user_email_param_arn },
-        { name = "TIMEZONE",        valueFrom = var.timezone_param_arn },
+        { name = "DB_PASSWORD",           valueFrom = var.db_password_secret_arn },
+        { name = "JIRA_API_TOKEN",        valueFrom = var.jira_api_token_secret_arn },
+        { name = "JIRA_BASE_URL",         valueFrom = var.jira_base_url_param_arn },
+        { name = "JIRA_USER_EMAIL",       valueFrom = var.jira_user_email_param_arn },
+        { name = "TIMEZONE",              valueFrom = var.timezone_param_arn },
+        { name = "GOOGLE_CLIENT_ID",      valueFrom = var.google_client_id_secret_arn },
+        { name = "GOOGLE_CLIENT_SECRET",  valueFrom = var.google_client_secret_secret_arn },
+        { name = "SESSION_SECRET",        valueFrom = var.session_secret_secret_arn },
       ]
 
       # wget is used (not curl) because the image is node:22-alpine which has

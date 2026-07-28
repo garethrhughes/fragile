@@ -15,6 +15,7 @@ import {
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { dateParts, midnightInTz } from '../metrics/tz-utils.js';
 import { dateToIsoWeekKey, isoWeekKeyToDates } from '../lib/iso-week.js';
+import { effectiveSprintEnd } from '../lib/sprint-window.js';
 import {
   filterKanbanIssues,
   getKanbanCompletedThisWeek,
@@ -229,10 +230,15 @@ export class PlanningService {
           // completed in this sprint whenever it was added back to the sprint
           // (e.g. for follow-up work) and the original Done transition still
           // pre-dated the sprint start.
+          //
+          // Upper bound uses the EFFECTIVE sprint end (actual completeDate ??
+          // scheduled endDate) so work finished before a late close is credited
+          // to this sprint (proposal 0072).
           const lowerBound = sprint.startDate
             ? sprint.startDate.getTime() - SPRINT_GRACE_PERIOD_MS
             : Number.NEGATIVE_INFINITY;
-          const upperBound = sprint.endDate.getTime() + SPRINT_GRACE_PERIOD_MS;
+          const upperBound =
+            effectiveSprintEnd(sprint).getTime() + SPRINT_GRACE_PERIOD_MS;
           const hasDoneTransition = logs.some(
             (cl) =>
               doneStatuses.includes(cl.toValue ?? '') &&

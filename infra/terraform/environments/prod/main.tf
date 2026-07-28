@@ -62,6 +62,10 @@ module "iam" {
   db_password_secret_arn    = module.secrets.db_password_secret_arn
   jira_api_token_secret_arn = module.secrets.jira_api_token_secret_arn
 
+  google_client_id_secret_arn     = module.secrets.google_client_id_secret_arn
+  google_client_secret_secret_arn = module.secrets.google_client_secret_secret_arn
+  session_secret_secret_arn       = module.secrets.session_secret_secret_arn
+
   ssm_parameter_path_prefix = "/fragile/${var.environment}/"
 
   dora_snapshot_lambda_arn = module.lambda.function_arn
@@ -134,24 +138,15 @@ module "ecs" {
   db_password_secret_arn    = module.secrets.db_password_secret_arn
   jira_api_token_secret_arn = module.secrets.jira_api_token_secret_arn
 
+  google_client_id_secret_arn     = module.secrets.google_client_id_secret_arn
+  google_client_secret_secret_arn = module.secrets.google_client_secret_secret_arn
+  session_secret_secret_arn       = module.secrets.session_secret_secret_arn
+
   jira_base_url_param_arn   = module.secrets.jira_base_url_param_arn
   jira_user_email_param_arn = module.secrets.jira_user_email_param_arn
   timezone_param_arn        = module.secrets.timezone_param_arn
 
   frontend_url = "https://${var.frontend_subdomain}.${var.domain_name}"
-}
-
-# ── WAF -- CloudFront-scoped IP allowlist ───────────────────
-# Must be deployed in us-east-1 (CloudFront WAF requirement).
-# The WebACL ARN is attached directly to the CloudFront distributions.
-module "waf" {
-  source = "../../modules/waf"
-
-  providers = {
-    aws = aws.us_east_1
-  }
-
-  allowed_cidrs = var.allowed_cidrs
 }
 
 # ── CDN -- ACM + CloudFront ─────────────────────────────────
@@ -171,8 +166,6 @@ module "cdn" {
 
   alb_dns_name = module.ecs.alb_dns_name
   alb_arn      = module.ecs.alb_arn
-
-  web_acl_arn = module.waf.web_acl_arn
 }
 
 # ── DNS ────────────────────────────────────────────────────
