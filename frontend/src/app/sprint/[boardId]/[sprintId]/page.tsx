@@ -41,7 +41,7 @@ const SPRINT_HELP: MetricDefinition[] = [
   {
     name: 'Completed',
     description:
-      'Issues that reached a Done status within the sprint window. A 5-minute grace window is applied at both boundaries for closed sprints.',
+      'Issues that reached a Done status within the sprint window — up to the sprint\u2019s actual close time (or its scheduled end if it was never closed late). A 5-minute grace window is applied at both boundaries for closed sprints.',
   },
   {
     name: 'Scope Change %',

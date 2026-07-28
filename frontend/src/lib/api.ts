@@ -598,6 +598,8 @@ export interface SprintDetailResponse {
   state: string
   startDate: string | null
   endDate: string | null
+  /** Actual sprint close time (Jira completeDate); null if not closed. */
+  completeDate: string | null
   boardConfig: SprintDetailBoardConfig
   summary: SprintDetailSummary
   issues: SprintDetailIssue[]
@@ -1028,6 +1030,8 @@ export interface SprintReportResponse {
   sprintName: string
   startDate: string | null
   endDate: string | null
+  /** Actual sprint close time (Jira completeDate); null if not closed. */
+  completeDate: string | null
   /** null = no dimension had data; UI shows "Insufficient data". */
   compositeScore: number | null
   /** null when compositeScore is null. */

@@ -64,6 +64,7 @@ const sprint: JiraSprint = {
   startDate: new Date('2025-02-01T00:00:00Z'),
   endDate: new Date('2025-02-15T00:00:00Z'),
   goal: '',
+  completeDate: null,
 } as JiraSprint;
 
 describe('pure helpers', () => {
@@ -421,6 +422,7 @@ describe('SprintMembershipService.reconstructMany', () => {
     startDate: new Date('2025-01-15T00:00:00Z'),
     endDate: new Date('2025-01-31T00:00:00Z'),
     goal: '',
+    completeDate: null,
   } as JiraSprint;
 
   const sprint2: JiraSprint = {
@@ -431,6 +433,7 @@ describe('SprintMembershipService.reconstructMany', () => {
     startDate: new Date('2025-02-01T00:00:00Z'),
     endDate: new Date('2025-02-15T00:00:00Z'),
     goal: '',
+    completeDate: null,
   } as JiraSprint;
 
   beforeEach(() => {
