@@ -9,7 +9,9 @@ import { User } from '../database/entities/user.entity.js';
 export interface TokenPayload {
   sub: string; // user id
   email: string;
+  name: string;
   role: 'user' | 'admin';
+  avatarUrl: string | null;
 }
 
 @Injectable()
@@ -107,7 +109,9 @@ export class AuthService {
     const payload: TokenPayload = {
       sub: user.id,
       email: user.email,
+      name: user.name,
       role: user.role as 'user' | 'admin',
+      avatarUrl: user.avatarUrl ?? null,
     };
     return jwt.sign(payload, this.jwtSecret, {
       expiresIn: Math.floor(this.cookieMaxAgeMs / 1000),

@@ -20,7 +20,7 @@ import {
 import { useBoardsStore } from '@/store/boards-store'
 import { useSyncStore } from '@/store/sync-store'
 import { useAuth } from '@/hooks/use-auth'
-import { UserList } from '@/components/settings/user-list'
+import { useAuth } from '@/hooks/use-auth'
 
 // ---------------------------------------------------------------------------
 // Toast helper

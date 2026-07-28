@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart3, Target, Map, Settings, Timer, AlertCircle, Sun, Moon, Headphones, FileBarChart2, Activity, LogOut } from 'lucide-react'
+import { BarChart3, Target, Map, Settings, Timer, AlertCircle, Sun, Moon, Headphones, FileBarChart2, Activity, LogOut, Users } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useDarkMode } from '@/hooks/use-dark-mode'
 import { useAuth } from '@/hooks/use-auth'
@@ -31,12 +31,19 @@ const SETTINGS_ITEM: NavItem = {
   icon: <Settings className="h-5 w-5" />,
 }
 
+const USERS_ITEM: NavItem = {
+  label: 'Users',
+  href: '/users',
+  icon: <Users className="h-5 w-5" />,
+}
+
 export function Sidebar() {
   const pathname = usePathname()
   const { dark, toggle: toggleDark } = useDarkMode()
   const { user, isAdmin } = useAuth()
 
   const settingsActive = pathname.startsWith(SETTINGS_ITEM.href)
+  const usersActive = pathname.startsWith(USERS_ITEM.href)
 
   const handleSignOut = async () => {
     try {
@@ -118,6 +125,23 @@ export function Sidebar() {
               {SETTINGS_ITEM.icon}
             </span>
             {SETTINGS_ITEM.label}
+          </Link>
+        )}
+
+        {/* Users link — admin only */}
+        {isAdmin && (
+          <Link
+            href={USERS_ITEM.href}
+            className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+              usersActive
+                ? 'bg-surface-active text-squirrel-700'
+                : 'text-text-secondary hover:bg-surface-raised'
+            }`}
+          >
+            <span className={usersActive ? 'text-squirrel-500' : 'text-text-muted'}>
+              {USERS_ITEM.icon}
+            </span>
+            {USERS_ITEM.label}
           </Link>
         )}
 

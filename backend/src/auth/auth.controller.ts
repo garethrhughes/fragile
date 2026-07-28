@@ -64,14 +64,16 @@ export class AuthController {
   @Get('me')
   me(@Req() req: Request) {
     // User is attached by the AuthenticatedGuard
-    const user = (req as unknown as { authUser?: { sub: string; email: string; role: string } }).authUser;
+    const user = (req as unknown as { authUser?: { sub: string; email: string; name: string; role: string; avatarUrl: string | null } }).authUser;
     if (!user) {
       throw new UnauthorizedException();
     }
     return {
       id: user.sub,
       email: user.email,
+      name: user.name,
       role: user.role,
+      avatarUrl: user.avatarUrl,
     };
   }
 
