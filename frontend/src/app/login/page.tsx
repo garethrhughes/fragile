@@ -28,14 +28,14 @@ export default function LoginPage() {
 
   if (checking) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex h-screen items-center justify-center bg-background">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-squirrel-500 border-t-transparent" />
       </div>
     )
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
+    <div className="flex h-screen items-center justify-center bg-background">
       <div className="w-full max-w-sm rounded-xl border border-border bg-card p-8 shadow-sm">
         {/* Brand */}
         <div className="mb-8 flex flex-col items-center gap-2">
