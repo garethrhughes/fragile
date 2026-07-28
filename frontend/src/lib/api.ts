@@ -1185,170 +1185,6 @@ export function getSupportSummary(
   )
 }
 
-// ---- Custom Reports -------------------------------------------------------
-
-export type WidgetKind = 'line' | 'bar' | 'area' | 'table' | 'stat'
-export type StatBand = 'elite' | 'high' | 'medium' | 'low' | 'none'
-export type ColumnType = 'text' | 'number' | 'status' | 'priority' | 'issue' | 'link' | 'icon'
-export type FilterKind = 'select' | 'multiselect'
-
-export interface ColumnDefinition {
-  key: string
-  label: string
-  type: ColumnType
-  sortable?: boolean
-}
-
-export interface CustomReportDataPoint {
-  id: string
-  x: string
-  y: number
-  series: string | null
-  dimensions: Record<string, string> | null
-  createdAt: string
-}
-
-export interface CustomReportWidget {
-  id: string
-  customReportId: string
-  kind: WidgetKind
-  title: string
-  seriesKey: string | null
-  xAxisLabel: string | null
-  yAxisLabel: string | null
-  position: number
-  columns: ColumnDefinition[] | null
-  statUnit: string | null
-  statSubtitle: string | null
-  statBand: StatBand | null
-  createdAt: string
-  dataPoints: CustomReportDataPoint[]
-}
-
-export interface CustomReportFilter {
-  id: string
-  customReportId: string
-  key: string
-  label: string
-  kind: FilterKind
-  defaultValue: string | string[] | null
-  position: number
-}
-
-export interface CustomReport {
-  id: string
-  slug: string
-  title: string
-  description: string | null
-  layout: import('./report-layout').ReportLayout | null
-  createdAt: string
-  updatedAt: string
-  widgets: CustomReportWidget[]
-  filters: CustomReportFilter[]
-  jiraBaseUrl: string
-}
-
-export interface CustomReportSummary {
-  id: string
-  slug: string
-  title: string
-  description: string | null
-  createdAt: string
-  updatedAt: string
-}
-
-export interface CreateCustomReportBody {
-  slug: string
-  title: string
-  description?: string
-  layout?: import('./report-layout').ReportLayout
-}
-
-export interface CreateWidgetBody {
-  kind: WidgetKind
-  title: string
-  seriesKey?: string
-  xAxisLabel?: string
-  yAxisLabel?: string
-  position?: number
-  columns?: ColumnDefinition[]
-  statUnit?: string
-  statSubtitle?: string
-  statBand?: StatBand
-}
-
-export interface AppendDataPointsBody {
-  points: Array<{
-    x: string
-    y: number
-    series?: string
-    dimensions?: Record<string, string>
-  }>
-}
-
-export interface CreateFilterBody {
-  key: string
-  label: string
-  kind: FilterKind
-  defaultValue?: string | string[]
-  position?: number
-}
-
-export function listCustomReports(): Promise<CustomReportSummary[]> {
-  return apiFetch('/api/custom-reports')
-}
-
-export function getCustomReport(slug: string): Promise<CustomReport> {
-  return apiFetch(`/api/custom-reports/${encodeURIComponent(slug)}`)
-}
-
-export function createCustomReport(body: CreateCustomReportBody): Promise<CustomReport> {
-  return apiFetch('/api/custom-reports', { method: 'POST', body: JSON.stringify(body) })
-}
-
-export function updateCustomReport(
-  slug: string,
-  body: Partial<Pick<CreateCustomReportBody, 'title' | 'description' | 'layout'>>,
-): Promise<CustomReport> {
-  return apiFetch(`/api/custom-reports/${encodeURIComponent(slug)}`, {
-    method: 'PATCH',
-    body: JSON.stringify(body),
-  })
-}
-
-export function deleteCustomReport(slug: string): Promise<void> {
-  return apiFetch(`/api/custom-reports/${encodeURIComponent(slug)}`, { method: 'DELETE' })
-}
-
-export function addCustomReportWidget(slug: string, body: CreateWidgetBody): Promise<CustomReportWidget> {
-  return apiFetch(`/api/custom-reports/${encodeURIComponent(slug)}/widgets`, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  })
-}
-
-export function appendCustomReportData(
-  slug: string,
-  widgetId: string,
-  body: AppendDataPointsBody,
-): Promise<{ appended: number }> {
-  return apiFetch(
-    `/api/custom-reports/${encodeURIComponent(slug)}/widgets/${encodeURIComponent(widgetId)}/data-points`,
-    { method: 'POST', body: JSON.stringify(body) },
-  )
-}
-
-export function replaceCustomReportData(
-  slug: string,
-  widgetId: string,
-  body: AppendDataPointsBody,
-): Promise<{ replaced: number }> {
-  return apiFetch(
-    `/api/custom-reports/${encodeURIComponent(slug)}/widgets/${encodeURIComponent(widgetId)}/data-points`,
-    { method: 'PUT', body: JSON.stringify(body) },
-  )
-}
-
 // ---------------------------------------------------------------------------
 // All Items — bespoke MyPass weekly cross-board report (feature 0012)
 // NOTE: Not for upstreaming. Isolated to this project.
@@ -1524,4 +1360,37 @@ export function updateUserRole(userId: string, role: 'user' | 'admin'): Promise<
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ role }),
   })
+}
+
+// ---- API keys (proposal 0075) --------------------------------------------
+
+export interface ApiKeyMetadata {
+  id: string
+  name: string
+  lastUsedAt: string | null
+  createdAt: string
+}
+
+export interface CreatedApiKey {
+  id: string
+  name: string
+  /** The raw key — returned once at creation, shown to the user, never retrievable again. */
+  rawKey: string
+  createdAt: string
+}
+
+export function getApiKeys(): Promise<ApiKeyMetadata[]> {
+  return apiFetch<ApiKeyMetadata[]>('/api/keys')
+}
+
+export function createApiKey(name: string): Promise<CreatedApiKey> {
+  return apiFetch<CreatedApiKey>('/api/keys', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+}
+
+export function revokeApiKey(id: string): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(`/api/keys/${id}`, { method: 'DELETE' })
 }

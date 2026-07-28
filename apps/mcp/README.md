@@ -22,7 +22,7 @@ The server reads two environment variables:
 | Variable | Required | Description |
 |---|---|---|
 | `API_BASE_URL` | **Yes** | Base URL of the Fragile API, e.g. `https://api.your-fragile-domain.com` |
-| `API_KEY` | No | API key for authentication if re-enabled. Leave unset for unauthenticated deployments. |
+| `API_KEY` | **Yes** | Your personal Fragile API key. Generate one in the app under **API Keys**. Sent as `Authorization: Bearer <key>`. The API requires authentication — an unset or invalid key returns 401. |
 
 ## Claude Desktop setup
 
@@ -37,7 +37,7 @@ Add the following to `~/Library/Application Support/Claude/claude_desktop_config
       "args": ["-y", "@fragile.app/mcp"],
       "env": {
         "API_BASE_URL": "https://api.your-fragile-domain.com",
-        "API_KEY": "optional-api-key"
+        "API_KEY": "frg_your_generated_key"
       }
     }
   }
@@ -45,6 +45,10 @@ Add the following to `~/Library/Application Support/Claude/claude_desktop_config
 ```
 
 Restart Claude Desktop. The Fragile tools will appear in the tool picker.
+
+> **Generating a key:** log in to the Fragile web app, open **API Keys** from the sidebar,
+> click **Generate key**, and copy it immediately — it is shown only once. The key carries
+> your access level and can be revoked at any time from the same page.
 
 ## Cursor setup
 
@@ -84,40 +88,6 @@ Add the following to `.cursor/mcp.json` in your home directory or project root:
 | `get_sync_status` | Last sync time per board |
 | `get_hygiene_gaps` | Issues missing epic links or story points |
 | `get_unplanned_done` | Issues completed without being planned |
-
-### Custom report management tools
-
-| Tool | Description |
-|---|---|
-| `list_custom_reports` | List all custom reports (id, slug, title, timestamps) |
-| `get_custom_report` | Get a report by slug, including widgets, data points, and filters |
-| `create_custom_report` | Create a new custom report with optional grid layout configuration |
-| `update_custom_report` | Update title, description, or layout of an existing report |
-| `delete_custom_report` | Delete a report and all its widgets, data points, and filters |
-| `add_custom_report_widget` | Add a widget (line, bar, area, table, stat) to a report |
-| `update_custom_report_widget` | Update an existing widget |
-| `delete_custom_report_widget` | Delete a widget and its data points |
-| `append_custom_report_data` | Append data points to a widget (additive, max 1000/call) |
-| `replace_custom_report_data` | Replace all data points for a widget |
-| `clear_custom_report_data` | Delete all data points without removing the widget |
-| `add_custom_report_filter` | Add a filter definition (select or multiselect) to a report |
-| `delete_custom_report_filter` | Remove a filter definition from a report |
-
-### Layout configuration
-
-The `create_custom_report` and `update_custom_report` tools accept an optional `layout` object:
-
-```json
-{
-  "defaultColumns": 3,
-  "widgets": {
-    "<widget-uuid>": { "colSpan": 2 }
-  }
-}
-```
-
-- `defaultColumns` (1–6): number of grid columns. Defaults to 3.
-- `widgets`: per-widget overrides keyed by widget UUID. `colSpan` (1–6) controls how many columns the widget occupies. Table widgets default to full-width (`colSpan = defaultColumns`) unless overridden.
 
 ## Available resources
 
@@ -185,9 +155,8 @@ Fragile API  (NestJS REST API, port 3001)
 PostgreSQL 16  (data pre-cached by scheduled Jira sync)
 ```
 
-The MCP server is **read-only for metrics** — metrics tools make only `GET` requests.
-Custom report management tools use `GET`, `POST`, `PATCH`, `PUT`, and `DELETE`.
-No Jira API calls are made from the MCP server.
+The MCP server is **entirely read-only** — every tool makes only `GET` requests. It cannot
+create, update, or delete anything in Fragile or Jira.
 
 ## License
 

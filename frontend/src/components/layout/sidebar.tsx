@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart3, Target, Map, Settings, Timer, AlertCircle, Sun, Moon, Headphones, FileBarChart2, Activity, LogOut, Users } from 'lucide-react'
+import { BarChart3, Target, Map, Settings, Timer, AlertCircle, Sun, Moon, Headphones, Activity, LogOut, Users, KeyRound } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useDarkMode } from '@/hooks/use-dark-mode'
 import { useAuth } from '@/hooks/use-auth'
@@ -22,7 +22,7 @@ const MAIN_NAV_ITEMS: NavItem[] = [
   { label: 'Planning', href: '/planning', icon: <Target className="h-5 w-5" /> },
   { label: 'Roadmap', href: '/roadmap', icon: <Map className="h-5 w-5" /> },
   { label: 'Gaps', href: '/gaps', icon: <AlertCircle className="h-5 w-5" /> },
-  { label: 'Reports', href: '/reports', icon: <FileBarChart2 className="h-5 w-5" /> },
+  { label: 'API Keys', href: '/api-keys', icon: <KeyRound className="h-5 w-5" /> },
 ]
 
 const SETTINGS_ITEM: NavItem = {
