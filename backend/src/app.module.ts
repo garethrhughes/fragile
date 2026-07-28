@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -19,6 +20,9 @@ import { SprintReportModule } from './sprint-report/sprint-report.module.js';
 import { SupportModule } from './support/support.module.js';
 import { CustomReportsModule } from './custom-reports/custom-reports.module.js';
 import { AllItemsModule } from './all-items/all-items.module.js';
+import { AuthModule } from './auth/auth.module.js';
+import { UsersModule } from './users/users.module.js';
+import { AuthenticatedGuard } from './auth/guards/authenticated.guard.js';
 
 // YamlConfigModule is intentionally NOT imported here directly.
 // AppConfigModule already imports and re-exports YamlConfigModule.
@@ -62,6 +66,14 @@ import { AllItemsModule } from './all-items/all-items.module.js';
     SupportModule,
     CustomReportsModule,
     AllItemsModule,
+    AuthModule,
+    UsersModule,
+  ],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: AuthenticatedGuard,
+    },
   ],
 })
 export class AppModule {}

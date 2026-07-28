@@ -19,3 +19,4 @@ export type { WidgetKind, StatBand, ColumnType, ColumnDefinition } from './custo
 export { CustomReportDataPoint } from './custom-report-data-point.entity.js';
 export { CustomReportFilter } from './custom-report-filter.entity.js';
 export type { FilterKind } from './custom-report-filter.entity.js';
+export { User } from './user.entity.js';

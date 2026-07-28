@@ -327,9 +327,10 @@ function AllItemsPageInner() {
   const searchParams = useSearchParams()
   const replaceParams = useReplaceParams()
 
-  const thisWeek = useMemo(() => currentIsoWeek(), [])
+  /** Last completed (non-current) week — the default view. */
+  const lastCompletedWeek = useMemo(() => prevWeek(currentIsoWeek()), [])
 
-  const weekParam = searchParams.get('week') ?? thisWeek
+  const weekParam = searchParams.get('week') ?? lastCompletedWeek
   const filterParam = searchParams.get('filter') ?? ''
   const activeFilters = useMemo<AllItemsFilter[]>(
     () => filterParam.split('|').filter((f): f is AllItemsFilter =>
@@ -344,7 +345,7 @@ function AllItemsPageInner() {
 
   useEffect(() => {
     if (!searchParams.get('week')) {
-      replaceParams({ week: thisWeek })
+      replaceParams({ week: lastCompletedWeek })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -381,7 +382,7 @@ function AllItemsPageInner() {
     [activeFilters, replaceParams],
   )
 
-  const isCurrentWeek = weekParam === thisWeek
+  const isLatestWeek = weekParam === lastCompletedWeek
 
   return (
     <div className="space-y-6">
@@ -411,19 +412,19 @@ function AllItemsPageInner() {
           <button
             type="button"
             onClick={() => replaceParams({ week: nextWeek(weekParam) })}
-            disabled={isCurrentWeek}
+            disabled={isLatestWeek}
             className="rounded border border-border px-2 py-1 text-sm hover:bg-interactive-hover-bg disabled:opacity-40"
             aria-label="Next week"
           >
             →
           </button>
-          {!isCurrentWeek && (
+          {!isLatestWeek && (
             <button
               type="button"
-              onClick={() => replaceParams({ week: currentIsoWeek() })}
+              onClick={() => replaceParams({ week: lastCompletedWeek })}
               className="ml-1 rounded border border-border px-2 py-1 text-xs text-muted hover:bg-interactive-hover-bg"
             >
-              Current week
+              Latest
             </button>
           )}
         </div>
@@ -488,9 +489,8 @@ function AllItemsPageInner() {
       {/* Ready */}
       {pageState.status === 'ready' && (
         <>
-          {/* Health Check — completed weeks only (feature 0014, proposal 0071).
-              Rendered above the Pulse report. Hidden on the current week. */}
-          {!isCurrentWeek && pageState.data.healthCheck && (
+          {/* Health Check — always visible (only completed weeks are viewable) */}
+          {pageState.data.healthCheck && (
             <HealthCheckPanel report={pageState.data.healthCheck} />
           )}
 
