@@ -30,9 +30,26 @@ export class AuthService {
   ) {
     this.googleClientId = this.configService.get<string>('GOOGLE_CLIENT_ID', '');
     this.allowedDomain = this.configService.get<string>('GOOGLE_ALLOWED_DOMAIN', '');
-    this.jwtSecret = this.configService.get<string>('SESSION_SECRET', 'change-me');
+    this.jwtSecret = this.configService.get<string>('SESSION_SECRET', '');
     this.cookieMaxAgeMs = this.configService.get<number>('SESSION_MAX_AGE_MS', 604800000);
     this.googleClient = new OAuth2Client(this.googleClientId);
+
+    // Fail closed: these are the only access controls now that the WAF is
+    // removed (ADR 0068). A missing domain would let ANY Google account in;
+    // a missing/default secret would let anyone forge an admin JWT.
+    if (!this.allowedDomain) {
+      throw new Error(
+        'GOOGLE_ALLOWED_DOMAIN must be set — it is the sole domain restriction for login. Refusing to start.',
+      );
+    }
+    if (!this.jwtSecret || this.jwtSecret === 'change-me') {
+      throw new Error(
+        'SESSION_SECRET must be set to a strong, non-default value (used to sign session JWTs). Refusing to start.',
+      );
+    }
+    if (!this.googleClientId) {
+      throw new Error('GOOGLE_CLIENT_ID must be set. Refusing to start.');
+    }
   }
 
   /**
@@ -51,9 +68,10 @@ export class AuthService {
     const { email, name, picture, hd } = payload;
     if (!email) throw new Error('Token missing email');
 
-    // Domain restriction
-    if (this.allowedDomain && hd !== this.allowedDomain) {
-      throw new Error(`Domain '${hd}' is not allowed. Expected '${this.allowedDomain}'.`);
+    // Domain restriction — fail closed. allowedDomain is guaranteed non-empty
+    // by the constructor, so a token with no/other hd is always rejected.
+    if (hd !== this.allowedDomain) {
+      throw new Error(`Domain '${hd ?? '(none)'}' is not allowed. Expected '${this.allowedDomain}'.`);
     }
 
     const user = await this.validateAndUpsertUser({

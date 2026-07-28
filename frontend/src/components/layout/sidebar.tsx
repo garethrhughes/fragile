@@ -152,6 +152,7 @@ export function Sidebar() {
               <img
                 src={user.avatarUrl}
                 alt={user.name}
+                referrerPolicy="no-referrer"
                 className="h-8 w-8 rounded-full"
               />
             ) : (

@@ -14,47 +14,66 @@ Google Workspace SSO was chosen because the team already authenticates via it.
 
 ## Options Considered
 
-### Option A — Google Workspace SSO + server-side sessions + role-based guards
-- **Summary:** Passport.js + express-session + Postgres session store; `User` entity with admin/user roles; global auth guard; WAF removed.
-- **Pros:** Simple, secure, no JWT complexity, role-based admin control, audit via lastLoginAt, domain-restricted.
-- **Cons:** Session is server-stateful (DB dependent); data classification changes (email/name = internal PII).
+### Option A — Google Workspace SSO + server-side sessions (Passport)
+- **Summary:** Passport.js + `passport-google-oauth20` + `express-session` + `connect-pg-simple` Postgres session store.
+- **Pros:** Familiar NestJS pattern; server-side session revocation possible.
+- **Cons:** Heavy (7 deps); `express-session` proved fragile in practice (crash on `session.cookie` for unauthenticated requests); a server-side session store is unnecessary for a small internal tool.
 
-### Option B — JWT stateless auth
-- **Cons:** Refresh rotation complexity; token revocation non-trivial; unnecessary for server-rendered app.
+### Option B — Google Workspace SSO + stateless JWT cookie **(chosen)**
+- **Summary:** `@react-oauth/google` (Google Identity Services) obtains an ID token client-side; `google-auth-library` verifies it server-side; a self-contained JWT is signed with `jsonwebtoken` and stored in an `httpOnly` cookie. No session store.
+- **Pros:** Minimal (3 backend deps); no session table; no per-request DB lookup; verifies against client ID only (no client secret); simpler and more robust than express-session.
+- **Cons:** Stateless — a role change takes effect on next login rather than immediately (acceptable per the feature's out-of-scope note); token revocation would require a denylist if ever needed.
 
 ### Option C — Keep WAF + add auth (defense in depth)
 - **Cons:** VPN requirement persists; explicitly rejected by stakeholder.
 
 ## Decision
 
-We will authenticate users via Google Workspace SSO (Passport.js + passport-google-oauth20),
-manage sessions server-side (express-session + connect-pg-simple in Postgres), enforce a
-global `AuthenticatedGuard` on all API endpoints (with `@Public()` opt-out for `/health`,
-`/api-docs`, `/api/auth/*`), gate administrative operations (Settings, sync, user management)
-behind an `AdminGuard`, and **remove the CloudFront WAF IP-allowlist** — authentication
+We authenticate users via Google Workspace SSO using the **Google Identity Services
+ID-token flow** (`@react-oauth/google` frontend → `google-auth-library` backend
+verification). A self-contained **JWT is signed and stored in an `httpOnly`, `secure`,
+`sameSite=lax` cookie** (`jsonwebtoken`); there is **no server-side session store**. A
+global `AuthenticatedGuard` verifies the JWT cookie on every request (with `@Public()`
+opt-out for `/health`, `/api-docs`, `/api/auth/*`); an `AdminGuard` gates administrative
+operations (Settings, sync, user management). Login is restricted to `GOOGLE_ALLOWED_DOMAIN`
+via the token's `hd` claim, enforced **fail-closed** (the backend refuses to start if the
+domain, `SESSION_SECRET`, or `GOOGLE_CLIENT_ID` are unset). The first user to log in is
+auto-promoted to admin. The **CloudFront WAF IP-allowlist is removed** — authentication
 replaces it as the sole access control layer.
 
 This **supersedes ADR 0020** (no application-level authentication) and **ADR 0034**
 (WAF IP-allowlist as primary access control).
 
+> **Note:** Option A (Passport + express-session) was initially selected and is what the
+> accepted proposal 0074 described. It was abandoned mid-implementation for the reasons in
+> its Cons above and replaced with Option B, which the proposal had listed as an
+> alternative. This ADR records the design that actually shipped.
+
 ## Rationale
 
 The WAF gate requires VPN, prevents flexible remote access, and provides no per-user
-identity or authorization. Google Workspace SSO leverages existing identity, the `hd` claim
-naturally restricts to the org domain, and server-side sessions avoid the complexity of JWT
-management for a server-rendered internal tool. The first-login auto-admin pattern
-bootstraps the admin role without manual DB intervention.
+identity or authorization. Google Workspace SSO leverages existing identity, and the `hd`
+claim naturally restricts to the org domain. A stateless JWT cookie (Option B) was chosen
+over server-side sessions (Option A) because `express-session` proved fragile and a session
+store adds operational weight with no benefit for this tool's needs — the JWT is verified
+per request without a DB round-trip. The first-login auto-admin pattern bootstraps the admin
+role without manual DB intervention. Because the WAF is removed in the same change, the
+domain check and secret are enforced fail-closed at startup so a misconfiguration can never
+silently open the app.
 
 ## Consequences
 
 - **Positive:** Remote access without VPN; per-user accountability (lastLoginAt); admin vs user
-  permissions; audit trail foundation; no more IP-allowlist maintenance.
+  permissions; no session table or store to operate; no per-request DB lookup for auth;
+  minimal dependency footprint (3 backend + 1 frontend).
 - **Negative / trade-offs:** Data classification change (User entity = internal PII); app
-  publicly reachable (auth is sole gate); session dependency on Postgres (same as existing
-  app dependency); 7 new runtime dependencies.
-- **Risks:** Auth bug exposes the app publicly (mitigated by domain restriction + rollback plan
-  to re-apply WAF from git history); Google OAuth outage blocks new logins (mitigated by
-  7-day session max-age for existing sessions).
+  publicly reachable (auth is the sole gate); stateless tokens mean a role change or "logout
+  everywhere" is not instantaneous (takes effect at next login / token expiry).
+- **Risks:** Auth bug exposes the app publicly (mitigated by fail-closed domain + secret
+  validation at startup, and a rollback plan to re-apply the WAF from git history); a leaked
+  `SESSION_SECRET` would allow token forgery (mitigated by Secrets Manager storage and the
+  non-default-value startup check); Google outage blocks new logins (existing cookies valid
+  until expiry).
 
 ## Related Decisions
 

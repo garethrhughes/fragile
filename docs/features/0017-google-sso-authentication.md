@@ -30,19 +30,22 @@ to set up. The VPN/WAF requirement becomes unnecessary once auth is in place.
 
 **In scope**
 
-- Google OAuth2 login via Passport.js (`@nestjs/passport` + `passport-google-oauth20`)
-- Server-side sessions via `express-session` + `connect-pg-simple` (session stored in Postgres)
-- Domain restriction: only `@mypassglobal.com` (configurable via `GOOGLE_ALLOWED_DOMAIN`)
+- Google OAuth2 login via the Google Identity Services ID-token flow
+  (`@react-oauth/google` on the frontend, `google-auth-library` on the backend)
+- Stateless sessions via a signed JWT stored in an `httpOnly` cookie (`jsonwebtoken`).
+  No server-side session store.
+- Domain restriction: only `@mypassglobal.com` (configurable via `GOOGLE_ALLOWED_DOMAIN`) —
+  enforced fail-closed (login refused if the domain is unset).
 - New `User` entity: id (uuid), email, name, avatarUrl, role (`user`|`admin`), lastLoginAt, createdAt
-- Auth guard on all API endpoints; unguarded: `/health`, `/api-docs`, `/api/auth/*`
+- Global auth guard reading the JWT cookie on all API endpoints; unguarded: `/health`, `/api-docs`, `/api/auth/*`
 - Admin guard on: `PUT /api/boards/:id/config`, `POST /api/sync`, user-management endpoints
 - Auto-admin: first user to log in becomes admin if no admin exists
-- Settings page: user list (email, name, role, last login); admin can change roles
-- Frontend: Next.js middleware protects all routes (redirects to `/login` if no session cookie); Settings nav item hidden for non-admins
-- Login page with "Sign in with Google" button
-- Logout endpoint + button in UI header
+- User list on a dedicated admin-only `/users` page (email, name, role, last login); admin can change roles
+- Frontend: Next.js `proxy.ts` (formerly middleware) redirects unauthenticated page loads to `/login` in production; the `useAuth` hook redirects on a 401 from `/api/auth/me`. Settings + Users nav items hidden for non-admins.
+- Login page with the Google Identity Services "Sign in with Google" button
+- Logout endpoint (clears the cookie) + sign-out button in the sidebar
 - Remove CloudFront WAF IP-allowlist from Terraform (auth replaces it as access control)
-- New secrets in AWS Secrets Manager: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
+- New secrets in AWS Secrets Manager: `GOOGLE_CLIENT_ID`, `SESSION_SECRET`
 - Supersede ADR 0020
 
 **Out of scope**
@@ -60,8 +63,8 @@ to set up. The VPN/WAF requirement becomes unnecessary once auth is in place.
 - Given a user outside the allowed domain, when they attempt SSO, they are denied access with an appropriate error.
 - Given the first user to log in and no admin exists in the DB, that user is automatically set to role `admin`.
 - Given a subsequent user logging in for the first time, they are created with role `user`.
-- Given an admin on the Settings page, they see the full settings section (board config, user list, role management) and can trigger a sync.
-- Given a non-admin user, the Settings nav item is hidden; direct navigation to `/settings` is blocked; `PUT /api/boards/:id/config`, `POST /api/sync`, and user-management endpoints return 403.
+- Given an admin, they see the Settings section (board config + sync trigger) and a dedicated `/users` page for role management; both nav items are admin-only.
+- Given a non-admin user, the Settings and Users nav items are hidden; direct navigation to `/settings` or `/users` redirects to `/`; `PUT /api/boards/:id/config`, `POST /api/sync`, and user-management endpoints return 403.
 - The CloudFront WAF IP-allowlist is removed from Terraform; the app is accessible via CloudFront without VPN once authenticated.
 - All API endpoints (except `/health`, `/api-docs`, and `/api/auth/*`) require a valid session; unauthenticated requests receive 401.
 - ADR 0020 ("no application-level authentication") is superseded.
@@ -78,9 +81,22 @@ None — resolved at intake:
 
 ## Notes
 
+- **Implementation pivot:** the accepted proposal (0074) originally specified Passport.js +
+  `express-session` + `connect-pg-simple`. During implementation this stack proved fragile
+  (an `express-session` crash on `session.cookie` for unauthenticated requests) and
+  over-engineered for the requirement. It was replaced with the simpler stateless
+  **JWT-cookie + `google-auth-library`** approach — the "Alternative A" originally listed in
+  the proposal. Proposal 0074 and ADR 0068 have been updated to reflect the shipped design.
 - **Data classification change:** The new `User` entity stores email and name (internal PII from Google Workspace). This changes the project's data classification from "no PII" to "internal PII (employee identity)."
-- **New dependencies required:** `@nestjs/passport`, `passport`, `passport-google-oauth20`, `express-session`, `connect-pg-simple`, `@types/passport-google-oauth20`, `@types/express-session`.
-- **New secrets:** `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` stored in AWS Secrets Manager, accessed via `ConfigService` (never hardcoded).
-- **Supersedes ADR 0020** — this must be the first time since the project's inception that auth is reinstated at the application layer; the ADR should clearly document why the situation changed.
-- **Session table:** `connect-pg-simple` creates its own `session` table; the migration should set this up or rely on the library's auto-create.
+- **Dependencies (shipped):** `google-auth-library`, `jsonwebtoken`, `cookie-parser`
+  (backend); `@react-oauth/google` (frontend). `@types/jsonwebtoken` + `@types/cookie-parser`
+  as dev deps.
+- **New secrets:** `GOOGLE_CLIENT_ID` and `SESSION_SECRET` stored in AWS Secrets Manager,
+  accessed via `ConfigService` (never hardcoded). No `GOOGLE_CLIENT_SECRET` is needed — the
+  ID-token flow verifies against the client ID only.
+- **Fail-closed:** the backend refuses to start if `GOOGLE_ALLOWED_DOMAIN`, `SESSION_SECRET`,
+  or `GOOGLE_CLIENT_ID` are unset (or `SESSION_SECRET` is the default placeholder). Since the
+  WAF is removed in this PR, a misconfigured env var must never silently open the app.
+- **Supersedes ADR 0020** — auth reinstated at the application layer.
+- **No session table** — the JWT is self-contained; there is no server-side session store.
 - **Infra blast radius:** removing the WAF IP-allowlist means the app is publicly accessible (via CloudFront) to anyone who can reach the URL. Auth is now the sole access gate — this is intentional but must be flagged in the infosec review.

@@ -5,6 +5,24 @@
 **Author:** Architect Agent
 **Related ADRs:** Supersedes ADR 0020 (no application-level auth), supersedes ADR 0034 (WAF IP-allowlist as sole access control); will produce new ADR (proposed 0068).
 
+> **Implementation note (updated post-acceptance):** This proposal was accepted with a
+> Passport.js + `express-session` + `connect-pg-simple` design. During implementation that
+> stack proved fragile (an `express-session` crash on `session.cookie` for unauthenticated
+> requests) and heavier than the requirement warranted. It was replaced with the stateless
+> **JWT-cookie + `google-auth-library`** approach described as "Alternative A" below.
+> The shipped design is:
+> - **Frontend:** `@react-oauth/google` (Google Identity Services) obtains an ID token client-side.
+> - **Backend:** `google-auth-library` verifies the ID token; `jsonwebtoken` signs a self-contained
+>   JWT stored in an `httpOnly` cookie. No server-side session store, no `session` table.
+> - **Guard:** a global guard verifies the JWT cookie per request (no DB lookup).
+> - **Fail-closed:** the backend refuses to start if `GOOGLE_ALLOWED_DOMAIN`, `SESSION_SECRET`,
+>   or `GOOGLE_CLIENT_ID` are unset.
+> - **Secrets:** `GOOGLE_CLIENT_ID` + `SESSION_SECRET` only — no `GOOGLE_CLIENT_SECRET` (the
+>   ID-token flow does not use a client secret).
+>
+> The sections below retain the original design for historical context; where they conflict
+> with this note, this note is authoritative. ADR 0068 records the final decision.
+
 ## Problem Statement
 
 The application has no user-level authentication (ADR 0020). Access is gated exclusively by
