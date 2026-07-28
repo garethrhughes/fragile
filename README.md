@@ -10,9 +10,9 @@ against the cached data, keeping the UI fast and Jira API usage low. Every aspec
 rules — done statuses, failure issue types, incident definitions, roadmap date field IDs — is
 configurable per board through the Settings UI, with no hardcoded assumptions in the codebase.
 
-Fragile is an intentionally simple, single-user internal tool. There is no login screen and no
-user management. It is designed to run on a private network or localhost and to be trusted by the
-team that operates it.
+Access is controlled via Google Workspace SSO — any user in the configured Google Workspace domain
+can log in. The first user to log in becomes an admin; subsequent users are read-only by default.
+Admin users can manage board configuration, trigger syncs, and promote other users.
 
 ---
 
@@ -164,7 +164,6 @@ Restart the client. The Fragile tools appear in the tool picker immediately.
 | Variable | Required | Description |
 |---|---|---|
 | `API_BASE_URL` | **Yes** | Base URL of the Fragile API, e.g. `https://api.your-fragile-domain.com` or `http://localhost:3001` for local use |
-| `API_KEY` | No | Bearer token for authentication if re-enabled. Leave unset for private-network deployments. |
 
 ### Available tools (16)
 
@@ -284,6 +283,13 @@ DB_DATABASE=fragile
 PORT=3001
 FRONTEND_URL=http://localhost:3000
 TIMEZONE=UTC
+
+# Google OAuth (see Google OAuth Setup section)
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+GOOGLE_CALLBACK_URL=http://localhost:3001/api/auth/google/callback
+GOOGLE_ALLOWED_DOMAIN=yourorg.com
+SESSION_SECRET=run-openssl-rand-hex-64-to-generate
 ```
 
 > **Note:** `JIRA_BOARD_IDS` has been removed from the `.env` file. Boards are now registered
@@ -452,7 +458,9 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ### 8. Trigger the first sync
 
-Navigate to **Settings** in the sidebar and click **Sync now**. The initial sync may take a
+Open [http://localhost:3000](http://localhost:3000) in your browser. You will be redirected to
+Google login. The **first person to log in becomes the admin** automatically. After logging in,
+navigate to **Settings** in the sidebar and click **Sync now**. The initial sync may take a
 minute or two depending on the number of issues and boards. Subsequent syncs are incremental.
 
 ---
@@ -497,6 +505,12 @@ minute or two depending on the number of issues and boards. Subsequent syncs are
 | `TIMEZONE` | No | `UTC` | IANA timezone string used for quarter/week boundary calculations and working-time day boundaries, e.g. `America/New_York` |
 | `BOARD_CONFIG_FILE` | No | `config/boards.yaml` | Override path to the boards YAML file (absolute or relative to `backend/`) |
 | `ROADMAP_CONFIG_FILE` | No | `config/roadmap.yaml` | Override path to the roadmap YAML file (absolute or relative to `backend/`) |
+| `GOOGLE_CLIENT_ID` | Yes | — | Google OAuth2 client ID (see [Google OAuth Setup](#google-oauth-setup)) |
+| `GOOGLE_CLIENT_SECRET` | Yes | — | Google OAuth2 client secret |
+| `GOOGLE_CALLBACK_URL` | No | `http://localhost:3001/api/auth/google/callback` | OAuth2 redirect URI (must match GCP console exactly) |
+| `GOOGLE_ALLOWED_DOMAIN` | No | `mypassglobal.com` | Google Workspace domain to restrict login |
+| `SESSION_SECRET` | Yes | — | Random secret for signing session cookies (min 64 hex chars) |
+| `SESSION_MAX_AGE_MS` | No | `604800000` (7 days) | Session maximum age in milliseconds |
 
 > **Removed:** `JIRA_BOARD_IDS` is no longer used. Boards are registered through the Settings UI
 > or via `backend/config/boards.yaml`.
@@ -577,6 +591,122 @@ If your Jira instance uses different delivery link type names (e.g. `is implemen
 `implements`), update `jpdDeliveryLinkInward` and `jpdDeliveryLinkOutward` in the `jira:` stanza
 of `backend/config/boards.yaml` (see [`jira:` stanza](#backendconfigboardsyaml--jira-stanza-optional-top-level))
 or set the values through the Settings UI.
+
+---
+
+## Google OAuth Setup
+
+Fragile uses Google Workspace SSO for authentication. Only users in the configured Google
+Workspace domain can access the application. Follow these steps to create the OAuth2 credentials.
+
+### 1. Create a Google Cloud project (or use an existing one)
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
+2. Select or create a project (e.g. `fragile-internal`).
+3. Ensure the project is associated with your Google Workspace organisation.
+
+### 2. Configure the OAuth consent screen
+
+1. Navigate to **APIs & Services** > **OAuth consent screen**.
+2. Select **Internal** as the user type (this restricts access to users within your Google
+   Workspace domain — no external users can authenticate).
+3. Fill in the required fields:
+   - **App name:** `Fragile` (or your preferred display name)
+   - **User support email:** your team's email
+   - **Authorised domain:** your domain (e.g. `mypassglobal.com`)
+4. Under **Scopes**, add:
+   - `openid`
+   - `email`
+   - `profile`
+5. Save.
+
+### 3. Create OAuth2 credentials
+
+1. Navigate to **APIs & Services** > **Credentials**.
+2. Click **Create Credentials** > **OAuth client ID**.
+3. Application type: **Web application**.
+4. Name: `Fragile Backend` (or similar).
+5. Under **Authorised redirect URIs**, add:
+   - For local development: `http://localhost:3001/api/auth/google/callback`
+   - For production: `https://api.your-domain.com/api/auth/google/callback`
+6. Click **Create**.
+7. Copy the **Client ID** and **Client Secret**.
+
+### 4. Configure environment variables
+
+Add the following to `backend/.env` (local development) or populate the corresponding
+Secrets Manager values (production):
+
+```dotenv
+# Google OAuth2
+GOOGLE_CLIENT_ID=123456789-abcdef.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-your-secret-here
+GOOGLE_CALLBACK_URL=http://localhost:3001/api/auth/google/callback
+GOOGLE_ALLOWED_DOMAIN=mypassglobal.com
+
+# Session
+SESSION_SECRET=generate-a-random-64-byte-hex-string
+SESSION_MAX_AGE_MS=604800000
+```
+
+Generate a session secret:
+
+```bash
+openssl rand -hex 64
+```
+
+### 5. Production deployment (AWS)
+
+For production, the OAuth credentials and session secret are stored in AWS Secrets Manager
+and injected into the ECS task as environment variables:
+
+| Secret name | Maps to env var |
+|---|---|
+| `fragile/prod/google-client-id` | `GOOGLE_CLIENT_ID` |
+| `fragile/prod/google-client-secret` | `GOOGLE_CLIENT_SECRET` |
+| `fragile/prod/session-secret` | `SESSION_SECRET` |
+
+Populate these via the AWS Console or CLI:
+
+```bash
+aws secretsmanager put-secret-value \
+  --secret-id fragile/prod/google-client-id \
+  --secret-string "YOUR_CLIENT_ID"
+
+aws secretsmanager put-secret-value \
+  --secret-id fragile/prod/google-client-secret \
+  --secret-string "YOUR_CLIENT_SECRET"
+
+aws secretsmanager put-secret-value \
+  --secret-id fragile/prod/session-secret \
+  --secret-string "$(openssl rand -hex 64)"
+```
+
+Set `GOOGLE_CALLBACK_URL` and `GOOGLE_ALLOWED_DOMAIN` as plain environment variables in
+the ECS task definition (they are not secrets).
+
+### 6. First login (admin bootstrap)
+
+After deployment, the first person to log in is automatically promoted to **admin**. This
+bootstraps the admin role without requiring manual database intervention. Subsequent users
+receive the `user` role (read-only access). Admins can promote other users via
+**Settings** > **Users**.
+
+### Roles
+
+| Role | Access |
+|---|---|
+| `user` | All dashboard views (read-only) |
+| `admin` | All views + Settings (board config, user management) + Sync trigger |
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| "Access denied" after Google login | Email domain doesn't match `GOOGLE_ALLOWED_DOMAIN` | Check the user's email domain matches the configured value |
+| Redirect loops on login | `GOOGLE_CALLBACK_URL` doesn't match the registered redirect URI in GCP | Ensure the URI matches exactly (protocol, host, port, path) |
+| "Internal" consent screen not available | GCP project not associated with a Google Workspace org | Link the project to your Workspace admin |
+| Session lost after deploy | `SESSION_SECRET` changed between deploys | Use a stable secret; rotate only intentionally |
 
 ---
 
