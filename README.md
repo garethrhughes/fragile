@@ -134,7 +134,8 @@ maintained by the sync service.
       "command": "npx",
       "args": ["-y", "@fragile.app/mcp"],
       "env": {
-        "API_BASE_URL": "https://api.your-fragile-domain.com"
+        "API_BASE_URL": "https://api.your-fragile-domain.com",
+        "API_KEY": "frg_your_generated_key"
       }
     }
   }
@@ -150,7 +151,8 @@ maintained by the sync service.
       "command": "npx",
       "args": ["-y", "@fragile.app/mcp"],
       "env": {
-        "API_BASE_URL": "https://api.your-fragile-domain.com"
+        "API_BASE_URL": "https://api.your-fragile-domain.com",
+        "API_KEY": "frg_your_generated_key"
       }
     }
   }
@@ -164,6 +166,7 @@ Restart the client. The Fragile tools appear in the tool picker immediately.
 | Variable | Required | Description |
 |---|---|---|
 | `API_BASE_URL` | **Yes** | Base URL of the Fragile API, e.g. `https://api.your-fragile-domain.com` or `http://localhost:3001` for local use |
+| `API_KEY` | **Yes** | A personal Fragile API key (generated in the app under **API Keys**). Sent as `Authorization: Bearer <key>`. The API requires authentication — an unset/invalid key returns 401. |
 
 ### Available tools (16)
 

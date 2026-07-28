@@ -10,7 +10,6 @@ import { registerSyncTools } from './tools/sync.js';
 import { registerSprintTools } from './tools/sprint.js';
 import { registerGapsTools } from './tools/gaps.js';
 import { registerSupportTools } from './tools/support.js';
-import { registerCustomReportsTools } from './tools/custom-reports.js';
 import { registerPulseTools } from './tools/pulse.js';
 import { registerBoardsResource } from './resources/boards.js';
 import { registerPrompts } from './prompts/index.js';
@@ -33,7 +32,6 @@ export function createServer(): McpServer {
   registerSprintTools(server);
   registerGapsTools(server);
   registerSupportTools(server);
-  registerCustomReportsTools(server);
   registerPulseTools(server);
 
   // Register resources
