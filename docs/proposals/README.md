@@ -72,3 +72,4 @@
 | [0068](0068-sync-deleted-jira-issues.md) | Sync Deleted Jira Issues: Reconcile DB Against JQL Response | Accepted | 2026-05-15 |
 | [0071](0071-engineering-health-check-panel.md) | Engineering Health Check Panel | Accepted | 2026-07-28 |
 | [0072](0072-sprint-effective-end-completedate.md) | Use Sprint Actual Close Time (completeDate) for Completion & Metric Windows | Accepted | 2026-07-28 |
+| [0073](0073-health-check-org-scores-and-roadmap-targets.md) | Health Check Org Overall Scores & Per-Team Roadmap Targets | Accepted | 2026-07-28 |

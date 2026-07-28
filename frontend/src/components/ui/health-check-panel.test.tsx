@@ -13,6 +13,7 @@ function makeReport(overrides: Partial<HealthCheckReport> = {}): HealthCheckRepo
         stabilityBand: 'healthy',
         roadmapScore: 75,
         roadmapBand: 'watch',
+        roadmapDeliveryTarget: 80,
         volume: { boardType: 'scrum', committed: 18, added: 2, completed: 8, onRoadmap: 6, support: 3 },
         trend: [
           { week: '2026-W17', stabilityScore: 80, roadmapScore: 70 },
@@ -24,6 +25,8 @@ function makeReport(overrides: Partial<HealthCheckReport> = {}): HealthCheckRepo
     ],
     stabilityDistribution: { healthy: 1, watch: 0, atRisk: 0, na: 0 },
     roadmapDistribution: { healthy: 0, watch: 1, atRisk: 0, na: 0 },
+    overallStabilityScore: 90,
+    overallRoadmapScore: 94,
     ...overrides,
   }
 }
@@ -36,7 +39,8 @@ describe('HealthCheckPanel', () => {
 
   it('shows the stability score and scrum volume context', () => {
     render(<HealthCheckPanel report={makeReport()} />)
-    expect(screen.getByText('90%')).toBeInTheDocument()
+    // 90% appears for both the board badge and the org stability card
+    expect(screen.getAllByText('90%').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('committed 18 · added 2 · completed 8')).toBeInTheDocument()
   })
 
@@ -58,6 +62,7 @@ describe('HealthCheckPanel', () => {
           stabilityBand: 'healthy',
           roadmapScore: null,
           roadmapBand: null,
+          roadmapDeliveryTarget: 80,
           volume: { boardType: 'scrum', committed: 10, added: 0, completed: 0, onRoadmap: 0, support: 0 },
           trend: [{ week: '2026-W20', stabilityScore: 100, roadmapScore: null }],
         },
@@ -85,6 +90,7 @@ describe('HealthCheckPanel', () => {
           stabilityBand: 'at-risk',
           roadmapScore: 50,
           roadmapBand: 'at-risk',
+          roadmapDeliveryTarget: 50,
           volume: { boardType: 'kanban', pulledIn: 10, completed: 6, onRoadmap: 3, support: 0 },
           trend: [{ week: '2026-W20', stabilityScore: 60, roadmapScore: 50 }],
         },
@@ -92,5 +98,26 @@ describe('HealthCheckPanel', () => {
     })
     render(<HealthCheckPanel report={report} />)
     expect(screen.getByText('pulled in 10 · completed 6')).toBeInTheDocument()
+  })
+
+  it('shows the org overall stability and roadmap scores (proposal 0073)', () => {
+    render(<HealthCheckPanel report={makeReport()} />)
+    expect(screen.getByText('Org stability')).toBeInTheDocument()
+    expect(screen.getByText('Org roadmap')).toBeInTheDocument()
+    // overallStabilityScore 90 (shared with board badge), overallRoadmapScore 94 (unique)
+    expect(screen.getAllByText('90%').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('94%')).toBeInTheDocument()
+  })
+
+  it('shows each team roadmap target (proposal 0073)', () => {
+    render(<HealthCheckPanel report={makeReport()} />)
+    expect(screen.getByText('target 80%')).toBeInTheDocument()
+  })
+
+  it('renders n/a for org roadmap when null', () => {
+    render(<HealthCheckPanel report={makeReport({ overallRoadmapScore: null })} />)
+    // Org roadmap card shows n/a
+    const orgRoadmap = screen.getByText('Org roadmap').closest('div')
+    expect(orgRoadmap?.textContent).toContain('n/a')
   })
 })

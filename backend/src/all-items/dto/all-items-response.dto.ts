@@ -195,7 +195,10 @@ export interface HealthCheckBoard {
   stabilityBand: HealthBand;
   /** null when the board completed nothing this week (roadmap alignment n/a). */
   roadmapScore: number | null;
+  /** RAG band relative to this team's roadmapDeliveryTarget (proposal 0073). */
   roadmapBand: HealthBand | null;
+  /** This team's roadmap-delivery target (%), used for banding + attainment. */
+  roadmapDeliveryTarget: number;
   volume: HealthCheckVolume;
   /** Selected week + prior 3 weeks, oldest first. */
   trend: HealthCheckTrendPoint[];
@@ -213,6 +216,14 @@ export interface HealthCheckReport {
   boards: HealthCheckBoard[];
   /** Distribution of boards across stability RAG bands. */
   stabilityDistribution: HealthBandDistribution;
-  /** Distribution of boards across roadmap-delivery RAG bands. */
+  /** Distribution of boards across roadmap-delivery RAG bands (target-relative). */
   roadmapDistribution: HealthBandDistribution;
+  /** Org overall stability: simple mean of team stability scores (100 when no boards). */
+  overallStabilityScore: number;
+  /**
+   * Org overall roadmap delivery: mean of each team's attainment vs its own
+   * target (capped at 100), excluding teams with no completions. null when
+   * every team is null (proposal 0073).
+   */
+  overallRoadmapScore: number | null;
 }

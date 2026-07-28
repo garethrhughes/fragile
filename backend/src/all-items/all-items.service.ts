@@ -25,6 +25,11 @@ import { isoWeekKeyToDates, dateToIsoWeekKey } from '../lib/iso-week.js';
 import {
   classifyHealthBand,
   buildBandDistribution,
+  classifyRoadmapBand,
+  roadmapAttainment,
+  buildDistributionFromBands,
+  mean,
+  type HealthBand,
 } from '../lib/health-check-bands.js';
 import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
 import {
@@ -53,6 +58,12 @@ import type {
 } from './dto/all-items-response.dto.js';
 
 type ActiveFilter = 'added-mid-sprint' | 'not-on-roadmap' | 'support' | 'ttb-support';
+
+/**
+ * Fallback roadmap-delivery target (%) when a board has no config row.
+ * Mirrors the BoardConfig column default (proposal 0073).
+ */
+const DEFAULT_ROADMAP_TARGET = 80;
 
 /**
  * Internal per-board result — the public AllItemsBoardResult plus the raw
@@ -272,13 +283,20 @@ export class AllItemsService {
         ? 'kanban'
         : board.boardType;
 
+      // Per-team roadmap-delivery target (proposal 0073). Default 80 when a
+      // board has no config row (should not happen, but keep it safe).
+      const roadmapDeliveryTarget =
+        configByBoardId.get(board.boardId)?.roadmapDeliveryTarget ?? DEFAULT_ROADMAP_TARGET;
+
       return {
         boardId: board.boardId,
         boardType,
         stabilityScore: board.healthScore.stabilityScore,
         stabilityBand: classifyHealthBand(board.healthScore.stabilityScore),
         roadmapScore,
-        roadmapBand: roadmapScore === null ? null : classifyHealthBand(roadmapScore),
+        roadmapBand:
+          roadmapScore === null ? null : classifyRoadmapBand(roadmapScore, roadmapDeliveryTarget),
+        roadmapDeliveryTarget,
         volume: board.volume,
         trend,
       };
@@ -287,11 +305,32 @@ export class AllItemsService {
     const stabilityDistribution = buildBandDistribution(
       boards.map((b) => b.stabilityScore),
     );
-    const roadmapDistribution = buildBandDistribution(
-      boards.map((b) => b.roadmapScore),
+    // Roadmap bands are target-relative, so aggregate the pre-computed bands
+    // rather than re-classifying against a global threshold (proposal 0073).
+    const roadmapDistribution = buildDistributionFromBands(
+      boards.map((b): HealthBand | null => b.roadmapBand),
     );
 
-    return { boards, stabilityDistribution, roadmapDistribution };
+    // Org overall scores (proposal 0073):
+    //   stability — simple mean of team stability scores (fixed 85/70 banding).
+    //   roadmap   — mean of each team's attainment vs its own target, capped at
+    //               100; teams with no completions (null roadmap) are excluded.
+    const overallStabilityScore = mean(boards.map((b) => b.stabilityScore)) ?? 100;
+    const overallRoadmapScore = mean(
+      boards.map((b) =>
+        b.roadmapScore === null
+          ? null
+          : roadmapAttainment(b.roadmapScore, b.roadmapDeliveryTarget),
+      ),
+    );
+
+    return {
+      boards,
+      stabilityDistribution,
+      roadmapDistribution,
+      overallStabilityScore,
+      overallRoadmapScore,
+    };
   }
 
   // ---------------------------------------------------------------------------

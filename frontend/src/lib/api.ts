@@ -35,6 +35,8 @@ export interface BoardConfig {
   supportLinkTypes: string[];
   triageBoardKey: string | null;
   supportEpics: string[];
+  /** Roadmap-delivery target (%) for the Health Check; default 80. */
+  roadmapDeliveryTarget: number;
 }
 
 export interface SprintAccuracy {
@@ -1448,6 +1450,8 @@ export interface HealthCheckBoard {
   stabilityBand: HealthBand
   roadmapScore: number | null
   roadmapBand: HealthBand | null
+  /** This team's roadmap-delivery target (%), used for banding + attainment. */
+  roadmapDeliveryTarget: number
   volume: HealthCheckVolume
   trend: HealthCheckTrendPoint[]
 }
@@ -1463,6 +1467,10 @@ export interface HealthCheckReport {
   boards: HealthCheckBoard[]
   stabilityDistribution: HealthBandDistribution
   roadmapDistribution: HealthBandDistribution
+  /** Org overall stability: mean of team stability scores. */
+  overallStabilityScore: number
+  /** Org overall roadmap delivery: mean attainment vs each team's target; null if all n/a. */
+  overallRoadmapScore: number | null
 }
 
 export type AllItemsFilter = 'added-mid-sprint' | 'not-on-roadmap' | 'support' | 'ttb-support'
