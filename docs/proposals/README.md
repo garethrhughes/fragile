@@ -70,4 +70,5 @@
 | [0066](0066-align-pulse-kanban-with-week-detail.md) | Align Pulse Kanban Metrics with Week Detail Report | Accepted | 2026-05-15 |
 | [0067](0067-kanban-backlog-membership-via-agile-api.md) | Kanban Backlog Membership via Jira Agile Backlog API | Accepted | 2026-05-15 |
 | [0068](0068-sync-deleted-jira-issues.md) | Sync Deleted Jira Issues: Reconcile DB Against JQL Response | Accepted | 2026-05-15 |
+| [0071](0071-engineering-health-check-panel.md) | Engineering Health Check Panel | Accepted | 2026-07-28 |
 | [0072](0072-sprint-effective-end-completedate.md) | Use Sprint Actual Close Time (completeDate) for Completion & Metric Windows | Accepted | 2026-07-28 |
