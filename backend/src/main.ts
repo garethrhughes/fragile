@@ -44,8 +44,10 @@ async function bootstrap() {
         createTableIfMissing: true,
       }),
       secret: sessionSecret,
+      name: 'fragile.sid',
       resave: false,
       saveUninitialized: false,
+      rolling: false,
       cookie: {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
@@ -54,6 +56,24 @@ async function bootstrap() {
       },
     }),
   );
+
+  // Guard against express-session crash when req.session exists but
+  // req.session.cookie is undefined (happens on unauthenticated requests
+  // where the session store returns an empty/corrupt session object).
+  app.use((req: import('express').Request, _res: import('express').Response, next: import('express').NextFunction) => {
+    if (req.session && !req.session.cookie) {
+      Object.assign(req.session, {
+        cookie: {
+          originalMaxAge: sessionMaxAge,
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax',
+          maxAge: sessionMaxAge,
+        },
+      });
+    }
+    next();
+  });
 
   app.use(passport.initialize());
   app.use(passport.session());
