@@ -20,7 +20,6 @@ import {
 import { useBoardsStore } from '@/store/boards-store'
 import { useSyncStore } from '@/store/sync-store'
 import { useAuth } from '@/hooks/use-auth'
-import { useAuth } from '@/hooks/use-auth'
 
 // ---------------------------------------------------------------------------
 // Toast helper
@@ -926,8 +925,6 @@ export default function SettingsPage() {
         )}
       </section>
 
-      {/* User Management */}
-      <UserList />
     </div>
   );
 }
