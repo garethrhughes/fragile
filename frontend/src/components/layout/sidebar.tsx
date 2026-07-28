@@ -14,15 +14,27 @@ interface NavItem {
   icon: ReactNode
 }
 
-const MAIN_NAV_ITEMS: NavItem[] = [
-  { label: 'Pulse', href: '/all-items', icon: <Activity className="h-5 w-5" /> },
-  { label: 'DORA', href: '/dora', icon: <BarChart3 className="h-5 w-5" /> },
-  { label: 'Cycle Time', href: '/cycle-time', icon: <Timer className="h-5 w-5" /> },
-  { label: 'Support', href: '/support', icon: <Headphones className="h-5 w-5" /> },
-  { label: 'Planning', href: '/planning', icon: <Target className="h-5 w-5" /> },
-  { label: 'Roadmap', href: '/roadmap', icon: <Map className="h-5 w-5" /> },
-  { label: 'Gaps', href: '/gaps', icon: <AlertCircle className="h-5 w-5" /> },
-  { label: 'API Keys', href: '/api-keys', icon: <KeyRound className="h-5 w-5" /> },
+/**
+ * Main navigation, grouped. Each inner array is a section; sections are
+ * rendered with a divider between them.
+ */
+const NAV_GROUPS: NavItem[][] = [
+  [
+    { label: 'Pulse', href: '/all-items', icon: <Activity className="h-5 w-5" /> },
+  ],
+  [
+    { label: 'DORA', href: '/dora', icon: <BarChart3 className="h-5 w-5" /> },
+    { label: 'Cycle Time', href: '/cycle-time', icon: <Timer className="h-5 w-5" /> },
+  ],
+  [
+    { label: 'Planning', href: '/planning', icon: <Target className="h-5 w-5" /> },
+    { label: 'Roadmap', href: '/roadmap', icon: <Map className="h-5 w-5" /> },
+    { label: 'Support', href: '/support', icon: <Headphones className="h-5 w-5" /> },
+    { label: 'Gaps', href: '/gaps', icon: <AlertCircle className="h-5 w-5" /> },
+  ],
+  [
+    { label: 'API Keys', href: '/api-keys', icon: <KeyRound className="h-5 w-5" /> },
+  ],
 ]
 
 const SETTINGS_ITEM: NavItem = {
@@ -76,25 +88,32 @@ export function Sidebar() {
         <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-text-muted">
           Navigation
         </p>
-        {MAIN_NAV_ITEMS.map((item) => {
-          const active = pathname.startsWith(item.href)
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                active
-                  ? 'bg-surface-active text-squirrel-700'
-                  : 'text-text-secondary hover:bg-surface-raised'
-              }`}
-            >
-              <span className={active ? 'text-squirrel-500' : 'text-text-muted'}>
-                {item.icon}
-              </span>
-              {item.label}
-            </Link>
-          )
-        })}
+        {NAV_GROUPS.map((group, groupIndex) => (
+          <div key={groupIndex} className="space-y-1">
+            {groupIndex > 0 && (
+              <div className="my-2 border-t border-border" role="separator" />
+            )}
+            {group.map((item) => {
+              const active = pathname.startsWith(item.href)
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                    active
+                      ? 'bg-surface-active text-squirrel-700'
+                      : 'text-text-secondary hover:bg-surface-raised'
+                  }`}
+                >
+                  <span className={active ? 'text-squirrel-500' : 'text-text-muted'}>
+                    {item.icon}
+                  </span>
+                  {item.label}
+                </Link>
+              )
+            })}
+          </div>
+        ))}
       </nav>
 
       {/* Bottom pinned section — settings + user */}
