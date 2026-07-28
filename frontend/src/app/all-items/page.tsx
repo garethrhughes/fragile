@@ -15,6 +15,7 @@ import {
   type AllItemsBoardResult,
   type AllItemsIssue,
 } from '@/lib/api'
+import { HealthCheckPanel } from '@/components/ui/health-check-panel'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -487,6 +488,12 @@ function AllItemsPageInner() {
       {/* Ready */}
       {pageState.status === 'ready' && (
         <>
+          {/* Health Check — completed weeks only (feature 0014, proposal 0071).
+              Rendered above the Pulse report. Hidden on the current week. */}
+          {!isCurrentWeek && pageState.data.healthCheck && (
+            <HealthCheckPanel report={pageState.data.healthCheck} />
+          )}
+
           {/* Overall score + totals bar */}
           <div className="flex items-stretch gap-3">
             {/* Overall score */}

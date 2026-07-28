@@ -854,10 +854,11 @@ describe('AllItemsService', () => {
       if (where.boardId === 'BPT') return Promise.resolve([issue2]);
       return Promise.resolve([]);
     });
-    // Return the correct sprint for each board's query builder call
-    sprintRepo.createQueryBuilder
-      .mockReturnValueOnce(makeQb([sprint1]))  // ACC board
-      .mockReturnValueOnce(makeQb([sprint2])); // BPT board
+    // Return sprints for every query-builder call. Uses an implementation
+    // (not mockReturnValueOnce) because the Health Check computes prior weeks,
+    // calling this more than twice. reconstructMany is boardId-keyed, so
+    // returning both sprints is safe — only the matching member is included.
+    sprintRepo.createQueryBuilder.mockImplementation(() => makeQb([sprint1, sprint2]));
     sprintMembership.reconstructMany.mockImplementation(
       ({ sprints }: { sprints: JiraSprint[] }) => {
         const m = new Map<string, SprintMembership>();
@@ -1658,5 +1659,121 @@ describe('AllItemsService', () => {
     expect(result.boards[0].items).toHaveLength(7);
     // completedCount = 5 (board-wide)
     expect(result.boards[0].summary.completedCount).toBe(5);
+  });
+
+  // -------------------------------------------------------------------------
+  // Health Check (feature 0014, proposal 0071)
+  // -------------------------------------------------------------------------
+
+  describe('healthCheck (proposal 0071)', () => {
+    /** Compute the current ISO week the same way the service does (UTC in tests). */
+    function currentWeekKey(): string {
+      const d = new Date();
+      const dow = d.getUTCDay();
+      const daysToThursday = dow === 0 ? -3 : 4 - dow;
+      const thursday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+      thursday.setUTCDate(thursday.getUTCDate() + daysToThursday);
+      const isoYear = thursday.getUTCFullYear();
+      const jan4 = new Date(Date.UTC(isoYear, 0, 4));
+      const jan4Dow = jan4.getUTCDay();
+      const jan4ToMonday = jan4Dow === 0 ? -6 : 1 - jan4Dow;
+      const week1Monday = new Date(jan4);
+      week1Monday.setUTCDate(jan4.getUTCDate() + jan4ToMonday);
+      const thisMonday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+      const dateToMonday = dow === 0 ? -6 : 1 - dow;
+      thisMonday.setUTCDate(thisMonday.getUTCDate() + dateToMonday);
+      const weekNum = Math.round((thisMonday.getTime() - week1Monday.getTime()) / (7 * 86_400_000)) + 1;
+      return `${isoYear}-W${String(weekNum).padStart(2, '0')}`;
+    }
+
+    function setupSingleScrumBoard(committed: string[], added: string[] = []) {
+      const board = makeBoard({ boardId: 'ACC', boardType: 'scrum' });
+      const issues = [...committed, ...added].map((key) => makeIssue({ key, boardId: 'ACC' }));
+      boardConfigRepo.find.mockResolvedValue([board]);
+      issueRepo.find.mockResolvedValue(issues);
+      sprintRepo.createQueryBuilder.mockImplementation(() => makeQb([makeSprint({ id: 'sprint-acc', boardId: 'ACC' })]));
+      sprintMembership.reconstructMany.mockResolvedValue(
+        new Map([['sprint-acc', membershipWith(committed, added)]]),
+      );
+      roadmapConfigRepo.find.mockResolvedValue([]);
+      changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+      issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+      jpdIdeaRepo.find.mockResolvedValue([]);
+    }
+
+    it('populates healthCheck for a completed (past) week', async () => {
+      setupSingleScrumBoard(['ACC-1', 'ACC-2']);
+
+      const result = await service.getAllItems('2026-W20', undefined);
+
+      expect(result.healthCheck).toBeDefined();
+      expect(result.healthCheck?.boards).toHaveLength(1);
+      expect(result.healthCheck?.boards[0].boardId).toBe('ACC');
+    });
+
+    it('omits healthCheck for the current in-progress week', async () => {
+      setupSingleScrumBoard(['ACC-1', 'ACC-2']);
+
+      const result = await service.getAllItems(currentWeekKey(), undefined);
+
+      expect(result.healthCheck).toBeUndefined();
+    });
+
+    it('exposes scrum volume (committed, added, completed) beside the stability score', async () => {
+      setupSingleScrumBoard(['ACC-1', 'ACC-2', 'ACC-3'], ['ACC-4']);
+
+      const result = await service.getAllItems('2026-W20', undefined);
+      const board = result.healthCheck?.boards[0];
+
+      expect(board?.volume).toEqual({
+        boardType: 'scrum',
+        committed: 3,
+        added: 1,
+        completed: 0,
+        onRoadmap: 0,
+        support: 0,
+      });
+      // stability = committed / (committed + added) = 3/4 = 75 -> watch
+      expect(board?.stabilityScore).toBe(75);
+      expect(board?.stabilityBand).toBe('watch');
+    });
+
+    it('reports roadmapScore/roadmapBand as null when nothing was completed', async () => {
+      setupSingleScrumBoard(['ACC-1']);
+
+      const result = await service.getAllItems('2026-W20', undefined);
+      const board = result.healthCheck?.boards[0];
+
+      expect(board?.roadmapScore).toBeNull();
+      expect(board?.roadmapBand).toBeNull();
+    });
+
+    it('includes a 4-week trend (selected week + prior 3), oldest first', async () => {
+      setupSingleScrumBoard(['ACC-1', 'ACC-2']);
+
+      const result = await service.getAllItems('2026-W20', undefined);
+      const trend = result.healthCheck?.boards[0].trend ?? [];
+
+      expect(trend).toHaveLength(4);
+      expect(trend.map((t) => t.week)).toEqual([
+        '2026-W17',
+        '2026-W18',
+        '2026-W19',
+        '2026-W20',
+      ]);
+    });
+
+    it('counts a null-roadmap board only toward the roadmap distribution na bucket', async () => {
+      setupSingleScrumBoard(['ACC-1', 'ACC-2']); // nothing completed -> roadmap null
+
+      const result = await service.getAllItems('2026-W20', undefined);
+
+      expect(result.healthCheck?.roadmapDistribution.na).toBe(1);
+      expect(result.healthCheck?.roadmapDistribution.healthy).toBe(0);
+      expect(result.healthCheck?.roadmapDistribution.watch).toBe(0);
+      expect(result.healthCheck?.roadmapDistribution.atRisk).toBe(0);
+      // stability distribution always classifies (never na): 100% committed -> healthy
+      expect(result.healthCheck?.stabilityDistribution.healthy).toBe(1);
+    });
   });
 });
