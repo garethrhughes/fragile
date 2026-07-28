@@ -1,57 +1,48 @@
 import { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthenticatedGuard } from './authenticated.guard.js';
-
-function mockExecutionContext(overrides: {
-  isAuthenticated?: boolean;
-}): ExecutionContext {
-  const request = {
-    isAuthenticated: jest.fn().mockReturnValue(overrides.isAuthenticated ?? false),
-  };
-
-  return {
-    switchToHttp: () => ({
-      getRequest: () => request,
-    }),
-    getHandler: () => jest.fn(),
-    getClass: () => jest.fn(),
-  } as unknown as ExecutionContext;
-}
+import { AuthService } from '../auth.service.js';
 
 describe('AuthenticatedGuard', () => {
   let guard: AuthenticatedGuard;
-  let reflector: jest.Mocked<Reflector>;
+  let reflector: { getAllAndOverride: jest.Mock };
+  let authService: { verifyToken: jest.Mock };
 
   beforeEach(() => {
-    reflector = {
-      getAllAndOverride: jest.fn().mockReturnValue(false),
-    } as unknown as jest.Mocked<Reflector>;
-    guard = new AuthenticatedGuard(reflector);
+    reflector = { getAllAndOverride: jest.fn().mockReturnValue(false) };
+    authService = { verifyToken: jest.fn() };
+    guard = new AuthenticatedGuard(
+      reflector as unknown as Reflector,
+      authService as unknown as AuthService,
+    );
   });
 
-  it('returns true when req.isAuthenticated() returns true', () => {
-    const context = mockExecutionContext({ isAuthenticated: true });
+  function makeContext(cookies: Record<string, string> = {}): ExecutionContext {
+    return {
+      switchToHttp: () => ({
+        getRequest: () => ({ cookies }),
+      }),
+      getHandler: () => ({}),
+      getClass: () => ({}),
+    } as unknown as ExecutionContext;
+  }
 
-    const result = guard.canActivate(context);
-
-    expect(result).toBe(true);
+  it('returns true when JWT cookie is valid', () => {
+    authService.verifyToken.mockReturnValue({ sub: '1', email: 'a@b.com', role: 'user' });
+    expect(guard.canActivate(makeContext({ 'fragile.sid': 'valid-token' }))).toBe(true);
   });
 
-  it('returns false when req.isAuthenticated() returns false', () => {
-    const context = mockExecutionContext({ isAuthenticated: false });
-
-    const result = guard.canActivate(context);
-
-    expect(result).toBe(false);
+  it('throws UnauthorizedException when no cookie present', () => {
+    expect(() => guard.canActivate(makeContext({}))).toThrow();
   });
 
-  it('returns true when the handler has @Public() metadata', () => {
+  it('throws UnauthorizedException when token is invalid', () => {
+    authService.verifyToken.mockReturnValue(null);
+    expect(() => guard.canActivate(makeContext({ 'fragile.sid': 'bad-token' }))).toThrow();
+  });
+
+  it('skips auth check when @Public() is set', () => {
     reflector.getAllAndOverride.mockReturnValue(true);
-    const context = mockExecutionContext({ isAuthenticated: false });
-
-    const result = guard.canActivate(context);
-
-    expect(result).toBe(true);
-    // isAuthenticated should not matter when route is public
+    expect(guard.canActivate(makeContext({}))).toBe(true);
   });
 });

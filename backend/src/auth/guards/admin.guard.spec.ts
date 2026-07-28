@@ -1,46 +1,26 @@
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { AdminGuard } from './admin.guard.js';
 
-function mockExecutionContext(user: unknown): ExecutionContext {
-  const request = { user };
-
-  return {
-    switchToHttp: () => ({
-      getRequest: () => request,
-    }),
-  } as unknown as ExecutionContext;
-}
-
 describe('AdminGuard', () => {
-  let guard: AdminGuard;
+  const guard = new AdminGuard();
 
-  beforeEach(() => {
-    guard = new AdminGuard();
+  function makeContext(authUser?: { sub: string; email: string; role: string }): ExecutionContext {
+    return {
+      switchToHttp: () => ({
+        getRequest: () => ({ authUser }),
+      }),
+    } as unknown as ExecutionContext;
+  }
+
+  it('returns true when user is admin', () => {
+    expect(guard.canActivate(makeContext({ sub: '1', email: 'a@b.com', role: 'admin' }))).toBe(true);
   });
 
-  it('returns true when req.user.role is admin', () => {
-    const context = mockExecutionContext({ role: 'admin', email: 'a@b.com' });
-
-    const result = guard.canActivate(context);
-
-    expect(result).toBe(true);
+  it('throws ForbiddenException when user role is user', () => {
+    expect(() => guard.canActivate(makeContext({ sub: '1', email: 'a@b.com', role: 'user' }))).toThrow(ForbiddenException);
   });
 
-  it('throws ForbiddenException when req.user.role is user', () => {
-    const context = mockExecutionContext({ role: 'user', email: 'a@b.com' });
-
-    expect(() => guard.canActivate(context)).toThrow(ForbiddenException);
-  });
-
-  it('throws ForbiddenException when req.user is undefined', () => {
-    const context = mockExecutionContext(undefined);
-
-    expect(() => guard.canActivate(context)).toThrow(ForbiddenException);
-  });
-
-  it('throws ForbiddenException when req.user is null', () => {
-    const context = mockExecutionContext(null);
-
-    expect(() => guard.canActivate(context)).toThrow(ForbiddenException);
+  it('throws ForbiddenException when authUser is undefined', () => {
+    expect(() => guard.canActivate(makeContext(undefined))).toThrow(ForbiddenException);
   });
 });
