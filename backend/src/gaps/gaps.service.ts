@@ -11,6 +11,7 @@ import {
 } from '../database/entities/index.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { quarterToDates } from '../metrics/period-utils.js';
+import { effectiveSprintEnd } from '../lib/sprint-window.js';
 
 export interface GapIssue {
   key: string;
@@ -267,7 +268,7 @@ export class GapsService {
         );
       }
       windowStart = sprint.startDate ?? new Date(0);
-      windowEnd = sprint.endDate ?? new Date();
+      windowEnd = effectiveSprintEnd(sprint);
     } else if (quarter) {
       const { startDate, endDate } = quarterToDates(quarter);
       windowStart = startDate;

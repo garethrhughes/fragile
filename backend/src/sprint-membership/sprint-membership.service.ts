@@ -7,6 +7,7 @@ import {
   JiraIssueSprint,
   JiraChangelog,
 } from '../database/entities/index.js';
+import { effectiveSprintEnd } from '../lib/sprint-window.js';
 
 /**
  * The reconstructed membership of a single sprint, derived from the canonical
@@ -232,7 +233,7 @@ export class SprintMembershipService {
     const sprintName = sprint.name;
     const sprintId = sprint.id;
     const sprintStart = sprint.startDate!;
-    const sprintEnd = sprint.endDate ?? new Date();
+    const sprintEnd = effectiveSprintEnd(sprint);
 
     // Group changelogs by issue, keeping only those that reference this sprint.
     // Prefer ID matching (handles renames); fall back to name for legacy rows.

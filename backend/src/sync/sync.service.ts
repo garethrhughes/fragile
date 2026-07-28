@@ -634,6 +634,7 @@ export class SyncService implements OnModuleInit {
       sprint.state = s.state;
       sprint.startDate = s.startDate ? new Date(s.startDate) : null;
       sprint.endDate = s.endDate ? new Date(s.endDate) : null;
+      sprint.completeDate = s.completeDate ? new Date(s.completeDate) : null;
       sprint.boardId = boardId;
       return sprint;
     });

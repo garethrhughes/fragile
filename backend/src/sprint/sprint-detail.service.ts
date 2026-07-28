@@ -22,10 +22,12 @@ import { buildDirectLinkIdeaMap } from '../metrics/roadmap-link-utils.js';
 import {
   SprintMembershipService,
   summariseMembership,
+  SPRINT_GRACE_PERIOD_MS,
 } from '../sprint-membership/sprint-membership.service.js';
 import { DEFAULT_IN_PROGRESS_NAMES } from '../metrics/status-defaults.js';
 import { extractCycles, resolveResetNames } from '../metrics/cycle.js';
 import { classifyRoadmapStatus as classifyRoadmap } from '../metrics/roadmap-classification.js';
+import { effectiveSprintEnd } from '../lib/sprint-window.js';
 
 // ---------------------------------------------------------------------------
 // Response interfaces (exported for use by the controller and frontend types)
@@ -177,7 +179,9 @@ export interface SprintDetailResponse {
   sprintName: string;
   state: string;             // 'active' | 'closed' | 'future'
   startDate: string | null;  // ISO 8601
-  endDate: string | null;    // ISO 8601
+  endDate: string | null;    // ISO 8601 — scheduled end
+  /** ISO 8601 — actual sprint close time (Jira completeDate); null if not closed. */
+  completeDate: string | null;
 
   /** The BoardConfig rules applied to derive annotations */
   boardConfig: SprintDetailBoardConfig;
@@ -465,16 +469,25 @@ export class SprintDetailService {
 
       // completedInSprint
       // Case 1 (changelog): a status changelog transitioned TO a done status
-      // within the sprint window (>= startDate guard prevents crediting
-      // completions from a prior sprint).
-      const sprintWindowEnd = sprint.endDate ?? new Date();
+      // within the sprint window. The window upper bound is the EFFECTIVE end
+      // (actual completeDate ?? scheduled endDate ?? now) so work finished
+      // before a late sprint close is still credited (proposal 0072). A
+      // SPRINT_GRACE_PERIOD_MS tolerance is applied at both boundaries to match
+      // PlanningService. The lower-bound guard prevents crediting completions
+      // from a prior sprint (carry-overs).
+      const windowStart =
+        sprintStart !== null
+          ? sprintStart.getTime() - SPRINT_GRACE_PERIOD_MS
+          : null;
+      const windowEnd =
+        effectiveSprintEnd(sprint).getTime() + SPRINT_GRACE_PERIOD_MS;
       const completedByChangelog =
-        sprintStart !== null &&
+        windowStart !== null &&
         issueLogs.some(
           (cl) =>
             doneStatusNames.includes(cl.toValue ?? '') &&
-            cl.changedAt >= sprintStart &&
-            cl.changedAt <= sprintWindowEnd,
+            cl.changedAt.getTime() >= windowStart &&
+            cl.changedAt.getTime() <= windowEnd,
         );
 
       // Case 2 (fallback): no status changelog exists at all (truly truncated
@@ -622,6 +635,7 @@ export class SprintDetailService {
       state: sprint.state,
       startDate: sprint.startDate ? sprint.startDate.toISOString() : null,
       endDate: sprint.endDate ? sprint.endDate.toISOString() : null,
+      completeDate: sprint.completeDate ? sprint.completeDate.toISOString() : null,
       boardConfig: boardConfigShape,
       summary,
       issues,
@@ -642,6 +656,7 @@ export class SprintDetailService {
       state: sprint.state,
       startDate: sprint.startDate ? sprint.startDate.toISOString() : null,
       endDate: sprint.endDate ? sprint.endDate.toISOString() : null,
+      completeDate: sprint.completeDate ? sprint.completeDate.toISOString() : null,
       boardConfig,
       summary: {
         committedCount: 0,
