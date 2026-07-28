@@ -43,6 +43,7 @@ function makeBoard(overrides: Partial<BoardConfig> = {}): BoardConfig {
   b.incidentIssueTypes = [];
   b.incidentLabels = [];
   b.incidentPriorities = [];
+  b.roadmapDeliveryTarget = 80;
   return Object.assign(b, overrides);
 }
 
@@ -1686,8 +1687,12 @@ describe('AllItemsService', () => {
       return `${isoYear}-W${String(weekNum).padStart(2, '0')}`;
     }
 
-    function setupSingleScrumBoard(committed: string[], added: string[] = []) {
-      const board = makeBoard({ boardId: 'ACC', boardType: 'scrum' });
+    function setupSingleScrumBoard(
+      committed: string[],
+      added: string[] = [],
+      roadmapDeliveryTarget = 80,
+    ) {
+      const board = makeBoard({ boardId: 'ACC', boardType: 'scrum', roadmapDeliveryTarget });
       const issues = [...committed, ...added].map((key) => makeIssue({ key, boardId: 'ACC' }));
       boardConfigRepo.find.mockResolvedValue([board]);
       issueRepo.find.mockResolvedValue(issues);
@@ -1774,6 +1779,30 @@ describe('AllItemsService', () => {
       expect(result.healthCheck?.roadmapDistribution.atRisk).toBe(0);
       // stability distribution always classifies (never na): 100% committed -> healthy
       expect(result.healthCheck?.stabilityDistribution.healthy).toBe(1);
+    });
+
+    it('surfaces each board roadmapDeliveryTarget from config (proposal 0073)', async () => {
+      setupSingleScrumBoard(['ACC-1', 'ACC-2'], [], 50);
+
+      const result = await service.getAllItems('2026-W20', undefined);
+
+      expect(result.healthCheck?.boards[0].roadmapDeliveryTarget).toBe(50);
+    });
+
+    it('computes overallStabilityScore as the mean of board stability scores (proposal 0073)', async () => {
+      setupSingleScrumBoard(['ACC-1', 'ACC-2']); // 100% committed -> stability 100
+
+      const result = await service.getAllItems('2026-W20', undefined);
+
+      expect(result.healthCheck?.overallStabilityScore).toBe(100);
+    });
+
+    it('reports overallRoadmapScore null when every board completed nothing (proposal 0073)', async () => {
+      setupSingleScrumBoard(['ACC-1', 'ACC-2']); // nothing completed -> roadmap null
+
+      const result = await service.getAllItems('2026-W20', undefined);
+
+      expect(result.healthCheck?.overallRoadmapScore).toBeNull();
     });
   });
 });

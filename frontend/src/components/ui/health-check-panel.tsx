@@ -7,6 +7,9 @@
  * only for completed (non-current) weeks. Surfaces per-board Stability and
  * Roadmap Delivery with volume context, RAG bands, a 4-week trend, and an
  * org-level RAG distribution (never a single averaged score).
+ *
+ * Proposal 0073: adds org overall scores and per-team roadmap targets — roadmap
+ * banding is relative to each team's target; org roadmap is mean attainment.
  */
 
 import type {
@@ -15,6 +18,8 @@ import type {
   HealthBand,
   HealthBandDistribution,
 } from '@/lib/api'
+
+const ROADMAP_WATCH_MARGIN = 15
 
 function bandClasses(band: HealthBand | null): string {
   switch (band) {
@@ -29,14 +34,19 @@ function bandClasses(band: HealthBand | null): string {
   }
 }
 
-function bandLabel(band: HealthBand): string {
-  return band === 'at-risk' ? 'At risk' : band.charAt(0).toUpperCase() + band.slice(1)
-}
-
-function ScoreBadge({ score, band }: { score: number | null; band: HealthBand | null }) {
+function ScoreBadge({
+  score,
+  band,
+  title,
+}: {
+  score: number | null
+  band: HealthBand | null
+  title?: string
+}) {
   return (
     <span
-      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-sm font-semibold ${bandClasses(band)}`}
+      title={title}
+      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-sm font-semibold ${band !== null || score !== null ? 'cursor-help ' : ''}${bandClasses(band)}`}
     >
       {score === null ? 'n/a' : `${score}%`}
     </span>
@@ -73,6 +83,51 @@ function roadmapContext(board: HealthCheckBoard): string {
   if (board.roadmapScore === null) return `nothing completed${supportSuffix}`
   const { completed, onRoadmap } = board.volume
   return `${onRoadmap} of ${completed} completed on-roadmap${supportSuffix}`
+}
+
+/** Tooltip text explaining the target-relative roadmap band for a team. */
+function roadmapBandTooltip(board: HealthCheckBoard): string {
+  const t = board.roadmapDeliveryTarget
+  if (board.roadmapScore === null) {
+    return `No items completed this week, so roadmap delivery is not applicable. This team's target is ${t}%.`
+  }
+  return (
+    `Roadmap delivery graded against this team's target of ${t}%: ` +
+    `healthy ≥ ${t}%, watch ≥ ${t - ROADMAP_WATCH_MARGIN}%, at-risk below. ` +
+    `This week: ${board.roadmapScore}%.`
+  )
+}
+
+const STABILITY_TOOLTIP =
+  'Stability = committed ÷ (committed + added) for scrum, or completed ÷ pulled-in for kanban. ' +
+  'Banded healthy ≥ 85%, watch ≥ 70%, at-risk below (same bar for every team).'
+
+const ORG_STABILITY_TOOLTIP =
+  'Org overall stability: the simple average of every team\u2019s stability score. Fixed 85/70 banding.'
+
+const ORG_ROADMAP_TOOLTIP =
+  'Org overall roadmap delivery: the average of each team\u2019s attainment versus its own target ' +
+  '(score ÷ target, capped at 100%). Teams that completed nothing this week are excluded. ' +
+  'A team hitting its target counts as 100%, so different per-team targets are compared fairly.'
+
+function OrgScore({
+  label,
+  score,
+  title,
+}: {
+  label: string
+  score: number | null
+  title: string
+}) {
+  return (
+    <div
+      title={title}
+      className="flex cursor-help flex-col items-center rounded-lg border border-border bg-surface-alt px-3 py-1.5"
+    >
+      <span className="text-lg font-bold leading-none">{score === null ? 'n/a' : `${score}%`}</span>
+      <span className="mt-0.5 text-[10px] uppercase tracking-wide text-muted">{label}</span>
+    </div>
+  )
 }
 
 function DistributionBar({
@@ -113,14 +168,27 @@ export function HealthCheckPanel({ report }: { report: HealthCheckReport }) {
       aria-label="Engineering Health Check"
       className="rounded-xl border border-border bg-card p-4 shadow-sm"
     >
-      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-lg font-bold">Health Check</h2>
           <p className="text-xs text-muted">
             Weekly stability &amp; roadmap delivery — completed weeks only
           </p>
         </div>
-        <div className="flex flex-col gap-1 sm:items-end">
+        <div className="flex flex-col gap-2 sm:items-end">
+          {/* Org overall scores (proposal 0073) */}
+          <div className="flex gap-2">
+            <OrgScore
+              label="Org stability"
+              score={report.overallStabilityScore}
+              title={ORG_STABILITY_TOOLTIP}
+            />
+            <OrgScore
+              label="Org roadmap"
+              score={report.overallRoadmapScore}
+              title={ORG_ROADMAP_TOOLTIP}
+            />
+          </div>
           <DistributionBar label="Stability" dist={report.stabilityDistribution} />
           <DistributionBar label="Roadmap" dist={report.roadmapDistribution} />
         </div>
@@ -156,13 +224,24 @@ export function HealthCheckPanel({ report }: { report: HealthCheckReport }) {
                   </td>
                   <td className="px-3 py-3">
                     <div className="flex items-center gap-2">
-                      <ScoreBadge score={board.stabilityScore} band={board.stabilityBand} />
+                      <ScoreBadge
+                        score={board.stabilityScore}
+                        band={board.stabilityBand}
+                        title={STABILITY_TOOLTIP}
+                      />
                     </div>
                     <div className="mt-1 text-xs text-muted">{volumeText(board)}</div>
                   </td>
                   <td className="px-3 py-3">
                     <div className="flex items-center gap-2">
-                      <ScoreBadge score={board.roadmapScore} band={board.roadmapBand} />
+                      <ScoreBadge
+                        score={board.roadmapScore}
+                        band={board.roadmapBand}
+                        title={roadmapBandTooltip(board)}
+                      />
+                      <span className="text-xs text-muted" title={roadmapBandTooltip(board)}>
+                        target {board.roadmapDeliveryTarget}%
+                      </span>
                     </div>
                     <div className="mt-1 text-xs text-muted">{roadmapContext(board)}</div>
                   </td>
