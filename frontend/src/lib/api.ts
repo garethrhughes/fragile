@@ -1416,6 +1416,49 @@ export interface AllItemsResponse {
   totals: AllItemsTotals
   /** Mean of all boards' healthScore.overall. 100 when no boards. */
   overallScore: number
+  /**
+   * Engineering Health Check (feature 0014, proposal 0071).
+   * Present only for completed (non-current) weeks; absent otherwise.
+   */
+  healthCheck?: HealthCheckReport
+}
+
+// --- Engineering Health Check (feature 0014, proposal 0071) ---
+
+export type HealthBand = 'healthy' | 'watch' | 'at-risk'
+
+export type HealthCheckVolume =
+  | { boardType: 'scrum'; committed: number; added: number; completed: number; onRoadmap: number; support: number }
+  | { boardType: 'kanban'; pulledIn: number; completed: number; onRoadmap: number; support: number }
+
+export interface HealthCheckTrendPoint {
+  week: string
+  stabilityScore: number
+  roadmapScore: number | null
+}
+
+export interface HealthCheckBoard {
+  boardId: string
+  boardType: 'scrum' | 'kanban'
+  stabilityScore: number
+  stabilityBand: HealthBand
+  roadmapScore: number | null
+  roadmapBand: HealthBand | null
+  volume: HealthCheckVolume
+  trend: HealthCheckTrendPoint[]
+}
+
+export interface HealthBandDistribution {
+  healthy: number
+  watch: number
+  atRisk: number
+  na: number
+}
+
+export interface HealthCheckReport {
+  boards: HealthCheckBoard[]
+  stabilityDistribution: HealthBandDistribution
+  roadmapDistribution: HealthBandDistribution
 }
 
 export type AllItemsFilter = 'added-mid-sprint' | 'not-on-roadmap' | 'support' | 'ttb-support'

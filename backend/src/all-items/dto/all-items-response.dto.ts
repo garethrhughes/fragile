@@ -158,4 +158,61 @@ export interface AllItemsResponse {
    * 100 when there are no boards with data.
    */
   overallScore: number;
+  /**
+   * Engineering Health Check (feature 0014, proposal 0071).
+   * Present ONLY for completed (non-current, non-future) weeks. Absent for the
+   * current in-progress week and any future week.
+   */
+  healthCheck?: HealthCheckReport;
+}
+
+// ---------------------------------------------------------------------------
+// Health Check (feature 0014, proposal 0071)
+// ---------------------------------------------------------------------------
+
+export type HealthBand = 'healthy' | 'watch' | 'at-risk';
+
+/**
+ * Volume context shown beside a board's stability score. The shape differs by
+ * board type — scrum and kanban stability are never summed or averaged.
+ */
+export type HealthCheckVolume =
+  | { boardType: 'scrum'; committed: number; added: number; completed: number; onRoadmap: number; support: number }
+  | { boardType: 'kanban'; pulledIn: number; completed: number; onRoadmap: number; support: number };
+
+export interface HealthCheckTrendPoint {
+  /** ISO week key, e.g. "2026-W19". */
+  week: string;
+  stabilityScore: number;
+  /** null when the board completed nothing that week. */
+  roadmapScore: number | null;
+}
+
+export interface HealthCheckBoard {
+  boardId: string;
+  boardType: 'scrum' | 'kanban';
+  stabilityScore: number;
+  stabilityBand: HealthBand;
+  /** null when the board completed nothing this week (roadmap alignment n/a). */
+  roadmapScore: number | null;
+  roadmapBand: HealthBand | null;
+  volume: HealthCheckVolume;
+  /** Selected week + prior 3 weeks, oldest first. */
+  trend: HealthCheckTrendPoint[];
+}
+
+export interface HealthBandDistribution {
+  healthy: number;
+  watch: number;
+  atRisk: number;
+  /** Boards with no score for this dimension (excluded from the RAG buckets). */
+  na: number;
+}
+
+export interface HealthCheckReport {
+  boards: HealthCheckBoard[];
+  /** Distribution of boards across stability RAG bands. */
+  stabilityDistribution: HealthBandDistribution;
+  /** Distribution of boards across roadmap-delivery RAG bands. */
+  roadmapDistribution: HealthBandDistribution;
 }

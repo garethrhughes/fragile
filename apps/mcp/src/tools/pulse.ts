@@ -5,7 +5,7 @@ import { apiGet } from '../client.js';
 export function registerPulseTools(server: McpServer): void {
   server.tool(
     'get_pulse_report',
-    'Get the weekly cross-board pulse report — per-board item counts (total/pulled-in, started, added, completed, on-roadmap, support, in-flight), health scores (roadmap alignment, stability, overall), and optionally filtered issue lists. Covers both scrum and kanban boards.',
+    'Get the weekly cross-board pulse report — per-board item counts (total/pulled-in, started, added, completed, on-roadmap, support, in-flight), health scores (roadmap alignment, stability, overall), and optionally filtered issue lists. Covers both scrum and kanban boards. For completed (past) weeks the response also includes a "healthCheck" section: per-board stability and roadmap-delivery scores with RAG bands, volume context, a 4-week trend, and an org-level band distribution.',
     {
       week: z.string().describe('ISO week key in YYYY-Www format, e.g. "2026-W20"'),
       filter: z
