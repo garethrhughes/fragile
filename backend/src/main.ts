@@ -8,6 +8,26 @@ import connectPgSimple from 'connect-pg-simple';
 import passport from 'passport';
 import { AppModule } from './app.module.js';
 
+// Patch express-session's Session.prototype to guard against undefined cookie.
+// This crash occurs when the session store returns a session without a cookie
+// property (e.g. corrupt row, or request with no valid session) and express-
+// session's res.end hook calls session.touch() → session.resetMaxAge().
+const SessionProto = (session as unknown as { Session: { prototype: Record<string, unknown> } }).Session?.prototype;
+if (SessionProto) {
+  const origResetMaxAge = SessionProto['resetMaxAge'] as (() => unknown) | undefined;
+  SessionProto['resetMaxAge'] = function (this: { cookie?: { maxAge?: number; originalMaxAge?: number } }) {
+    if (!this.cookie) return this;
+    if (origResetMaxAge) return origResetMaxAge.call(this);
+    return this;
+  };
+  const origTouch = SessionProto['touch'] as (() => unknown) | undefined;
+  SessionProto['touch'] = function (this: { cookie?: unknown; resetMaxAge?: () => unknown }) {
+    if (!this.cookie) return this;
+    if (origTouch) return origTouch.call(this);
+    return this;
+  };
+}
+
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
@@ -56,24 +76,6 @@ async function bootstrap() {
       },
     }),
   );
-
-  // Guard against express-session crash when req.session exists but
-  // req.session.cookie is undefined (happens on unauthenticated requests
-  // where the session store returns an empty/corrupt session object).
-  app.use((req: import('express').Request, _res: import('express').Response, next: import('express').NextFunction) => {
-    if (req.session && !req.session.cookie) {
-      Object.assign(req.session, {
-        cookie: {
-          originalMaxAge: sessionMaxAge,
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
-          maxAge: sessionMaxAge,
-        },
-      });
-    }
-    next();
-  });
 
   app.use(passport.initialize());
   app.use(passport.session());

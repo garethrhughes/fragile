@@ -100,6 +100,8 @@ start: up
 stop:
 	-kill $$(lsof -t -i:3001 -sTCP:LISTEN) 2>/dev/null || true
 	-kill $$(lsof -t -i:3000 -sTCP:LISTEN) 2>/dev/null || true
+	-pkill -f "nest start" 2>/dev/null || true
+	-pkill -f "next dev\|next start" 2>/dev/null || true
 	docker compose down
 
 clean: stop
