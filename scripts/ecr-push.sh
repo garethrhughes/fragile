@@ -98,19 +98,33 @@ resolve_api_url() {
   fi
 }
 
+# NEXT_PUBLIC_GOOGLE_CLIENT_ID is also baked in at build time. Resolve it from
+# the environment (override) or from frontend/.env — the same file used for
+# local dev — so no manual export is needed for a normal build.
+resolve_google_client_id() {
+  [[ "$BUILD_FRONTEND" == "true" ]] || return 0
+
+  if [[ -n "${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}" ]]; then
+    echo "    Using NEXT_PUBLIC_GOOGLE_CLIENT_ID from environment."
+    return
+  fi
+
+  local env_file="$REPO_ROOT/frontend/.env"
+  if [[ -f "$env_file" ]]; then
+    NEXT_PUBLIC_GOOGLE_CLIENT_ID="$(grep -E '^NEXT_PUBLIC_GOOGLE_CLIENT_ID=' "$env_file" | tail -1 | cut -d= -f2- | tr -d '"'"'"' \r')"
+  fi
+
+  if [[ -z "${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}" ]]; then
+    echo "ERROR: NEXT_PUBLIC_GOOGLE_CLIENT_ID not found in environment or $env_file." >&2
+    echo "       Add it to frontend/.env or export it before building." >&2
+    exit 1
+  fi
+  echo "    Using NEXT_PUBLIC_GOOGLE_CLIENT_ID from frontend/.env."
+}
+
 resolve_ecr_urls
 resolve_api_url
-
-# NEXT_PUBLIC_GOOGLE_CLIENT_ID is operator-supplied (same value as the backend
-# GOOGLE_CLIENT_ID). It is baked into the frontend bundle at build time, so it
-# must be set before building the frontend or the Google Sign-In button will
-# fail with "Missing required parameter: client_id".
-if [[ "$BUILD_FRONTEND" == "true" && -z "${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}" ]]; then
-  echo "ERROR: NEXT_PUBLIC_GOOGLE_CLIENT_ID is not set." >&2
-  echo "       Export it (the Google OAuth client ID) before building the frontend:" >&2
-  echo "       export NEXT_PUBLIC_GOOGLE_CLIENT_ID=<id>.apps.googleusercontent.com" >&2
-  exit 1
-fi
+resolve_google_client_id
 
 echo "==> Backend ECR  : $ECR_BACKEND_URL"
 echo "==> Frontend ECR : $ECR_FRONTEND_URL"
