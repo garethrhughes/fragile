@@ -123,6 +123,12 @@ variable "google_allowed_domain" {
   type        = string
 }
 
+variable "cookie_domain" {
+  description = "Domain for the session cookie so it is shared between the frontend and API subdomains (e.g. \".ops.mypassglobal.com\"). Leave empty for single-host setups."
+  type        = string
+  default     = ""
+}
+
 variable "dora_snapshot_lambda_name" {
   description = "Name of the DORA snapshot Lambda function. Injected as DORA_SNAPSHOT_LAMBDA_NAME env var."
   type        = string

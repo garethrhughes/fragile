@@ -149,6 +149,7 @@ module "ecs" {
   frontend_url = "https://${var.frontend_subdomain}.${var.domain_name}"
 
   google_allowed_domain = var.google_allowed_domain
+  cookie_domain         = ".${var.domain_name}"
 }
 
 # ── CDN -- ACM + CloudFront ─────────────────────────────────

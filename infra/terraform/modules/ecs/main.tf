@@ -79,6 +79,7 @@ resource "aws_ecs_task_definition" "backend" {
         { name = "DB_HOST", value = var.rds_endpoint },
         { name = "FRONTEND_URL", value = var.frontend_url },
         { name = "GOOGLE_ALLOWED_DOMAIN", value = var.google_allowed_domain },
+        { name = "COOKIE_DOMAIN", value = var.cookie_domain },
         { name = "DORA_SNAPSHOT_LAMBDA_NAME", value = var.dora_snapshot_lambda_name },
         { name = "AWS_REGION", value = var.aws_region },
         { name = "USE_LAMBDA", value = "true" },
