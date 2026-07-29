@@ -100,6 +100,18 @@ resolve_api_url() {
 
 resolve_ecr_urls
 resolve_api_url
+
+# NEXT_PUBLIC_GOOGLE_CLIENT_ID is operator-supplied (same value as the backend
+# GOOGLE_CLIENT_ID). It is baked into the frontend bundle at build time, so it
+# must be set before building the frontend or the Google Sign-In button will
+# fail with "Missing required parameter: client_id".
+if [[ "$BUILD_FRONTEND" == "true" && -z "${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}" ]]; then
+  echo "ERROR: NEXT_PUBLIC_GOOGLE_CLIENT_ID is not set." >&2
+  echo "       Export it (the Google OAuth client ID) before building the frontend:" >&2
+  echo "       export NEXT_PUBLIC_GOOGLE_CLIENT_ID=<id>.apps.googleusercontent.com" >&2
+  exit 1
+fi
+
 echo "==> Backend ECR  : $ECR_BACKEND_URL"
 echo "==> Frontend ECR : $ECR_FRONTEND_URL"
 echo "==> API URL      : $NEXT_PUBLIC_API_URL"
@@ -157,7 +169,8 @@ if [[ "$BUILD_FRONTEND" == "true" ]]; then
     "frontend" \
     "$REPO_ROOT/frontend" \
     "$ECR_FRONTEND_URL" \
-    --build-arg "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL"
+    --build-arg "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" \
+    --build-arg "NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID"
 fi
 
 echo

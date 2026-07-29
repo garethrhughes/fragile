@@ -651,6 +651,17 @@ SESSION_MAX_AGE_MS=604800000
 The frontend also needs `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (same client ID) so the
 "Sign in with Google" button can initialise.
 
+> **Important — build-time, not runtime:** `NEXT_PUBLIC_*` variables are inlined into the
+> Next.js bundle **when the image is built**, not read at runtime. For production you must
+> export `NEXT_PUBLIC_GOOGLE_CLIENT_ID` before running `make ecr-push` so it is passed as a
+> Docker `--build-arg`. Setting it only on the ECS task has no effect and the Google button
+> will fail with `Missing required parameter: client_id`.
+>
+> ```bash
+> export NEXT_PUBLIC_GOOGLE_CLIENT_ID=<id>.apps.googleusercontent.com
+> make ecr-push   # bakes the client ID into the frontend image
+> ```
+
 Generate a session secret:
 
 ```bash
