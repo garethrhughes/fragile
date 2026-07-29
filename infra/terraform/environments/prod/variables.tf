@@ -74,3 +74,8 @@ variable "google_client_id" {
   description = "Google OAuth client ID. Public (shipped to the browser), not a secret. Baked into the frontend bundle at build time and used by the backend to verify ID tokens. Supplied in terraform.tfvars."
   type        = string
 }
+
+variable "google_allowed_domain" {
+  description = "Google Workspace domain permitted to log in (the token's hd claim must match). Enforced fail-closed."
+  type        = string
+}

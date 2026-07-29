@@ -147,6 +147,8 @@ module "ecs" {
   timezone_param_arn        = module.secrets.timezone_param_arn
 
   frontend_url = "https://${var.frontend_subdomain}.${var.domain_name}"
+
+  google_allowed_domain = var.google_allowed_domain
 }
 
 # ── CDN -- ACM + CloudFront ─────────────────────────────────

@@ -118,6 +118,11 @@ variable "frontend_url" {
   type        = string
 }
 
+variable "google_allowed_domain" {
+  description = "Google Workspace domain that may log in (the hd claim must match). Enforced fail-closed — the backend refuses to start if unset."
+  type        = string
+}
+
 variable "dora_snapshot_lambda_name" {
   description = "Name of the DORA snapshot Lambda function. Injected as DORA_SNAPSHOT_LAMBDA_NAME env var."
   type        = string
