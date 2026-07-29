@@ -123,6 +123,7 @@ resource "aws_cloudfront_vpc_origin" "alb" {
 resource "aws_cloudfront_distribution" "backend" {
   enabled         = true
   is_ipv6_enabled = true
+  web_acl_id      = var.web_acl_arn
   aliases         = ["${var.backend_subdomain}.${var.domain_name}"]
 
   origin {
@@ -186,6 +187,7 @@ resource "aws_cloudfront_distribution" "backend" {
 resource "aws_cloudfront_distribution" "frontend" {
   enabled         = true
   is_ipv6_enabled = true
+  web_acl_id      = var.web_acl_arn
   aliases         = ["${var.frontend_subdomain}.${var.domain_name}"]
 
   origin {

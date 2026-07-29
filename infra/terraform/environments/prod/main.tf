@@ -150,6 +150,17 @@ module "ecs" {
 # ── CDN -- ACM + CloudFront ─────────────────────────────────
 # Issues ACM certificates in us-east-1, validates them via Route 53,
 # and creates CloudFront distributions in front of both ECS Express services.
+# ── WAF (CloudFront-scoped IP allowlist) ───────────────────
+module "waf" {
+  source = "../../modules/waf"
+
+  providers = {
+    aws = aws.us_east_1
+  }
+
+  allowed_cidrs = var.allowed_cidrs
+}
+
 module "cdn" {
   source = "../../modules/cdn"
 
@@ -164,6 +175,8 @@ module "cdn" {
 
   alb_dns_name = module.ecs.alb_dns_name
   alb_arn      = module.ecs.alb_arn
+
+  web_acl_arn = module.waf.web_acl_arn
 }
 
 # ── DNS ────────────────────────────────────────────────────
