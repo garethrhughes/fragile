@@ -289,8 +289,6 @@ TIMEZONE=UTC
 
 # Google OAuth (see Google OAuth Setup section)
 GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=your-client-secret
-GOOGLE_CALLBACK_URL=http://localhost:3001/api/auth/google/callback
 GOOGLE_ALLOWED_DOMAIN=yourorg.com
 SESSION_SECRET=run-openssl-rand-hex-64-to-generate
 ```
@@ -509,8 +507,6 @@ minute or two depending on the number of issues and boards. Subsequent syncs are
 | `BOARD_CONFIG_FILE` | No | `config/boards.yaml` | Override path to the boards YAML file (absolute or relative to `backend/`) |
 | `ROADMAP_CONFIG_FILE` | No | `config/roadmap.yaml` | Override path to the roadmap YAML file (absolute or relative to `backend/`) |
 | `GOOGLE_CLIENT_ID` | Yes | — | Google OAuth2 client ID (see [Google OAuth Setup](#google-oauth-setup)) |
-| `GOOGLE_CLIENT_SECRET` | Yes | — | Google OAuth2 client secret |
-| `GOOGLE_CALLBACK_URL` | No | `http://localhost:3001/api/auth/google/callback` | OAuth2 redirect URI (must match GCP console exactly) |
 | `GOOGLE_ALLOWED_DOMAIN` | No | `mypassglobal.com` | Google Workspace domain to restrict login |
 | `SESSION_SECRET` | Yes | — | Random secret for signing session cookies (min 64 hex chars) |
 | `SESSION_MAX_AGE_MS` | No | `604800000` (7 days) | Session maximum age in milliseconds |
@@ -629,11 +625,13 @@ Workspace domain can access the application. Follow these steps to create the OA
 2. Click **Create Credentials** > **OAuth client ID**.
 3. Application type: **Web application**.
 4. Name: `Fragile Backend` (or similar).
-5. Under **Authorised redirect URIs**, add:
-   - For local development: `http://localhost:3001/api/auth/google/callback`
-   - For production: `https://api.your-domain.com/api/auth/google/callback`
+5. Under **Authorised JavaScript origins**, add the URL the app is served from (the
+   Google Identity Services button runs client-side, so origins — not redirect URIs —
+   are what matter):
+   - For local development: `http://localhost:3000`
+   - For production: `https://app.your-domain.com`
 6. Click **Create**.
-7. Copy the **Client ID** and **Client Secret**.
+7. Copy the **Client ID**. (No client secret is needed — the app uses the Google Identity Services **ID-token flow**, which verifies the token server-side against the client ID.)
 
 ### 4. Configure environment variables
 
@@ -641,16 +639,17 @@ Add the following to `backend/.env` (local development) or populate the correspo
 Secrets Manager values (production):
 
 ```dotenv
-# Google OAuth2
+# Google OAuth2 (ID-token flow — no client secret required)
 GOOGLE_CLIENT_ID=123456789-abcdef.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=GOCSPX-your-secret-here
-GOOGLE_CALLBACK_URL=http://localhost:3001/api/auth/google/callback
 GOOGLE_ALLOWED_DOMAIN=mypassglobal.com
 
-# Session
+# Session (JWT cookie signing)
 SESSION_SECRET=generate-a-random-64-byte-hex-string
 SESSION_MAX_AGE_MS=604800000
 ```
+
+The frontend also needs `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (same client ID) so the
+"Sign in with Google" button can initialise.
 
 Generate a session secret:
 
@@ -660,13 +659,12 @@ openssl rand -hex 64
 
 ### 5. Production deployment (AWS)
 
-For production, the OAuth credentials and session secret are stored in AWS Secrets Manager
+For production, the client ID and session secret are stored in AWS Secrets Manager
 and injected into the ECS task as environment variables:
 
 | Secret name | Maps to env var |
 |---|---|
 | `fragile/prod/google-client-id` | `GOOGLE_CLIENT_ID` |
-| `fragile/prod/google-client-secret` | `GOOGLE_CLIENT_SECRET` |
 | `fragile/prod/session-secret` | `SESSION_SECRET` |
 
 Populate these via the AWS Console or CLI:
@@ -677,16 +675,12 @@ aws secretsmanager put-secret-value \
   --secret-string "YOUR_CLIENT_ID"
 
 aws secretsmanager put-secret-value \
-  --secret-id fragile/prod/google-client-secret \
-  --secret-string "YOUR_CLIENT_SECRET"
-
-aws secretsmanager put-secret-value \
   --secret-id fragile/prod/session-secret \
   --secret-string "$(openssl rand -hex 64)"
 ```
 
-Set `GOOGLE_CALLBACK_URL` and `GOOGLE_ALLOWED_DOMAIN` as plain environment variables in
-the ECS task definition (they are not secrets).
+Set `GOOGLE_ALLOWED_DOMAIN` as a plain environment variable in the ECS task
+definition (it is not a secret).
 
 ### 6. First login (admin bootstrap)
 
@@ -707,7 +701,7 @@ receive the `user` role (read-only access). Admins can promote other users via
 | Symptom | Cause | Fix |
 |---|---|---|
 | "Access denied" after Google login | Email domain doesn't match `GOOGLE_ALLOWED_DOMAIN` | Check the user's email domain matches the configured value |
-| Redirect loops on login | `GOOGLE_CALLBACK_URL` doesn't match the registered redirect URI in GCP | Ensure the URI matches exactly (protocol, host, port, path) |
+| Redirect loops / "origin not allowed" on login | The app's origin isn't in **Authorised JavaScript origins** in GCP | Add the exact origin (scheme + host + port, no path), e.g. `http://localhost:3000` |
 | "Internal" consent screen not available | GCP project not associated with a Google Workspace org | Link the project to your Workspace admin |
 | Session lost after deploy | `SESSION_SECRET` changed between deploys | Use a stable secret; rotate only intentionally |
 

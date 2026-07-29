@@ -71,28 +71,27 @@ resource "aws_ecs_task_definition" "backend" {
       ]
 
       environment = [
-        { name = "NODE_ENV",                  value = "production" },
-        { name = "PORT",                      value = "3001" },
-        { name = "DB_PORT",                   value = "5432" },
-        { name = "DB_DATABASE",               value = "fragile" },
-        { name = "DB_USERNAME",               value = "postgres" },
-        { name = "DB_HOST",                   value = var.rds_endpoint },
-        { name = "FRONTEND_URL",              value = var.frontend_url },
+        { name = "NODE_ENV", value = "production" },
+        { name = "PORT", value = "3001" },
+        { name = "DB_PORT", value = "5432" },
+        { name = "DB_DATABASE", value = "fragile" },
+        { name = "DB_USERNAME", value = "postgres" },
+        { name = "DB_HOST", value = var.rds_endpoint },
+        { name = "FRONTEND_URL", value = var.frontend_url },
         { name = "DORA_SNAPSHOT_LAMBDA_NAME", value = var.dora_snapshot_lambda_name },
-        { name = "AWS_REGION",                value = var.aws_region },
-        { name = "USE_LAMBDA",                       value = "true" },
+        { name = "AWS_REGION", value = var.aws_region },
+        { name = "USE_LAMBDA", value = "true" },
         { name = "SNAPSHOT_STALE_THRESHOLD_MINUTES", value = "2880" },
       ]
 
       secrets = [
-        { name = "DB_PASSWORD",           valueFrom = var.db_password_secret_arn },
-        { name = "JIRA_API_TOKEN",        valueFrom = var.jira_api_token_secret_arn },
-        { name = "JIRA_BASE_URL",         valueFrom = var.jira_base_url_param_arn },
-        { name = "JIRA_USER_EMAIL",       valueFrom = var.jira_user_email_param_arn },
-        { name = "TIMEZONE",              valueFrom = var.timezone_param_arn },
-        { name = "GOOGLE_CLIENT_ID",      valueFrom = var.google_client_id_secret_arn },
-        { name = "GOOGLE_CLIENT_SECRET",  valueFrom = var.google_client_secret_secret_arn },
-        { name = "SESSION_SECRET",        valueFrom = var.session_secret_secret_arn },
+        { name = "DB_PASSWORD", valueFrom = var.db_password_secret_arn },
+        { name = "JIRA_API_TOKEN", valueFrom = var.jira_api_token_secret_arn },
+        { name = "JIRA_BASE_URL", valueFrom = var.jira_base_url_param_arn },
+        { name = "JIRA_USER_EMAIL", valueFrom = var.jira_user_email_param_arn },
+        { name = "TIMEZONE", valueFrom = var.timezone_param_arn },
+        { name = "GOOGLE_CLIENT_ID", valueFrom = var.google_client_id_secret_arn },
+        { name = "SESSION_SECRET", valueFrom = var.session_secret_secret_arn },
       ]
 
       # wget is used (not curl) because the image is node:22-alpine which has
@@ -124,12 +123,12 @@ resource "aws_ecs_task_definition" "backend" {
 # ── Backend ECS service ───────────────────────────────────────────────────────
 
 resource "aws_ecs_service" "backend" {
-  name                               = "fragile-backend-svc"
-  cluster                            = aws_ecs_cluster.this.id
-  task_definition                    = aws_ecs_task_definition.backend.arn
-  desired_count                      = 1
-  launch_type                        = "FARGATE"
-  health_check_grace_period_seconds  = 60
+  name                              = "fragile-backend-svc"
+  cluster                           = aws_ecs_cluster.this.id
+  task_definition                   = aws_ecs_task_definition.backend.arn
+  desired_count                     = 1
+  launch_type                       = "FARGATE"
+  health_check_grace_period_seconds = 60
 
   # Allow Terraform to manage desired count without fighting autoscaling.
   lifecycle {
@@ -182,7 +181,7 @@ resource "aws_ecs_task_definition" "frontend" {
       environment = [
         { name = "NODE_ENV", value = "production" },
         { name = "HOSTNAME", value = "0.0.0.0" },
-        { name = "PORT",     value = "3000" },
+        { name = "PORT", value = "3000" },
       ]
 
       # wget is used (not curl) because the image is node:22-alpine which has
@@ -214,12 +213,12 @@ resource "aws_ecs_task_definition" "frontend" {
 # ── Frontend ECS service ──────────────────────────────────────────────────────
 
 resource "aws_ecs_service" "frontend" {
-  name                               = "fragile-frontend-svc"
-  cluster                            = aws_ecs_cluster.this.id
-  task_definition                    = aws_ecs_task_definition.frontend.arn
-  desired_count                      = 1
-  launch_type                        = "FARGATE"
-  health_check_grace_period_seconds  = 60
+  name                              = "fragile-frontend-svc"
+  cluster                           = aws_ecs_cluster.this.id
+  task_definition                   = aws_ecs_task_definition.frontend.arn
+  desired_count                     = 1
+  launch_type                       = "FARGATE"
+  health_check_grace_period_seconds = 60
 
   lifecycle {
     ignore_changes = [desired_count]

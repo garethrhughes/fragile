@@ -62,9 +62,8 @@ module "iam" {
   db_password_secret_arn    = module.secrets.db_password_secret_arn
   jira_api_token_secret_arn = module.secrets.jira_api_token_secret_arn
 
-  google_client_id_secret_arn     = module.secrets.google_client_id_secret_arn
-  google_client_secret_secret_arn = module.secrets.google_client_secret_secret_arn
-  session_secret_secret_arn       = module.secrets.session_secret_secret_arn
+  google_client_id_secret_arn = module.secrets.google_client_id_secret_arn
+  session_secret_secret_arn   = module.secrets.session_secret_secret_arn
 
   ssm_parameter_path_prefix = "/fragile/${var.environment}/"
 
@@ -138,9 +137,8 @@ module "ecs" {
   db_password_secret_arn    = module.secrets.db_password_secret_arn
   jira_api_token_secret_arn = module.secrets.jira_api_token_secret_arn
 
-  google_client_id_secret_arn     = module.secrets.google_client_id_secret_arn
-  google_client_secret_secret_arn = module.secrets.google_client_secret_secret_arn
-  session_secret_secret_arn       = module.secrets.session_secret_secret_arn
+  google_client_id_secret_arn = module.secrets.google_client_id_secret_arn
+  session_secret_secret_arn   = module.secrets.session_secret_secret_arn
 
   jira_base_url_param_arn   = module.secrets.jira_base_url_param_arn
   jira_user_email_param_arn = module.secrets.jira_user_email_param_arn
