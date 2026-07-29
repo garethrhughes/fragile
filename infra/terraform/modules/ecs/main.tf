@@ -257,11 +257,6 @@ data "aws_lb" "express_gateway" {
   ]
 }
 
-data "aws_lb_listener" "https" {
-  load_balancer_arn = data.aws_lb.express_gateway.arn
-  port              = 443
-}
-
 data "aws_lb_listener" "http" {
   load_balancer_arn = data.aws_lb.express_gateway.arn
   port              = 80
@@ -270,41 +265,11 @@ data "aws_lb_listener" "http" {
 # ── ALB listener rules ────────────────────────────────────────────────────────
 # Route requests from CloudFront to the correct TG based on the
 # X-Fragile-Service custom header injected by each CloudFront distribution.
-# These rules live on both the HTTPS (443) and HTTP (80) listeners.
-
-resource "aws_lb_listener_rule" "https_backend" {
-  listener_arn = data.aws_lb_listener.https.arn
-  priority     = 10
-
-  action {
-    type             = "forward"
-    target_group_arn = var.backend_target_group_arn
-  }
-
-  condition {
-    http_header {
-      http_header_name = "X-Fragile-Service"
-      values           = ["backend"]
-    }
-  }
-}
-
-resource "aws_lb_listener_rule" "https_frontend" {
-  listener_arn = data.aws_lb_listener.https.arn
-  priority     = 20
-
-  action {
-    type             = "forward"
-    target_group_arn = var.frontend_target_group_arn
-  }
-
-  condition {
-    http_header {
-      http_header_name = "X-Fragile-Service"
-      values           = ["frontend"]
-    }
-  }
-}
+#
+# The ECS-managed ("Express Gateway") ALB is created with an HTTP (80) listener
+# only. CloudFront terminates TLS and reaches the ALB over HTTP
+# (origin_protocol_policy = "http-only" in the cdn module), so there is no 443
+# listener on this ALB and the rules live only on the HTTP listener.
 
 resource "aws_lb_listener_rule" "http_backend" {
   listener_arn = data.aws_lb_listener.http.arn
