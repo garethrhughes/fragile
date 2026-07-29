@@ -69,3 +69,8 @@ variable "allowed_cidrs" {
   type        = list(string)
   # No default — must be supplied in terraform.tfvars.
 }
+
+variable "google_client_id" {
+  description = "Google OAuth client ID. Public (shipped to the browser), not a secret. Baked into the frontend bundle at build time and used by the backend to verify ID tokens. Supplied in terraform.tfvars."
+  type        = string
+}

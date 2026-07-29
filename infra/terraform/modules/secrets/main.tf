@@ -55,11 +55,7 @@ resource "aws_secretsmanager_secret" "google_client_id" {
 
 resource "aws_secretsmanager_secret_version" "google_client_id_placeholder" {
   secret_id     = aws_secretsmanager_secret.google_client_id.id
-  secret_string = "REPLACE_ME"
-
-  lifecycle {
-    ignore_changes = [secret_string]
-  }
+  secret_string = var.google_client_id
 }
 
 resource "aws_secretsmanager_secret" "session_secret" {

@@ -652,11 +652,12 @@ The frontend also needs `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (same client ID) so the
 "Sign in with Google" button can initialise.
 
 > **Build-time, not runtime:** `NEXT_PUBLIC_*` variables are inlined into the Next.js
-> bundle **when the image is built**, not read at runtime. `make ecr-push` bakes
-> `NEXT_PUBLIC_GOOGLE_CLIENT_ID` into the frontend image automatically — it resolves the
-> value from `frontend/.env` (or an env override). Just make sure `frontend/.env` has
-> `NEXT_PUBLIC_GOOGLE_CLIENT_ID` set before you build. Setting it only on the ECS task has
-> no effect and the button will fail with `Missing required parameter: client_id`.
+> bundle **when the image is built**, not read at runtime. `make ecr-push` bakes the client
+> ID into the frontend image automatically — it reads the `google_client_id` Terraform
+> output (set via `google_client_id` in `terraform.tfvars`), the same way it resolves the
+> API URL. Set `google_client_id` in `terraform.tfvars` and run `terraform apply` before
+> building. Setting the value only on the ECS task has no effect and the button will fail
+> with `Missing required parameter: client_id`.
 
 Generate a session secret:
 
@@ -666,21 +667,19 @@ openssl rand -hex 64
 
 ### 5. Production deployment (AWS)
 
-For production, the client ID and session secret are stored in AWS Secrets Manager
-and injected into the ECS task as environment variables:
+The backend reads `GOOGLE_CLIENT_ID` and `SESSION_SECRET` from Secrets Manager (injected
+into the ECS task). The client ID is **public**, so it is managed by Terraform via the
+`google_client_id` variable in `terraform.tfvars` — `terraform apply` writes it into the
+`fragile/prod/google-client-id` secret. Only the session secret must be set out-of-band:
 
-| Secret name | Maps to env var |
+| Secret | Source |
 |---|---|
-| `fragile/prod/google-client-id` | `GOOGLE_CLIENT_ID` |
-| `fragile/prod/session-secret` | `SESSION_SECRET` |
+| `fragile/prod/google-client-id` → `GOOGLE_CLIENT_ID` | `google_client_id` in `terraform.tfvars` (via `terraform apply`) |
+| `fragile/prod/session-secret` → `SESSION_SECRET` | Set out-of-band (it is a real secret) |
 
-Populate these via the AWS Console or CLI:
+Set the session secret via the AWS Console or CLI (once):
 
 ```bash
-aws secretsmanager put-secret-value \
-  --secret-id fragile/prod/google-client-id \
-  --secret-string "YOUR_CLIENT_ID"
-
 aws secretsmanager put-secret-value \
   --secret-id fragile/prod/session-secret \
   --secret-string "$(openssl rand -hex 64)"

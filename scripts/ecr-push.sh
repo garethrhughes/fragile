@@ -98,9 +98,9 @@ resolve_api_url() {
   fi
 }
 
-# NEXT_PUBLIC_GOOGLE_CLIENT_ID is also baked in at build time. Resolve it from
-# the environment (override) or from frontend/.env — the same file used for
-# local dev — so no manual export is needed for a normal build.
+# NEXT_PUBLIC_GOOGLE_CLIENT_ID is also baked in at build time. Read it from the
+# google_client_id Terraform output (env override for exceptional cases) —
+# same pattern as resolve_api_url.
 resolve_google_client_id() {
   [[ "$BUILD_FRONTEND" == "true" ]] || return 0
 
@@ -109,17 +109,16 @@ resolve_google_client_id() {
     return
   fi
 
-  local env_file="$REPO_ROOT/frontend/.env"
-  if [[ -f "$env_file" ]]; then
-    NEXT_PUBLIC_GOOGLE_CLIENT_ID="$(grep -E '^NEXT_PUBLIC_GOOGLE_CLIENT_ID=' "$env_file" | tail -1 | cut -d= -f2- | tr -d '"'"'"' \r')"
-  fi
+  echo "==> Reading google_client_id from Terraform outputs..."
+  pushd "$TF_DIR" >/dev/null
+  NEXT_PUBLIC_GOOGLE_CLIENT_ID="$(terraform output -raw google_client_id 2>/dev/null)"
+  popd >/dev/null
 
-  if [[ -z "${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}" ]]; then
-    echo "ERROR: NEXT_PUBLIC_GOOGLE_CLIENT_ID not found in environment or $env_file." >&2
-    echo "       Add it to frontend/.env or export it before building." >&2
+  if [[ -z "$NEXT_PUBLIC_GOOGLE_CLIENT_ID" ]]; then
+    echo "ERROR: Could not read google_client_id from Terraform. Have you run terraform apply?" >&2
+    echo "       Alternatively, set NEXT_PUBLIC_GOOGLE_CLIENT_ID env var." >&2
     exit 1
   fi
-  echo "    Using NEXT_PUBLIC_GOOGLE_CLIENT_ID from frontend/.env."
 }
 
 resolve_ecr_urls

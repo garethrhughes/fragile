@@ -82,6 +82,8 @@ module "secrets" {
   source      = "../../modules/secrets"
   environment = var.environment
   aws_region  = var.aws_region
+
+  google_client_id = var.google_client_id
 }
 
 # ── RDS ────────────────────────────────────────────────────
