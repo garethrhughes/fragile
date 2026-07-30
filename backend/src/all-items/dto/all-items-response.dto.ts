@@ -186,6 +186,8 @@ export interface HealthCheckTrendPoint {
   stabilityScore: number;
   /** null when the board completed nothing that week. */
   roadmapScore: number | null;
+  /** Support load % for that week (support / totalItems). Context only (proposal 0076). */
+  supportLoadScore: number;
 }
 
 export interface HealthCheckBoard {
@@ -199,6 +201,12 @@ export interface HealthCheckBoard {
   roadmapBand: HealthBand | null;
   /** This team's roadmap-delivery target (%), used for banding + attainment. */
   roadmapDeliveryTarget: number;
+  /**
+   * Support load: share of the week's working set that was support/reactive
+   * (support / totalItems × 100). Context only — not RAG-banded, not in the
+   * overall/health score (proposal 0076).
+   */
+  supportLoadScore: number;
   volume: HealthCheckVolume;
   /** Selected week + prior 3 weeks, oldest first. */
   trend: HealthCheckTrendPoint[];
@@ -226,4 +234,8 @@ export interface HealthCheckReport {
    * every team is null (proposal 0073).
    */
   overallRoadmapScore: number | null;
+  /** Org support load: simple mean of each team's supportLoadScore (%). Context only (proposal 0076). */
+  overallSupportLoad: number;
+  /** Total support items across all boards this week (proposal 0076). */
+  totalSupportCount: number;
 }

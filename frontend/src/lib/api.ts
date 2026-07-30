@@ -1279,6 +1279,8 @@ export interface HealthCheckTrendPoint {
   week: string
   stabilityScore: number
   roadmapScore: number | null
+  /** Support load % for that week. Context only (proposal 0076). */
+  supportLoadScore: number
 }
 
 export interface HealthCheckBoard {
@@ -1290,6 +1292,8 @@ export interface HealthCheckBoard {
   roadmapBand: HealthBand | null
   /** This team's roadmap-delivery target (%), used for banding + attainment. */
   roadmapDeliveryTarget: number
+  /** Support load: share of the week's work that was support/reactive. Context only. */
+  supportLoadScore: number
   volume: HealthCheckVolume
   trend: HealthCheckTrendPoint[]
 }
@@ -1309,6 +1313,10 @@ export interface HealthCheckReport {
   overallStabilityScore: number
   /** Org overall roadmap delivery: mean attainment vs each team's target; null if all n/a. */
   overallRoadmapScore: number | null
+  /** Org support load: mean of team support-load percentages. Context only (proposal 0076). */
+  overallSupportLoad: number
+  /** Total support items across all boards this week. */
+  totalSupportCount: number
 }
 
 export type AllItemsFilter = 'added-mid-sprint' | 'not-on-roadmap' | 'support' | 'ttb-support'

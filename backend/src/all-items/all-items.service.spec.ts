@@ -1804,5 +1804,70 @@ describe('AllItemsService', () => {
 
       expect(result.healthCheck?.overallRoadmapScore).toBeNull();
     });
+
+    // ---- Support Load (proposal 0076) ----
+
+    /** Set up one scrum board where some working-set issues are support-labelled. */
+    function setupSupportBoard(committed: string[], supportKeys: string[]) {
+      const board = makeBoard({ boardId: 'ACC', boardType: 'scrum', supportLabels: ['support'] });
+      const issues = committed.map((key) =>
+        makeIssue({ key, boardId: 'ACC', labels: supportKeys.includes(key) ? ['support'] : [] }),
+      );
+      boardConfigRepo.find.mockResolvedValue([board]);
+      issueRepo.find.mockResolvedValue(issues);
+      sprintRepo.createQueryBuilder.mockImplementation(() => makeQb([makeSprint({ id: 'sprint-acc', boardId: 'ACC' })]));
+      sprintMembership.reconstructMany.mockResolvedValue(
+        new Map([['sprint-acc', membershipWith(committed)]]),
+      );
+      roadmapConfigRepo.find.mockResolvedValue([]);
+      changelogRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+      issueLinkRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+      jpdIdeaRepo.find.mockResolvedValue([]);
+    }
+
+    it('computes per-board supportLoadScore = round(support / totalItems * 100)', async () => {
+      // 4 items, 1 support -> 25%
+      setupSupportBoard(['ACC-1', 'ACC-2', 'ACC-3', 'ACC-4'], ['ACC-1']);
+
+      const result = await service.getAllItems('2026-W20', undefined);
+
+      expect(result.healthCheck?.boards[0].supportLoadScore).toBe(25);
+    });
+
+    it('includes supportLoadScore in each trend point', async () => {
+      setupSupportBoard(['ACC-1', 'ACC-2', 'ACC-3', 'ACC-4'], ['ACC-1']);
+
+      const result = await service.getAllItems('2026-W20', undefined);
+      const trend = result.healthCheck?.boards[0].trend ?? [];
+
+      expect(trend.length).toBeGreaterThan(0);
+      expect(trend.every((t) => typeof t.supportLoadScore === 'number')).toBe(true);
+    });
+
+    it('computes overallSupportLoad as the mean of board support-load percentages', async () => {
+      setupSupportBoard(['ACC-1', 'ACC-2', 'ACC-3', 'ACC-4'], ['ACC-1', 'ACC-2']); // 2/4 = 50%
+
+      const result = await service.getAllItems('2026-W20', undefined);
+
+      expect(result.healthCheck?.overallSupportLoad).toBe(50);
+    });
+
+    it('sums totalSupportCount across boards', async () => {
+      setupSupportBoard(['ACC-1', 'ACC-2', 'ACC-3'], ['ACC-1', 'ACC-2']);
+
+      const result = await service.getAllItems('2026-W20', undefined);
+
+      expect(result.healthCheck?.totalSupportCount).toBe(2);
+    });
+
+    it('support load does not affect overall stability or roadmap scores', async () => {
+      setupSupportBoard(['ACC-1', 'ACC-2', 'ACC-3', 'ACC-4'], ['ACC-1', 'ACC-2', 'ACC-3', 'ACC-4']); // 100% support
+
+      const result = await service.getAllItems('2026-W20', undefined);
+
+      // 100% committed -> stability 100 regardless of support load
+      expect(result.healthCheck?.overallStabilityScore).toBe(100);
+      expect(result.healthCheck?.boards[0].stabilityScore).toBe(100);
+    });
   });
 });

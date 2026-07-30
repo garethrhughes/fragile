@@ -117,3 +117,13 @@ export function mean(values: readonly (number | null)[]): number | null {
   const sum = present.reduce((acc, v) => acc + v, 0);
   return Math.round(sum / present.length);
 }
+
+/**
+ * Support load as a 0–100 percentage: the share of a team's weekly working set
+ * that was support/reactive work. Returns 0 when there are no items (proposal
+ * 0076). Shown as context only — never RAG-banded or fed into a health score.
+ */
+export function supportLoad(supportCount: number, totalItems: number): number {
+  if (totalItems <= 0) return 0;
+  return Math.round((supportCount / totalItems) * 100);
+}

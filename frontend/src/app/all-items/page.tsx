@@ -494,6 +494,15 @@ function AllItemsPageInner() {
             <HealthCheckPanel report={pageState.data.healthCheck} />
           )}
 
+          {/* ── Pulse report section — visually separated from the Health Check above ── */}
+          <div className="space-y-6 border-t border-border pt-6">
+            <div>
+              <h2 className="text-lg font-bold">Pulse report</h2>
+              <p className="text-xs text-muted">
+                Per-board activity breakdown for the selected week
+              </p>
+            </div>
+
           {/* Overall score + totals bar */}
           <div className="flex items-stretch gap-3">
             {/* Overall score */}
@@ -538,6 +547,7 @@ function AllItemsPageInner() {
               ))}
             </div>
           )}
+          </div>
         </>
       )}
     </div>

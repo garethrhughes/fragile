@@ -29,6 +29,7 @@ import {
   roadmapAttainment,
   buildDistributionFromBands,
   mean,
+  supportLoad,
   type HealthBand,
 } from '../lib/health-check-bands.js';
 import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
@@ -220,6 +221,14 @@ export class AllItemsService {
       : board.healthScore.roadmapAlignmentScore;
   }
 
+  /**
+   * Support load for a board: share of the week's working set that was support
+   * work (support / totalItems × 100). Context only (proposal 0076).
+   */
+  private supportLoadOf(board: BoardResultWithVolume): number {
+    return supportLoad(board.summary.supportCount, board.summary.totalItems);
+  }
+
   private async buildHealthCheck(
     week: string,
     currentBoards: BoardResultWithVolume[],
@@ -257,6 +266,7 @@ export class AllItemsService {
 
     const boards: HealthCheckBoard[] = currentBoards.map((board) => {
       const roadmapScore = this.roadmapScoreOf(board);
+      const supportLoadScore = this.supportLoadOf(board);
 
       // Build trend: oldest first (W-3, W-2, W-1, W).
       const trend: HealthCheckTrendPoint[] = [];
@@ -269,6 +279,7 @@ export class AllItemsService {
             week: pw,
             stabilityScore: priorBoard.healthScore.stabilityScore,
             roadmapScore: this.roadmapScoreOf(priorBoard),
+            supportLoadScore: this.supportLoadOf(priorBoard),
           });
         }
       }
@@ -276,6 +287,7 @@ export class AllItemsService {
         week,
         stabilityScore: board.healthScore.stabilityScore,
         roadmapScore,
+        supportLoadScore,
       });
 
       // boardType is available on the config; fall back to the result's type.
@@ -297,6 +309,7 @@ export class AllItemsService {
         roadmapBand:
           roadmapScore === null ? null : classifyRoadmapBand(roadmapScore, roadmapDeliveryTarget),
         roadmapDeliveryTarget,
+        supportLoadScore,
         volume: board.volume,
         trend,
       };
@@ -324,12 +337,20 @@ export class AllItemsService {
       ),
     );
 
+    // Org support load (proposal 0076): simple mean of each team's support-load
+    // percentage (every team weighted equally), plus the total support volume.
+    // Context only — not a health score, not RAG-banded.
+    const overallSupportLoad = mean(boards.map((b) => b.supportLoadScore)) ?? 0;
+    const totalSupportCount = boards.reduce((sum, b) => sum + b.volume.support, 0);
+
     return {
       boards,
       stabilityDistribution,
       roadmapDistribution,
       overallStabilityScore,
       overallRoadmapScore,
+      overallSupportLoad,
+      totalSupportCount,
     };
   }
 

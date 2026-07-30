@@ -9,6 +9,7 @@ import {
   roadmapAttainment,
   buildDistributionFromBands,
   mean,
+  supportLoad,
   ROADMAP_WATCH_MARGIN,
 } from './health-check-bands.js';
 
@@ -122,5 +123,18 @@ describe('mean (proposal 0073)', () => {
   it('returns null when there are no non-null values', () => {
     expect(mean([null, null])).toBeNull();
     expect(mean([])).toBeNull();
+  });
+});
+
+describe('supportLoad (proposal 0076)', () => {
+  it('is support / totalItems as a rounded percentage', () => {
+    expect(supportLoad(8, 30)).toBe(27); // 26.66 -> 27
+    expect(supportLoad(5, 10)).toBe(50);
+    expect(supportLoad(0, 12)).toBe(0);
+  });
+
+  it('returns 0 when there are no items (avoids divide-by-zero)', () => {
+    expect(supportLoad(0, 0)).toBe(0);
+    expect(supportLoad(3, 0)).toBe(0);
   });
 });

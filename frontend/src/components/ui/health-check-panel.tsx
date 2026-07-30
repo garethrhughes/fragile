@@ -18,6 +18,7 @@ import type {
   HealthBand,
   HealthBandDistribution,
 } from '@/lib/api'
+import { TrendSparkline } from './trend-sparkline'
 
 const ROADMAP_WATCH_MARGIN = 15
 
@@ -53,18 +54,15 @@ function ScoreBadge({
   )
 }
 
-/** Compact 4-point sparkline-style trend using simple bars. */
-function TrendBars({ points }: { points: (number | null)[] }) {
+/** Muted context badge (not RAG-coloured) — for support load. */
+function ContextBadge({ text, title }: { text: string; title?: string }) {
   return (
-    <div className="flex items-end gap-0.5" aria-hidden="true">
-      {points.map((p, i) => (
-        <div
-          key={i}
-          className="w-1.5 rounded-sm bg-blue-400"
-          style={{ height: `${Math.max(2, ((p ?? 0) / 100) * 24)}px` }}
-        />
-      ))}
-    </div>
+    <span
+      title={title}
+      className={`inline-flex items-center rounded-full border border-border bg-surface-alt px-2.5 py-0.5 text-sm font-medium text-muted${title ? ' cursor-help' : ''}`}
+    >
+      {text}
+    </span>
   )
 }
 
@@ -78,11 +76,9 @@ function volumeText(board: HealthCheckBoard): string {
 }
 
 function roadmapContext(board: HealthCheckBoard): string {
-  const support = board.volume.support
-  const supportSuffix = support > 0 ? ` · ${support} support (context)` : ''
-  if (board.roadmapScore === null) return `nothing completed${supportSuffix}`
+  if (board.roadmapScore === null) return 'nothing completed'
   const { completed, onRoadmap } = board.volume
-  return `${onRoadmap} of ${completed} completed on-roadmap${supportSuffix}`
+  return `${onRoadmap} of ${completed} completed on-roadmap`
 }
 
 /** Tooltip text explaining the target-relative roadmap band for a team. */
@@ -110,14 +106,39 @@ const ORG_ROADMAP_TOOLTIP =
   '(score ÷ target, capped at 100%). Teams that completed nothing this week are excluded. ' +
   'A team hitting its target counts as 100%, so different per-team targets are compared fairly.'
 
+const ORG_SUPPORT_TOOLTIP =
+  'Org support load: the average of each team\u2019s support-load percentage. Context only — not ' +
+  'part of the health score, since support demand is largely inbound and not team-controlled.'
+
+/** Per-team support-load tooltip. */
+function supportTooltip(board: HealthCheckBoard): string {
+  const total = board.volume.boardType === 'scrum'
+    ? board.volume.committed + board.volume.added
+    : board.volume.pulledIn
+  return (
+    `Support load: ${board.volume.support} of ${total} items this week were support/reactive ` +
+    `(${board.supportLoadScore}%). Shown as context — not part of the health score.`
+  )
+}
+
+/** "X% (n of m)" support-load label for a team. */
+function supportText(board: HealthCheckBoard): string {
+  const total = board.volume.boardType === 'scrum'
+    ? board.volume.committed + board.volume.added
+    : board.volume.pulledIn
+  return `${board.supportLoadScore}% (${board.volume.support} of ${total})`
+}
+
 function OrgScore({
   label,
   score,
   title,
+  subtitle,
 }: {
   label: string
   score: number | null
   title: string
+  subtitle?: string
 }) {
   return (
     <div
@@ -126,6 +147,7 @@ function OrgScore({
     >
       <span className="text-lg font-bold leading-none">{score === null ? 'n/a' : `${score}%`}</span>
       <span className="mt-0.5 text-[10px] uppercase tracking-wide text-muted">{label}</span>
+      {subtitle && <span className="text-[10px] text-muted">{subtitle}</span>}
     </div>
   )
 }
@@ -176,7 +198,7 @@ export function HealthCheckPanel({ report }: { report: HealthCheckReport }) {
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:items-end">
-          {/* Org overall scores (proposal 0073) */}
+          {/* Org overall scores (proposal 0073 + 0076) */}
           <div className="flex gap-2">
             <OrgScore
               label="Org stability"
@@ -187,6 +209,12 @@ export function HealthCheckPanel({ report }: { report: HealthCheckReport }) {
               label="Org roadmap"
               score={report.overallRoadmapScore}
               title={ORG_ROADMAP_TOOLTIP}
+            />
+            <OrgScore
+              label="Support load"
+              score={report.overallSupportLoad}
+              subtitle={`${report.totalSupportCount} items`}
+              title={ORG_SUPPORT_TOOLTIP}
             />
           </div>
           <DistributionBar label="Stability" dist={report.stabilityDistribution} />
@@ -209,6 +237,9 @@ export function HealthCheckPanel({ report }: { report: HealthCheckReport }) {
                 </th>
                 <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted">
                   Roadmap delivery
+                </th>
+                <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted">
+                  Support load
                 </th>
                 <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wide text-muted">
                   4-wk trend
@@ -246,16 +277,34 @@ export function HealthCheckPanel({ report }: { report: HealthCheckReport }) {
                     <div className="mt-1 text-xs text-muted">{roadmapContext(board)}</div>
                   </td>
                   <td className="px-3 py-3">
-                    <div className="flex flex-col items-center gap-1">
-                      <div className="flex items-center gap-3">
-                        <div className="flex flex-col items-center">
-                          <TrendBars points={board.trend.map((t) => t.stabilityScore)} />
-                          <span className="text-[10px] text-muted">stab</span>
-                        </div>
-                        <div className="flex flex-col items-center">
-                          <TrendBars points={board.trend.map((t) => t.roadmapScore)} />
-                          <span className="text-[10px] text-muted">road</span>
-                        </div>
+                    <ContextBadge text={supportText(board)} title={supportTooltip(board)} />
+                    <div className="mt-1 text-xs text-muted">context only</div>
+                  </td>
+                  <td className="px-3 py-3">
+                    <div className="flex items-center justify-center gap-3">
+                      <div className="flex flex-col items-center">
+                        <TrendSparkline
+                          points={board.trend.map((t) => t.stabilityScore)}
+                          color="#3b82f6"
+                          label={`Stability trend for ${board.boardId}`}
+                        />
+                        <span className="text-[10px] text-muted">stab</span>
+                      </div>
+                      <div className="flex flex-col items-center">
+                        <TrendSparkline
+                          points={board.trend.map((t) => t.roadmapScore)}
+                          color="#22c55e"
+                          label={`Roadmap trend for ${board.boardId}`}
+                        />
+                        <span className="text-[10px] text-muted">road</span>
+                      </div>
+                      <div className="flex flex-col items-center">
+                        <TrendSparkline
+                          points={board.trend.map((t) => t.supportLoadScore)}
+                          color="#94a3b8"
+                          label={`Support load trend for ${board.boardId}`}
+                        />
+                        <span className="text-[10px] text-muted">supp</span>
                       </div>
                     </div>
                   </td>
