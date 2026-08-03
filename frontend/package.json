@@ -15,7 +15,7 @@
   "dependencies": {
     "@react-oauth/google": "^0.13.5",
     "lucide-react": "^0.575.0",
-    "next": "16.2.6",
+    "next": "16.2.11",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "recharts": "^3.8.1",
@@ -29,7 +29,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitest/coverage-v8": "^4.0.18",
-    "eslint": "^9",
+    "eslint": "^10",
     "eslint-config-next": "16.1.6",
     "jsdom": "^29.0.2",
     "tailwindcss": "^4",
