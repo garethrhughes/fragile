@@ -51,7 +51,6 @@ function config(overrides: Partial<BoardConfig> = {}): BoardConfig {
     supportLinkTypes: [],
     supportEpics: [],
     triageBoardKey: null,
-    roadmapDeliveryTarget: 80,
     ...overrides,
   } as unknown as BoardConfig;
 }

@@ -35,8 +35,6 @@ export interface BoardConfig {
   supportLinkTypes: string[];
   triageBoardKey: string | null;
   supportEpics: string[];
-  /** Roadmap-delivery target (%) for the Health Check; default 80. */
-  roadmapDeliveryTarget: number;
 }
 
 export interface SprintAccuracy {
