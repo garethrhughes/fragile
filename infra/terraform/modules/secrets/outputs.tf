@@ -15,6 +15,11 @@ output "google_client_id_secret_arn" {
   value       = aws_secretsmanager_secret.google_client_id.arn
 }
 
+output "google_client_secret_secret_arn" {
+  description = "ARN of the Secrets Manager secret for the Google OAuth client secret."
+  value       = aws_secretsmanager_secret.google_client_secret.arn
+}
+
 output "session_secret_secret_arn" {
   description = "ARN of the Secrets Manager secret for the session signing secret."
   value       = aws_secretsmanager_secret.session_secret.arn

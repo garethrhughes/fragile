@@ -55,7 +55,29 @@ resource "aws_secretsmanager_secret" "google_client_id" {
 
 resource "aws_secretsmanager_secret_version" "google_client_id_placeholder" {
   secret_id     = aws_secretsmanager_secret.google_client_id.id
-  secret_string = var.google_client_id
+  secret_string = "REPLACE_ME"
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
+resource "aws_secretsmanager_secret" "google_client_secret" {
+  name        = "fragile/${var.environment}/google-client-secret"
+  description = "Google OAuth client secret for the Fragile application."
+
+  tags = {
+    Name = "fragile-${var.environment}-google-client-secret"
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "google_client_secret_placeholder" {
+  secret_id     = aws_secretsmanager_secret.google_client_secret.id
+  secret_string = "REPLACE_ME"
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
 }
 
 resource "aws_secretsmanager_secret" "session_secret" {

@@ -37,8 +37,11 @@ export class AuthController {
       const { user, token } = await this.authService.verifyGoogleToken(body.credential);
 
       res.cookie(COOKIE_NAME, token, {
-        ...this.authService.cookieOptions,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
         maxAge: this.authService.cookieMaxAge,
+        path: '/',
       });
 
       return {
@@ -79,8 +82,7 @@ export class AuthController {
   @Post('logout')
   @HttpCode(200)
   logout(@Res({ passthrough: true }) res: Response) {
-    const { path, domain } = this.authService.cookieOptions;
-    res.clearCookie(COOKIE_NAME, { path, ...(domain ? { domain } : {}) });
+    res.clearCookie(COOKIE_NAME, { path: '/' });
     return { ok: true };
   }
 }

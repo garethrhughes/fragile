@@ -1,9 +1,8 @@
 /**
- * HealthcheckModule — weekly engineering healthcheck report (ADR 0070).
+ * AllItemsModule — weekly cross-board activity report.
  *
- * Replaces the former AllItemsModule (Pulse). Isolated feature module; reuses
- * SprintMembershipService, the shared support classifier, and roadmap
- * classification helpers.
+ * NOTE: Bespoke MyPass-only report (feature 0012, proposal 0062).
+ * Fully isolated module. Can be deleted without affecting any other module.
  */
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
@@ -18,8 +17,8 @@ import {
   RoadmapConfig,
 } from '../database/entities/index.js';
 import { SprintMembershipModule } from '../sprint-membership/sprint-membership.module.js';
-import { HealthcheckController } from './healthcheck.controller.js';
-import { HealthcheckService } from './healthcheck.service.js';
+import { AllItemsController } from './all-items.controller.js';
+import { AllItemsService } from './all-items.service.js';
 
 @Module({
   imports: [
@@ -35,7 +34,7 @@ import { HealthcheckService } from './healthcheck.service.js';
     ]),
     SprintMembershipModule,
   ],
-  controllers: [HealthcheckController],
-  providers: [HealthcheckService],
+  controllers: [AllItemsController],
+  providers: [AllItemsService],
 })
-export class HealthcheckModule {}
+export class AllItemsModule {}
