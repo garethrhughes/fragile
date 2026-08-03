@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart3, Target, Map, Settings, Timer, AlertCircle, Sun, Moon, Headphones, Activity, LogOut, Users, KeyRound } from 'lucide-react'
+import { BarChart3, Target, Map, Settings, Timer, AlertCircle, Sun, Moon, Headphones, Activity, LogOut, Users, KeyRound, Bug } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useDarkMode } from '@/hooks/use-dark-mode'
 import { useAuth } from '@/hooks/use-auth'
@@ -20,7 +20,7 @@ interface NavItem {
  */
 const NAV_GROUPS: NavItem[][] = [
   [
-    { label: 'Pulse', href: '/all-items', icon: <Activity className="h-5 w-5" /> },
+    { label: 'Healthcheck', href: '/healthcheck', icon: <Activity className="h-5 w-5" /> },
   ],
   [
     { label: 'DORA', href: '/dora', icon: <BarChart3 className="h-5 w-5" /> },
@@ -49,6 +49,12 @@ const USERS_ITEM: NavItem = {
   icon: <Users className="h-5 w-5" />,
 }
 
+const DEBUG_ITEM: NavItem = {
+  label: 'Debug',
+  href: '/debug',
+  icon: <Bug className="h-5 w-5" />,
+}
+
 export function Sidebar() {
   const pathname = usePathname()
   const { dark, toggle: toggleDark } = useDarkMode()
@@ -56,6 +62,7 @@ export function Sidebar() {
 
   const settingsActive = pathname.startsWith(SETTINGS_ITEM.href)
   const usersActive = pathname.startsWith(USERS_ITEM.href)
+  const debugActive = pathname.startsWith(DEBUG_ITEM.href)
 
   const handleSignOut = async () => {
     try {
@@ -161,6 +168,23 @@ export function Sidebar() {
               {USERS_ITEM.icon}
             </span>
             {USERS_ITEM.label}
+          </Link>
+        )}
+
+        {/* Debug link — admin only */}
+        {isAdmin && (
+          <Link
+            href={DEBUG_ITEM.href}
+            className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+              debugActive
+                ? 'bg-surface-active text-squirrel-700'
+                : 'text-text-secondary hover:bg-surface-raised'
+            }`}
+          >
+            <span className={debugActive ? 'text-squirrel-500' : 'text-text-muted'}>
+              {DEBUG_ITEM.icon}
+            </span>
+            {DEBUG_ITEM.label}
           </Link>
         )}
 

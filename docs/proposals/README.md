@@ -72,3 +72,5 @@
 | [0073](0073-health-check-org-scores-and-roadmap-targets.md) | Health Check Org Overall Scores & Per-Team Roadmap Targets | Accepted | 2026-07-28 |
 | [0074](0074-google-sso-authentication.md) | Google SSO Authentication & Role-Based Access Control | Accepted | 2026-07-28 |
 | [0075](0075-remove-custom-reports-and-api-key-auth.md) | Remove Custom Reports & Add API-Key Authentication | Accepted | 2026-07-28 |
+| [0076](0076-healthcheck-report.md) | Healthcheck Report (replaces Pulse) | Accepted | 2026-08-03 |
+| [0077](0077-ticket-debug-page.md) | Ticket Debug Page | Accepted | 2026-08-03 |

@@ -1,9 +1,26 @@
 # 0068 — Google SSO Authentication Replaces WAF IP-Allowlist
 
 **Date:** 2026-07-28
-**Status:** Accepted
+**Status:** Amended — SSO accepted; WAF removal reversed (see Amendment below)
 **Deciders:** Architect Agent, Developer Agent, Infosec Agent
 **Proposal:** docs/proposals/0074-google-sso-authentication.md
+
+> **Amendment (2026-07-28) — WAF removal reversed.**
+> The decision to **remove** the CloudFront WAF IP-allowlist was **not** carried through.
+> The `terraform apply` that would have deleted the WebACL failed
+> (`WAFAssociatedItemException` — the WebACL was still associated with the CloudFront
+> distributions), and the WAF was restored. The **WAF IP-allowlist (VPN requirement) remains
+> in place** alongside Google SSO — the two now operate as **defense in depth** (network gate
+> + application auth), not one replacing the other.
+>
+> Net effect of ADR 0068 as it actually stands:
+> - ✅ Google SSO application-level authentication — **in place** (supersedes ADR 0020).
+> - ❌ WAF IP-allowlist removal — **reverted**; the WAF remains active. **ADR 0034 is NOT
+>   superseded** and stays `Accepted`.
+>
+> A future change may remove the WAF again, but must do so in two applies: (1) drop
+> `web_acl_id` from the CloudFront distributions and let it propagate, (2) destroy the WebACL —
+> to avoid the association error hit here.
 
 ## Context
 

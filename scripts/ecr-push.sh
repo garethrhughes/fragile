@@ -98,8 +98,33 @@ resolve_api_url() {
   fi
 }
 
+# NEXT_PUBLIC_GOOGLE_CLIENT_ID is also baked in at build time. Read it from the
+# google_client_id Terraform output (env override for exceptional cases) —
+# same pattern as resolve_api_url.
+resolve_google_client_id() {
+  [[ "$BUILD_FRONTEND" == "true" ]] || return 0
+
+  if [[ -n "${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}" ]]; then
+    echo "    Using NEXT_PUBLIC_GOOGLE_CLIENT_ID from environment."
+    return
+  fi
+
+  echo "==> Reading google_client_id from Terraform outputs..."
+  pushd "$TF_DIR" >/dev/null
+  NEXT_PUBLIC_GOOGLE_CLIENT_ID="$(terraform output -raw google_client_id 2>/dev/null)"
+  popd >/dev/null
+
+  if [[ -z "$NEXT_PUBLIC_GOOGLE_CLIENT_ID" ]]; then
+    echo "ERROR: Could not read google_client_id from Terraform. Have you run terraform apply?" >&2
+    echo "       Alternatively, set NEXT_PUBLIC_GOOGLE_CLIENT_ID env var." >&2
+    exit 1
+  fi
+}
+
 resolve_ecr_urls
 resolve_api_url
+resolve_google_client_id
+
 echo "==> Backend ECR  : $ECR_BACKEND_URL"
 echo "==> Frontend ECR : $ECR_FRONTEND_URL"
 echo "==> API URL      : $NEXT_PUBLIC_API_URL"
@@ -157,7 +182,8 @@ if [[ "$BUILD_FRONTEND" == "true" ]]; then
     "frontend" \
     "$REPO_ROOT/frontend" \
     "$ECR_FRONTEND_URL" \
-    --build-arg "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL"
+    --build-arg "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" \
+    --build-arg "NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID"
 fi
 
 echo

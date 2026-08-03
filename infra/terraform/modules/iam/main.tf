@@ -64,7 +64,6 @@ data "aws_iam_policy_document" "ecs_execution_secrets" {
       var.db_password_secret_arn,
       var.jira_api_token_secret_arn,
       var.google_client_id_secret_arn,
-      var.google_client_secret_secret_arn,
       var.session_secret_secret_arn,
     ]
   }
@@ -133,7 +132,6 @@ data "aws_iam_policy_document" "backend_task_permissions" {
       var.db_password_secret_arn,
       var.jira_api_token_secret_arn,
       var.google_client_id_secret_arn,
-      var.google_client_secret_secret_arn,
       var.session_secret_secret_arn,
     ]
   }
@@ -278,8 +276,8 @@ data "aws_iam_policy_document" "ci_permissions" {
   # PassRole -- required for CI to pass task/execution/infrastructure roles
   # when triggering ECS deployments. Scoped to the specific role ARNs.
   statement {
-    sid    = "PassECSRoles"
-    effect = "Allow"
+    sid     = "PassECSRoles"
+    effect  = "Allow"
     actions = ["iam:PassRole"]
     resources = [
       aws_iam_role.ecs_execution.arn,

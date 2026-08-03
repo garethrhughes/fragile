@@ -22,6 +22,9 @@ export class AuthService {
   private readonly allowedDomain: string;
   private readonly jwtSecret: string;
   private readonly cookieMaxAgeMs: number;
+  private readonly cookieDomain: string | undefined;
+  private readonly cookieSameSite: 'lax' | 'none';
+  private readonly cookieSecure: boolean;
 
   constructor(
     @InjectRepository(User)
@@ -32,6 +35,16 @@ export class AuthService {
     this.allowedDomain = this.configService.get<string>('GOOGLE_ALLOWED_DOMAIN', '');
     this.jwtSecret = this.configService.get<string>('SESSION_SECRET', '');
     this.cookieMaxAgeMs = this.configService.get<number>('SESSION_MAX_AGE_MS', 604800000);
+    // Cross-subdomain cookie sharing (frontend + api on different subdomains).
+    // COOKIE_DOMAIN e.g. ".ops.mypassglobal.com" — unset for localhost.
+    this.cookieDomain = this.configService.get<string>('COOKIE_DOMAIN', '') || undefined;
+    // Cross-site fetch (frontend → api) needs SameSite=None + Secure. Defaults
+    // to 'none' in production, 'lax' otherwise. Overridable via COOKIE_SAMESITE.
+    const isProd = process.env.NODE_ENV === 'production';
+    const sameSite = this.configService.get<string>('COOKIE_SAMESITE', isProd ? 'none' : 'lax');
+    this.cookieSameSite = sameSite === 'none' ? 'none' : 'lax';
+    // SameSite=None requires Secure. Secure also on in production regardless.
+    this.cookieSecure = isProd || this.cookieSameSite === 'none';
     this.googleClient = new OAuth2Client(this.googleClientId);
 
     // Fail closed: these are the only access controls now that the WAF is
@@ -149,5 +162,26 @@ export class AuthService {
 
   get cookieMaxAge(): number {
     return this.cookieMaxAgeMs;
+  }
+
+  /**
+   * Cookie options for the session cookie. `sameSite: 'none'` + `secure` are
+   * required in prod because the frontend and API are on different subdomains
+   * (a cross-site fetch); `domain` is set so the cookie is shared across them.
+   */
+  get cookieOptions(): {
+    httpOnly: boolean;
+    secure: boolean;
+    sameSite: 'lax' | 'none';
+    domain?: string;
+    path: string;
+  } {
+    return {
+      httpOnly: true,
+      secure: this.cookieSecure,
+      sameSite: this.cookieSameSite,
+      ...(this.cookieDomain ? { domain: this.cookieDomain } : {}),
+      path: '/',
+    };
   }
 }

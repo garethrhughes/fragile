@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { apiFetch, ApiError, getDoraAggregate, getDoraTrend } from './api';
+import { apiFetch, ApiError, getDoraAggregate, getDoraTrend, getIssueDebug } from './api';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -147,5 +147,38 @@ describe('getDoraAggregate — sprint mode params', () => {
 
     const [url] = mockFetch.mock.calls[0] as [string];
     expect(url).not.toContain('sprintId=');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Debug endpoint (feature 0020)
+// ---------------------------------------------------------------------------
+
+describe('getIssueDebug', () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+  });
+
+  it('requests the URL-encoded issue key', async () => {
+    await getIssueDebug('ACC-123');
+    const [url] = mockFetch.mock.calls[0] as [string];
+    expect(url).toContain('/api/debug/issue/ACC-123');
+  });
+
+  it('URL-encodes keys with unusual characters', async () => {
+    await getIssueDebug('A B/1');
+    const [url] = mockFetch.mock.calls[0] as [string];
+    expect(url).toContain('/api/debug/issue/A%20B%2F1');
+  });
+
+  it('surfaces a 404 as an ApiError with status 404', async () => {
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      text: () => Promise.resolve('No stored data'),
+    });
+    await expect(getIssueDebug('NOPE-1')).rejects.toMatchObject({ status: 404 });
   });
 });

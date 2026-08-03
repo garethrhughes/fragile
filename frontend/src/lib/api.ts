@@ -35,8 +35,6 @@ export interface BoardConfig {
   supportLinkTypes: string[];
   triageBoardKey: string | null;
   supportEpics: string[];
-  /** Roadmap-delivery target (%) for the Health Check; default 80. */
-  roadmapDeliveryTarget: number;
 }
 
 export interface SprintAccuracy {
@@ -1186,138 +1184,137 @@ export function getSupportSummary(
 }
 
 // ---------------------------------------------------------------------------
-// All Items — bespoke MyPass weekly cross-board report (feature 0012)
-// NOTE: Not for upstreaming. Isolated to this project.
+// Healthcheck — weekly org-wide engineering healthcheck (feature 0019, ADR 0070/0074)
+// Replaces the former Pulse (all-items) report. One pooled score per dimension
+// across all boards; no per-board breakdown.
 // ---------------------------------------------------------------------------
 
-export interface AllItemsIssue {
+export type HealthcheckBand = 'green' | 'amber' | 'red'
+
+export interface HealthcheckDimension {
+  /** Pooled percentage in [0,100], or null when N/A. */
+  score: number | null
+  /** Pooled matching-ticket count, or null when N/A. */
+  numerator: number | null
+  /** Pooled denominator (Σ started tickets across contributing boards). */
+  denominator: number
+  /** RAG band, or null when the score is N/A. */
+  band: HealthcheckBand | null
+}
+
+export interface HealthcheckTrendPoint {
+  week: string
+  stability: number | null
+  roadmap: number | null
+  support: number | null
+}
+
+export interface HealthcheckTicket {
   key: string
   summary: string
-  issueType: string
-  status: string
-  boardId: string
-  assignee: string | null
-  points: number | null
-  labels: string[]
-  jiraUrl: string
-  epicKey: string | null
-  sprintName: string | null
-  started: boolean
-  addedMidSprint: boolean
-  kanbanAdd: boolean
-  completed: boolean
-  onRoadmap: boolean
-  isSupport: boolean
-  isTtbSupport: boolean
-  /** Kanban only: true if currently on the board but not done or cancelled. */
-  inFlight: boolean
-}
-
-export interface AllItemsBoardSummary {
-  totalItems: number
-  startedCount: number
-  addedMidSprintCount: number
-  completedCount: number
-  onRoadmapCount: number
-  supportCount: number
-  ttbSupportCount: number
-  /** Kanban only: issues currently on the board, not done or cancelled. */
-  inFlightCount: number
-}
-
-export interface BoardHealthScore {
-  overall: number
-  roadmapAlignmentScore: number
-  supportBurdenScore: number
-  stabilityScore: number
-}
-
-export interface AllItemsBoardResult {
   boardId: string
   boardType: 'scrum' | 'kanban'
-  items: AllItemsIssue[]
-  summary: AllItemsBoardSummary
-  healthScore: BoardHealthScore
+  issueType: string
+  status: string
+  planned: boolean
+  onRoadmap: boolean
+  support: boolean
+  jiraUrl: string
 }
 
-export interface AllItemsTotals {
-  totalItems: number
-  startedCount: number
-  addedMidSprintCount: number
-  completedCount: number
-  onRoadmapCount: number
-  supportCount: number
-  ttbSupportCount: number
-  /** Kanban only: sum of inFlightCount across all boards. */
-  inFlightCount: number
-}
-
-export interface AllItemsResponse {
+export interface HealthcheckResponse {
   week: string
   weekStart: string
   weekEnd: string
-  boards: AllItemsBoardResult[]
-  totals: AllItemsTotals
-  /** Mean of all boards' healthScore.overall. 100 when no boards. */
-  overallScore: number
-  /**
-   * Engineering Health Check (feature 0014, proposal 0071).
-   * Present only for completed (non-current) weeks; absent otherwise.
-   */
-  healthCheck?: HealthCheckReport
+  /** Org-wide pooled scores for the selected week. */
+  stability: HealthcheckDimension
+  roadmap: HealthcheckDimension
+  support: HealthcheckDimension
+  /** Trailing 8-week org trend, oldest→newest, including the selected week. */
+  trend: HealthcheckTrendPoint[]
+  /** All tickets in the selected week's denominator, flagged by dimension. */
+  tickets: HealthcheckTicket[]
 }
 
-// --- Engineering Health Check (feature 0014, proposal 0071) ---
-
-export type HealthBand = 'healthy' | 'watch' | 'at-risk'
-
-export type HealthCheckVolume =
-  | { boardType: 'scrum'; committed: number; added: number; completed: number; onRoadmap: number; support: number }
-  | { boardType: 'kanban'; pulledIn: number; completed: number; onRoadmap: number; support: number }
-
-export interface HealthCheckTrendPoint {
-  week: string
-  stabilityScore: number
-  roadmapScore: number | null
-}
-
-export interface HealthCheckBoard {
-  boardId: string
-  boardType: 'scrum' | 'kanban'
-  stabilityScore: number
-  stabilityBand: HealthBand
-  roadmapScore: number | null
-  roadmapBand: HealthBand | null
-  /** This team's roadmap-delivery target (%), used for banding + attainment. */
-  roadmapDeliveryTarget: number
-  volume: HealthCheckVolume
-  trend: HealthCheckTrendPoint[]
-}
-
-export interface HealthBandDistribution {
-  healthy: number
-  watch: number
-  atRisk: number
-  na: number
-}
-
-export interface HealthCheckReport {
-  boards: HealthCheckBoard[]
-  stabilityDistribution: HealthBandDistribution
-  roadmapDistribution: HealthBandDistribution
-  /** Org overall stability: mean of team stability scores. */
-  overallStabilityScore: number
-  /** Org overall roadmap delivery: mean attainment vs each team's target; null if all n/a. */
-  overallRoadmapScore: number | null
-}
-
-export type AllItemsFilter = 'added-mid-sprint' | 'not-on-roadmap' | 'support' | 'ttb-support'
-
-export function getAllItems(week: string, filters?: AllItemsFilter[]): Promise<AllItemsResponse> {
-  const filterParam = filters && filters.length > 0 ? filters.join('|') : undefined
-  return apiFetch<AllItemsResponse>(
-    `/api/all-items${toQueryString({ week, filter: filterParam })}`,
+export function getHealthcheck(week?: string): Promise<HealthcheckResponse> {
+  return apiFetch<HealthcheckResponse>(
+    `/api/healthcheck${toQueryString({ week })}`,
   )
+}
+
+
+// ---------------------------------------------------------------------------
+// Debug — admin-only ticket inspection (feature 0020, ADR 0076)
+// Everything stored in the Postgres mirror for a single issue key.
+// ---------------------------------------------------------------------------
+
+export interface IssueDebugChangelogEntry {
+  id: number
+  field: string
+  fromValue: string | null
+  toValue: string | null
+  fromId: string | null
+  toId: string | null
+  changedAt: string
+}
+
+export interface IssueDebugSprintMembership {
+  sprintId: string
+  name: string | null
+  state: string | null
+  startDate: string | null
+  endDate: string | null
+  completeDate: string | null
+  boardId: string | null
+}
+
+export interface IssueDebugLink {
+  id: number
+  sourceIssueKey: string
+  targetIssueKey: string
+  linkTypeName: string
+  isInward: boolean
+}
+
+export interface IssueDebugRoadmapIdea {
+  key: string
+  summary: string
+  status: string
+  jpdKey: string
+  startDate: string | null
+  targetDate: string | null
+  matchReason: 'epic' | 'direct'
+}
+
+export interface IssueDebugIssue {
+  key: string
+  summary: string
+  status: string
+  statusId: string | null
+  issueType: string
+  fixVersion: string | null
+  points: number | null
+  boardId: string
+  epicKey: string | null
+  labels: string[]
+  priority: string | null
+  assignee: string | null
+  createdAt: string
+  updatedAt: string
+  inBacklog: boolean
+}
+
+export interface IssueDebugResponse {
+  issue: IssueDebugIssue
+  changelog: IssueDebugChangelogEntry[]
+  sprintMemberships: IssueDebugSprintMembership[]
+  linksAsSource: IssueDebugLink[]
+  linksAsTarget: IssueDebugLink[]
+  roadmapIdeas: IssueDebugRoadmapIdea[]
+}
+
+export function getIssueDebug(key: string): Promise<IssueDebugResponse> {
+  return apiFetch<IssueDebugResponse>(`/api/debug/issue/${encodeURIComponent(key)}`)
 }
 
 // ---- Auth (proposal 0074) ------------------------------------------------

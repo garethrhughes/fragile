@@ -63,3 +63,19 @@ variable "frontend_target_group_arn" {
   default     = null
   nullable    = true
 }
+
+variable "allowed_cidrs" {
+  description = "IPv4 CIDRs permitted to reach the frontend and backend via WAF. All other traffic is blocked."
+  type        = list(string)
+  # No default — must be supplied in terraform.tfvars.
+}
+
+variable "google_client_id" {
+  description = "Google OAuth client ID. Public (shipped to the browser), not a secret. Baked into the frontend bundle at build time and used by the backend to verify ID tokens. Supplied in terraform.tfvars."
+  type        = string
+}
+
+variable "google_allowed_domain" {
+  description = "Google Workspace domain permitted to log in (the token's hd claim must match). Enforced fail-closed."
+  type        = string
+}

@@ -17,9 +17,9 @@ import { classifyCycleTime } from '../metrics/cycle-time-bands.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
 import { extractCycles, resolveResetNames } from '../metrics/cycle.js';
 import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
+import { classifySupport } from './support-classification.js';
 import type {
   SupportTicketDto,
-  SupportMatchReason,
   SupportResult,
   SupportSummaryDto,
   SupportBoardBreakdown,
@@ -309,7 +309,6 @@ export class SupportService {
     // Step 5: Working time config (for cycle time calculation)
     const wtEntity = await this.workingTimeService.getConfig();
     const wtConfig = this.workingTimeService.toConfig(wtEntity);
-    const triagePrefix = triageBoardKey ? `${triageBoardKey}-` : null;
 
     // Reset status names for the cycle helper (proposal 0054).
     // Reuses the same boardEntryStatuses already loaded above for kanban-entry detection.
@@ -450,33 +449,16 @@ export class SupportService {
         totalIssues += 1;
       }
 
-      // --- Classify ---
-      const epicMatch =
-        supportEpics.length > 0 &&
-        issue.epicKey != null &&
-        supportEpics.includes(issue.epicKey.toUpperCase());
+      // --- Classify (shared classifier — ADR 0072) ---
+      const classification = classifySupport(
+        { epicKey: issue.epicKey ?? null, labels: Array.isArray(issue.labels) ? (issue.labels as string[]) : [] },
+        linksByIssue.get(issue.key) ?? [],
+        { supportEpics, supportLabels, supportLinkTypes, triageBoardKey },
+      );
 
-      const labelMatch =
-        supportLabels.length > 0 &&
-        Array.isArray(issue.labels) &&
-        (issue.labels as string[]).some((l) => supportLabels.includes(l));
+      if (!classification.isSupport || classification.matchReason === null) continue;
 
-      const linkMatch =
-        supportLinkTypes.length > 0 &&
-        triagePrefix !== null &&
-        (linksByIssue.get(issue.key) ?? []).some(
-          (lnk) =>
-            supportLinkTypes.includes(lnk.linkTypeName) &&
-            lnk.targetIssueKey.startsWith(triagePrefix),
-        );
-
-      if (!epicMatch && !labelMatch && !linkMatch) continue;
-
-      const reasons: string[] = [];
-      if (epicMatch) reasons.push('epic');
-      if (labelMatch) reasons.push('label');
-      if (linkMatch) reasons.push('link');
-      const matchReason = reasons.join('+') as SupportMatchReason;
+      const matchReason = classification.matchReason;
 
       let cycleTimeDays: number | null = null;
       let startedAt: string | null = null;

@@ -18,10 +18,11 @@ import { GapsModule } from './gaps/gaps.module.js';
 import { AppConfigModule } from './config/config.module.js';
 import { SprintReportModule } from './sprint-report/sprint-report.module.js';
 import { SupportModule } from './support/support.module.js';
-import { AllItemsModule } from './all-items/all-items.module.js';
+import { HealthcheckModule } from './healthcheck/healthcheck.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { UsersModule } from './users/users.module.js';
 import { ApiKeysModule } from './api-keys/api-keys.module.js';
+import { DebugModule } from './debug/debug.module.js';
 import { AuthenticatedGuard } from './auth/guards/authenticated.guard.js';
 
 // YamlConfigModule is intentionally NOT imported here directly.
@@ -64,10 +65,11 @@ import { AuthenticatedGuard } from './auth/guards/authenticated.guard.js';
     AppConfigModule,
     SprintReportModule,
     SupportModule,
-    AllItemsModule,
+    HealthcheckModule,
     AuthModule,
     UsersModule,
     ApiKeysModule,
+    DebugModule,
   ],
   providers: [
     {
