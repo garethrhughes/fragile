@@ -341,6 +341,15 @@ export class SprintMembershipService {
       } else if (wasAddedDuringSprint) {
         addedKeys.add(issueKey);
         if (!inSprintAtEnd) addedRemovedKeys.add(issueKey);
+      } else if (currentMemberKeys.has(issueKey)) {
+        // The issue is a current member of the sprint (per the JiraIssueSprint
+        // join table) but none of the start/added/carry-over signals fired.
+        // This happens when the only Sprint-field changelog for the sprint
+        // falls outside the [start, end] window — e.g. the "Complete Sprint"
+        // carry-over that Jira timestamps a few hundred ms AFTER completeDate
+        // (DATA-450 / sprint 4134). Such an issue was in the sprint and was
+        // never removed, so treat it as committed. See ADR 0077.
+        committedKeys.add(issueKey);
       }
     }
 
