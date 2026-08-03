@@ -22,8 +22,3 @@ variable "alb_arn" {
   description = "ARN of the internal ALB created by ECS Express Gateway. Used to create a CloudFront VPC Origin so CloudFront can reach the internal ALB."
   type        = string
 }
-
-variable "web_acl_arn" {
-  description = "ARN of the CloudFront-scoped WAFv2 WebACL to attach to both distributions."
-  type        = string
-}

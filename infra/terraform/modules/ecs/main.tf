@@ -71,29 +71,28 @@ resource "aws_ecs_task_definition" "backend" {
       ]
 
       environment = [
-        { name = "NODE_ENV", value = "production" },
-        { name = "PORT", value = "3001" },
-        { name = "DB_PORT", value = "5432" },
-        { name = "DB_DATABASE", value = "fragile" },
-        { name = "DB_USERNAME", value = "postgres" },
-        { name = "DB_HOST", value = var.rds_endpoint },
-        { name = "FRONTEND_URL", value = var.frontend_url },
-        { name = "GOOGLE_ALLOWED_DOMAIN", value = var.google_allowed_domain },
-        { name = "COOKIE_DOMAIN", value = var.cookie_domain },
+        { name = "NODE_ENV",                  value = "production" },
+        { name = "PORT",                      value = "3001" },
+        { name = "DB_PORT",                   value = "5432" },
+        { name = "DB_DATABASE",               value = "fragile" },
+        { name = "DB_USERNAME",               value = "postgres" },
+        { name = "DB_HOST",                   value = var.rds_endpoint },
+        { name = "FRONTEND_URL",              value = var.frontend_url },
         { name = "DORA_SNAPSHOT_LAMBDA_NAME", value = var.dora_snapshot_lambda_name },
-        { name = "AWS_REGION", value = var.aws_region },
-        { name = "USE_LAMBDA", value = "true" },
+        { name = "AWS_REGION",                value = var.aws_region },
+        { name = "USE_LAMBDA",                       value = "true" },
         { name = "SNAPSHOT_STALE_THRESHOLD_MINUTES", value = "2880" },
       ]
 
       secrets = [
-        { name = "DB_PASSWORD", valueFrom = var.db_password_secret_arn },
-        { name = "JIRA_API_TOKEN", valueFrom = var.jira_api_token_secret_arn },
-        { name = "JIRA_BASE_URL", valueFrom = var.jira_base_url_param_arn },
-        { name = "JIRA_USER_EMAIL", valueFrom = var.jira_user_email_param_arn },
-        { name = "TIMEZONE", valueFrom = var.timezone_param_arn },
-        { name = "GOOGLE_CLIENT_ID", valueFrom = var.google_client_id_secret_arn },
-        { name = "SESSION_SECRET", valueFrom = var.session_secret_secret_arn },
+        { name = "DB_PASSWORD",           valueFrom = var.db_password_secret_arn },
+        { name = "JIRA_API_TOKEN",        valueFrom = var.jira_api_token_secret_arn },
+        { name = "JIRA_BASE_URL",         valueFrom = var.jira_base_url_param_arn },
+        { name = "JIRA_USER_EMAIL",       valueFrom = var.jira_user_email_param_arn },
+        { name = "TIMEZONE",              valueFrom = var.timezone_param_arn },
+        { name = "GOOGLE_CLIENT_ID",      valueFrom = var.google_client_id_secret_arn },
+        { name = "GOOGLE_CLIENT_SECRET",  valueFrom = var.google_client_secret_secret_arn },
+        { name = "SESSION_SECRET",        valueFrom = var.session_secret_secret_arn },
       ]
 
       # wget is used (not curl) because the image is node:22-alpine which has
@@ -125,12 +124,12 @@ resource "aws_ecs_task_definition" "backend" {
 # ── Backend ECS service ───────────────────────────────────────────────────────
 
 resource "aws_ecs_service" "backend" {
-  name                              = "fragile-backend-svc"
-  cluster                           = aws_ecs_cluster.this.id
-  task_definition                   = aws_ecs_task_definition.backend.arn
-  desired_count                     = 1
-  launch_type                       = "FARGATE"
-  health_check_grace_period_seconds = 60
+  name                               = "fragile-backend-svc"
+  cluster                            = aws_ecs_cluster.this.id
+  task_definition                    = aws_ecs_task_definition.backend.arn
+  desired_count                      = 1
+  launch_type                        = "FARGATE"
+  health_check_grace_period_seconds  = 60
 
   # Allow Terraform to manage desired count without fighting autoscaling.
   lifecycle {
@@ -183,7 +182,7 @@ resource "aws_ecs_task_definition" "frontend" {
       environment = [
         { name = "NODE_ENV", value = "production" },
         { name = "HOSTNAME", value = "0.0.0.0" },
-        { name = "PORT", value = "3000" },
+        { name = "PORT",     value = "3000" },
       ]
 
       # wget is used (not curl) because the image is node:22-alpine which has
@@ -215,12 +214,12 @@ resource "aws_ecs_task_definition" "frontend" {
 # ── Frontend ECS service ──────────────────────────────────────────────────────
 
 resource "aws_ecs_service" "frontend" {
-  name                              = "fragile-frontend-svc"
-  cluster                           = aws_ecs_cluster.this.id
-  task_definition                   = aws_ecs_task_definition.frontend.arn
-  desired_count                     = 1
-  launch_type                       = "FARGATE"
-  health_check_grace_period_seconds = 60
+  name                               = "fragile-frontend-svc"
+  cluster                            = aws_ecs_cluster.this.id
+  task_definition                    = aws_ecs_task_definition.frontend.arn
+  desired_count                      = 1
+  launch_type                        = "FARGATE"
+  health_check_grace_period_seconds  = 60
 
   lifecycle {
     ignore_changes = [desired_count]
@@ -259,6 +258,11 @@ data "aws_lb" "express_gateway" {
   ]
 }
 
+data "aws_lb_listener" "https" {
+  load_balancer_arn = data.aws_lb.express_gateway.arn
+  port              = 443
+}
+
 data "aws_lb_listener" "http" {
   load_balancer_arn = data.aws_lb.express_gateway.arn
   port              = 80
@@ -267,11 +271,41 @@ data "aws_lb_listener" "http" {
 # ── ALB listener rules ────────────────────────────────────────────────────────
 # Route requests from CloudFront to the correct TG based on the
 # X-Fragile-Service custom header injected by each CloudFront distribution.
-#
-# The ECS-managed ("Express Gateway") ALB is created with an HTTP (80) listener
-# only. CloudFront terminates TLS and reaches the ALB over HTTP
-# (origin_protocol_policy = "http-only" in the cdn module), so there is no 443
-# listener on this ALB and the rules live only on the HTTP listener.
+# These rules live on both the HTTPS (443) and HTTP (80) listeners.
+
+resource "aws_lb_listener_rule" "https_backend" {
+  listener_arn = data.aws_lb_listener.https.arn
+  priority     = 10
+
+  action {
+    type             = "forward"
+    target_group_arn = var.backend_target_group_arn
+  }
+
+  condition {
+    http_header {
+      http_header_name = "X-Fragile-Service"
+      values           = ["backend"]
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "https_frontend" {
+  listener_arn = data.aws_lb_listener.https.arn
+  priority     = 20
+
+  action {
+    type             = "forward"
+    target_group_arn = var.frontend_target_group_arn
+  }
+
+  condition {
+    http_header {
+      http_header_name = "X-Fragile-Service"
+      values           = ["frontend"]
+    }
+  }
+}
 
 resource "aws_lb_listener_rule" "http_backend" {
   listener_arn = data.aws_lb_listener.http.arn

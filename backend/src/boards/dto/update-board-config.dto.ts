@@ -3,6 +3,9 @@ import {
   IsString,
   IsArray,
   IsIn,
+  IsInt,
+  Min,
+  Max,
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -152,4 +155,20 @@ export class UpdateBoardConfigDto {
   @IsArray()
   @IsString({ each: true })
   supportEpics?: string[];
+
+  @ApiPropertyOptional({
+    type: Number,
+    minimum: 0,
+    maximum: 100,
+    example: 80,
+    description:
+      'Roadmap-delivery target for this board as an integer percentage (0–100). ' +
+      'Drives target-relative RAG banding and org attainment in the Health Check. ' +
+      'Default 80; PLAT is seeded to 50. (Proposal 0073)',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  roadmapDeliveryTarget?: number;
 }

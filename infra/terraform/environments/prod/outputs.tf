@@ -43,8 +43,3 @@ output "frontend_custom_domain" {
   description = "The custom domain for the frontend service."
   value       = "https://${var.frontend_subdomain}.${var.domain_name}"
 }
-
-output "google_client_id" {
-  description = "Google OAuth client ID (public) — baked into the frontend bundle by ecr-push."
-  value       = var.google_client_id
-}

@@ -14,13 +14,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# NEXT_PUBLIC_* vars are baked into the client bundle at build time.
-# Pass them via --build-arg in the ecr-push script — the ECS runtime env
-# has no effect on NEXT_PUBLIC_ variables.
+# NEXT_PUBLIC_API_URL is baked into the client bundle at build time.
+# Pass it via --build-arg in the ecr-push script.
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
-ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=${NEXT_PUBLIC_GOOGLE_CLIENT_ID}
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
