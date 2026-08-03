@@ -30,6 +30,20 @@ describe('Healthcheck tools', () => {
         roadmap: { score: 50, numerator: 2, denominator: 4, band: 'red' },
         support: { score: 25, numerator: 1, denominator: 4, band: 'amber' },
         trend: [],
+        tickets: [
+          {
+            key: 'ACC-1',
+            summary: 'Example',
+            boardId: 'ACC',
+            boardType: 'scrum',
+            issueType: 'Story',
+            status: 'In Progress',
+            planned: true,
+            onRoadmap: false,
+            support: false,
+            jiraUrl: '',
+          },
+        ],
       };
       mockApiGet.mockResolvedValueOnce(mockSuccess(data));
 

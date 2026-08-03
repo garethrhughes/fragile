@@ -19,6 +19,11 @@ export interface HealthcheckResponse {
   support: HealthcheckDimension;
   /** Trailing 8-week org trend, oldest→newest, including the selected week. */
   trend: HealthcheckTrendPoint[];
+  /**
+   * All tickets in the selected week's denominator across all boards
+   * (first-ever start transition in the week), flagged by dimension.
+   */
+  tickets: HealthcheckTicketDto[];
 }
 
 export interface HealthcheckDimension {
@@ -38,4 +43,21 @@ export interface HealthcheckTrendPoint {
   stability: number | null;
   roadmap: number | null;
   support: number | null;
+}
+
+/**
+ * A ticket included in the selected week's denominator, with the dimensions it
+ * contributed to. `jiraUrl` is empty when JIRA_BASE_URL is not configured.
+ */
+export interface HealthcheckTicketDto {
+  key: string;
+  summary: string;
+  boardId: string;
+  boardType: 'scrum' | 'kanban';
+  issueType: string;
+  status: string;
+  planned: boolean;
+  onRoadmap: boolean;
+  support: boolean;
+  jiraUrl: string;
 }

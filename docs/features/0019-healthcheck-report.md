@@ -117,3 +117,7 @@ blended/obscured scoring, and lets the trend graph plot all three cleanly.
 - No persistence, no Zustand store — live-computed, URL-param driven (matches Pulse).
 - Trend requires recomputing the three scores for the trailing 8 weeks per board; design must
   keep this efficient (bulk changelog/membership queries, no N+1) per project rules.
+- **Follow-up (2026-08-03):** the response also returns a `tickets[]` array for the selected
+  week — every ticket in that week's denominator across all boards, flagged by dimension
+  (`planned`, `onRoadmap`, `support`). The frontend renders these as a sortable table under the
+  trend graph (Key, Summary, Board, Type, Status + three flag columns).

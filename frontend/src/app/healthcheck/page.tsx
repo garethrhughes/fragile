@@ -22,6 +22,7 @@ import {
 } from '@/lib/iso-week'
 import { HealthcheckScoreCard } from '@/components/ui/healthcheck-score-card'
 import { HealthcheckTrendChart } from '@/components/ui/healthcheck-trend-chart'
+import { HealthcheckTicketsTable } from '@/components/ui/healthcheck-tickets-table'
 
 type PageState =
   | { status: 'idle' }
@@ -142,6 +143,7 @@ function HealthcheckPageInner() {
             <HealthcheckScoreCard label="Support" dimension={pageState.data.support} lowerIsBetter />
           </div>
           <HealthcheckTrendChart trend={pageState.data.trend} />
+          <HealthcheckTicketsTable tickets={pageState.data.tickets} />
         </div>
       )}
     </div>

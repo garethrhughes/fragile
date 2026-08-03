@@ -1211,6 +1211,19 @@ export interface HealthcheckTrendPoint {
   support: number | null
 }
 
+export interface HealthcheckTicket {
+  key: string
+  summary: string
+  boardId: string
+  boardType: 'scrum' | 'kanban'
+  issueType: string
+  status: string
+  planned: boolean
+  onRoadmap: boolean
+  support: boolean
+  jiraUrl: string
+}
+
 export interface HealthcheckResponse {
   week: string
   weekStart: string
@@ -1221,6 +1234,8 @@ export interface HealthcheckResponse {
   support: HealthcheckDimension
   /** Trailing 8-week org trend, oldest→newest, including the selected week. */
   trend: HealthcheckTrendPoint[]
+  /** All tickets in the selected week's denominator, flagged by dimension. */
+  tickets: HealthcheckTicket[]
 }
 
 export function getHealthcheck(week?: string): Promise<HealthcheckResponse> {

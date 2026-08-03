@@ -259,4 +259,39 @@ describe('HealthcheckService', () => {
     expect(trend[trend.length - 1].week).toBe('2026-W30');
     expect(trend[0].week).toBe('2026-W23');
   });
+
+  it('returns the selected week tickets with dimension flags across all boards', async () => {
+    const issues = [
+      issue({ key: 'ACC-1', boardId: 'ACC', labels: ['support'] }),
+      issue({ key: 'ACC-2', boardId: 'ACC' }),
+      issue({ key: 'PLAT-1', boardId: 'PLAT' }),
+    ]
+    const changelogs = [
+      statusLog('ACC-1', 'In Progress', IN_WEEK),
+      statusLog('ACC-2', 'In Progress', IN_WEEK),
+      statusLog('PLAT-1', 'To Do', IN_WEEK),
+    ]
+    const service = await buildService({
+      configs: [
+        config({ boardId: 'ACC', supportLabels: ['support'] }),
+        config({ boardId: 'PLAT', boardType: 'kanban' }),
+      ],
+      issues,
+      changelogs,
+      sprints: [sprint({ boardId: 'ACC' })],
+      membership: new Map([['S1', membershipWith(['ACC-2'])]]),
+    })
+
+    const result = await service.getHealthcheck('2026-W30')
+    // ACC-1 (support), ACC-2 (planned), PLAT-1 (kanban denominator only) → 3 rows.
+    expect(result.tickets).toHaveLength(3)
+    const byKey = Object.fromEntries(result.tickets.map((t) => [t.key, t]))
+    expect(byKey['ACC-1']).toMatchObject({ boardId: 'ACC', support: true, planned: false })
+    expect(byKey['ACC-2']).toMatchObject({ boardId: 'ACC', planned: true })
+    expect(byKey['PLAT-1']).toMatchObject({ boardId: 'PLAT', boardType: 'kanban', planned: false, onRoadmap: false })
+    // JIRA_BASE_URL not configured in the mock → empty jiraUrl.
+    expect(byKey['ACC-1'].jiraUrl).toBe('')
+    // Sorted by board then key.
+    expect(result.tickets.map((t) => t.key)).toEqual(['ACC-1', 'ACC-2', 'PLAT-1'])
+  })
 });

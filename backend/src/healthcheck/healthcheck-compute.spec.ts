@@ -187,6 +187,74 @@ describe('computeBoardHealthcheck — support (all boards)', () => {
   });
 });
 
+describe('computeBoardHealthcheck — tickets', () => {
+  it('returns one ticket row per started ticket, flagged by dimension', () => {
+    const issues = [
+      issue({ key: 'ACC-1', summary: 'Planned + roadmap', issueType: 'Story', status: 'In Progress', labels: [] }),
+      issue({ key: 'ACC-2', summary: 'Support only', issueType: 'Bug', status: 'In Progress', labels: ['support'] }),
+    ];
+    const logs = new Map<string, JiraChangelog[]>([
+      ['ACC-1', [statusLog('ACC-1', 'In Progress', '2026-07-21T10:00:00Z')]],
+      ['ACC-2', [statusLog('ACC-2', 'In Progress', '2026-07-22T10:00:00Z')]],
+    ]);
+    const result = computeBoardHealthcheck(
+      baseInput({
+        issues,
+        statusChangelogsByIssue: logs,
+        committedKeysAt: (key) => key === 'ACC-1',
+        isRoadmapLinked: (key) => key === 'ACC-1',
+        supportConfig: { supportEpics: [], supportLabels: ['support'], supportLinkTypes: [], triageBoardKey: null },
+      }),
+    );
+    expect(result.tickets).toHaveLength(2);
+
+    const acc1 = result.tickets.find((t) => t.key === 'ACC-1')!;
+    expect(acc1).toMatchObject({
+      key: 'ACC-1',
+      summary: 'Planned + roadmap',
+      boardId: 'ACC',
+      boardType: 'scrum',
+      issueType: 'Story',
+      status: 'In Progress',
+      planned: true,
+      onRoadmap: true,
+      support: false,
+    });
+
+    const acc2 = result.tickets.find((t) => t.key === 'ACC-2')!;
+    expect(acc2).toMatchObject({ planned: false, onRoadmap: false, support: true });
+  });
+
+  it('never flags planned/onRoadmap for kanban tickets', () => {
+    const issues = [issue({ key: 'PLAT-1', labels: ['support'] })];
+    const logs = new Map<string, JiraChangelog[]>([
+      ['PLAT-1', [statusLog('PLAT-1', 'To Do', '2026-07-21T09:00:00Z')]],
+    ]);
+    const result = computeBoardHealthcheck(
+      baseInput({
+        boardId: 'PLAT',
+        boardType: 'kanban',
+        issues,
+        statusChangelogsByIssue: logs,
+        committedKeysAt: () => true,
+        isRoadmapLinked: () => true,
+        supportConfig: { supportEpics: [], supportLabels: ['support'], supportLinkTypes: [], triageBoardKey: null },
+      }),
+    );
+    expect(result.tickets).toHaveLength(1);
+    expect(result.tickets[0]).toMatchObject({ planned: false, onRoadmap: false, support: true });
+  });
+
+  it('excludes tickets that did not start this week from the ticket list', () => {
+    const issues = [issue({ key: 'ACC-1' })];
+    const logs = new Map<string, JiraChangelog[]>([
+      ['ACC-1', [statusLog('ACC-1', 'In Progress', '2026-07-10T10:00:00Z')]], // before week
+    ]);
+    const result = computeBoardHealthcheck(baseInput({ issues, statusChangelogsByIssue: logs }));
+    expect(result.tickets).toEqual([]);
+  });
+});
+
 describe('computeBoardHealthcheck — empty denominator', () => {
   it('reports a zero denominator for all dimensions when nothing started this week', () => {
     const result = computeBoardHealthcheck(baseInput({ issues: [], statusChangelogsByIssue: new Map() }));

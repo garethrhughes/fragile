@@ -42,6 +42,7 @@ import type { SupportClassifierConfig } from '../support/support-classification.
 import type {
   HealthcheckResponse,
   HealthcheckTrendPoint,
+  HealthcheckTicketDto,
 } from './dto/healthcheck-response.dto.js';
 
 /** Number of weeks shown in the trend, including the selected week (ADR 0070). */
@@ -57,6 +58,7 @@ const ORG_ROADMAP_TARGET = 80;
 @Injectable()
 export class HealthcheckService {
   private readonly logger = new Logger(HealthcheckService.name);
+  private readonly jiraBaseUrl: string;
 
   constructor(
     @InjectRepository(BoardConfig)
@@ -75,7 +77,9 @@ export class HealthcheckService {
     private readonly roadmapConfigRepo: Repository<RoadmapConfig>,
     private readonly sprintMembership: SprintMembershipService,
     private readonly configService: ConfigService,
-  ) {}
+  ) {
+    this.jiraBaseUrl = this.configService.get<string>('JIRA_BASE_URL', '');
+  }
 
   // ---------------------------------------------------------------------------
   // Public API
@@ -113,17 +117,17 @@ export class HealthcheckService {
 
     // Pool all boards per week (ADR 0074): sum applicable boards' numerators
     // and denominators, then score = (100 / Σdenominator) * Σnumerator.
-    const scoresForWeek = (w: string) => {
-      const results = boardResolvers.map((resolve) => resolve(w));
-      return {
-        stability: poolDimension(results.map((r) => r.stability)),
-        roadmap: poolDimension(results.map((r) => r.roadmap)),
-        support: poolDimension(results.map((r) => r.support)),
-      };
-    };
+    const resultsForWeek = (w: string): BoardHealthcheckResult[] =>
+      boardResolvers.map((resolve) => resolve(w));
+
+    const scoresFrom = (results: BoardHealthcheckResult[]) => ({
+      stability: poolDimension(results.map((r) => r.stability)),
+      roadmap: poolDimension(results.map((r) => r.roadmap)),
+      support: poolDimension(results.map((r) => r.support)),
+    });
 
     const trend: HealthcheckTrendPoint[] = trendWeeks.map((w) => {
-      const s = scoresForWeek(w);
+      const s = scoresFrom(resultsForWeek(w));
       return {
         week: w,
         stability: s.stability.score,
@@ -132,7 +136,16 @@ export class HealthcheckService {
       };
     });
 
-    const selected = scoresForWeek(week);
+    const selectedResults = resultsForWeek(week);
+    const selected = scoresFrom(selectedResults);
+
+    const tickets: HealthcheckTicketDto[] = selectedResults
+      .flatMap((r) => r.tickets)
+      .map((t) => ({
+        ...t,
+        jiraUrl: this.jiraBaseUrl ? `${this.jiraBaseUrl}/browse/${t.key}` : '',
+      }))
+      .sort((a, b) => a.boardId.localeCompare(b.boardId) || a.key.localeCompare(b.key));
 
     return {
       week,
@@ -151,6 +164,7 @@ export class HealthcheckService {
         band: classifySupportBand(selected.support.score),
       },
       trend,
+      tickets,
     };
   }
 
@@ -442,6 +456,7 @@ export class HealthcheckService {
       stability: { numerator: 0, denominator: 0, applicable: !isKanban },
       roadmap: { numerator: 0, denominator: 0, applicable: !isKanban },
       support: { numerator: 0, denominator: 0, applicable: true },
+      tickets: [],
     };
   }
 
@@ -466,6 +481,7 @@ export class HealthcheckService {
         roadmap: null,
         support: null,
       })),
+      tickets: [],
     };
   }
 }

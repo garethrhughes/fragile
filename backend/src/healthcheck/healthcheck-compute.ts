@@ -35,8 +35,9 @@ export interface DimensionCount {
 }
 
 /**
- * Per-board Healthcheck contribution — raw counts only. The service pools these
- * across boards (ADR 0074) to produce the org-wide scores and bands.
+ * Per-board Healthcheck contribution — raw counts plus the included tickets.
+ * The service pools the counts across boards (ADR 0074) to produce the org-wide
+ * scores, and concatenates the tickets for the selected week's table.
  */
 export interface BoardHealthcheckResult {
   boardId: string;
@@ -46,6 +47,28 @@ export interface BoardHealthcheckResult {
   stability: DimensionCount;
   roadmap: DimensionCount;
   support: DimensionCount;
+  /** The started-this-week tickets on this board, with their dimension flags. */
+  tickets: HealthcheckTicket[];
+}
+
+/**
+ * A single ticket in the week's denominator, flagged by which dimensions it
+ * contributed to. `planned`/`onRoadmap` are always false for kanban tickets
+ * (those dimensions don't apply).
+ */
+export interface HealthcheckTicket {
+  key: string;
+  summary: string;
+  boardId: string;
+  boardType: 'scrum' | 'kanban';
+  issueType: string;
+  status: string;
+  /** Counted toward Stability (committed/carry-over at sprint start). */
+  planned: boolean;
+  /** Counted toward Roadmap (roadmap-linked). */
+  onRoadmap: boolean;
+  /** Counted toward Support (classified as reactive support). */
+  support: boolean;
 }
 
 export interface BoardHealthcheckInput {
@@ -128,12 +151,11 @@ export function computeBoardHealthcheck(
   let stabilityNumerator = 0;
   let roadmapNumerator = 0;
   let supportNumerator = 0;
+  const tickets: HealthcheckTicket[] = [];
 
   for (const { issue, startedAt } of started) {
-    if (!isKanban) {
-      if (input.committedKeysAt(issue.key, startedAt)) stabilityNumerator += 1;
-      if (input.isRoadmapLinked(issue.key)) roadmapNumerator += 1;
-    }
+    const planned = !isKanban && input.committedKeysAt(issue.key, startedAt);
+    const onRoadmap = !isKanban && input.isRoadmapLinked(issue.key);
 
     const classification = classifySupport(
       {
@@ -143,7 +165,23 @@ export function computeBoardHealthcheck(
       input.linksByIssue.get(issue.key) ?? [],
       input.supportConfig,
     );
-    if (classification.isSupport) supportNumerator += 1;
+    const isSupport = classification.isSupport;
+
+    if (planned) stabilityNumerator += 1;
+    if (onRoadmap) roadmapNumerator += 1;
+    if (isSupport) supportNumerator += 1;
+
+    tickets.push({
+      key: issue.key,
+      summary: issue.summary,
+      boardId: input.boardId,
+      boardType: input.boardType,
+      issueType: issue.issueType,
+      status: issue.status,
+      planned,
+      onRoadmap,
+      support: isSupport,
+    });
   }
 
   return {
@@ -155,5 +193,6 @@ export function computeBoardHealthcheck(
     roadmap: { numerator: roadmapNumerator, denominator, applicable: !isKanban },
     // Support applies to all boards.
     support: { numerator: supportNumerator, denominator, applicable: true },
+    tickets,
   };
 }
