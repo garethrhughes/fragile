@@ -20,7 +20,7 @@ interface NavItem {
  */
 const NAV_GROUPS: NavItem[][] = [
   [
-    { label: 'Pulse', href: '/all-items', icon: <Activity className="h-5 w-5" /> },
+    { label: 'Healthcheck', href: '/healthcheck', icon: <Activity className="h-5 w-5" /> },
   ],
   [
     { label: 'DORA', href: '/dora', icon: <BarChart3 className="h-5 w-5" /> },

@@ -1186,139 +1186,54 @@ export function getSupportSummary(
 }
 
 // ---------------------------------------------------------------------------
-// All Items — bespoke MyPass weekly cross-board report (feature 0012)
-// NOTE: Not for upstreaming. Isolated to this project.
+// Healthcheck — weekly per-board engineering healthcheck (feature 0019, ADR 0070)
+// Replaces the former Pulse (all-items) report.
 // ---------------------------------------------------------------------------
 
-export interface AllItemsIssue {
-  key: string
-  summary: string
-  issueType: string
-  status: string
-  boardId: string
-  assignee: string | null
-  points: number | null
-  labels: string[]
-  jiraUrl: string
-  epicKey: string | null
-  sprintName: string | null
-  started: boolean
-  addedMidSprint: boolean
-  kanbanAdd: boolean
-  completed: boolean
-  onRoadmap: boolean
-  isSupport: boolean
-  isTtbSupport: boolean
-  /** Kanban only: true if currently on the board but not done or cancelled. */
-  inFlight: boolean
+export type HealthcheckBand = 'green' | 'amber' | 'red'
+
+export interface HealthcheckDimension {
+  /** Percentage in [0,100], or null when N/A. */
+  score: number | null
+  /** Matching-ticket count, or null when N/A. */
+  numerator: number | null
+  denominator: number
+  /** RAG band, or null when the score is N/A. */
+  band: HealthcheckBand | null
 }
 
-export interface AllItemsBoardSummary {
-  totalItems: number
-  startedCount: number
-  addedMidSprintCount: number
-  completedCount: number
-  onRoadmapCount: number
-  supportCount: number
-  ttbSupportCount: number
-  /** Kanban only: issues currently on the board, not done or cancelled. */
-  inFlightCount: number
+export interface HealthcheckTrendPoint {
+  week: string
+  stability: number | null
+  roadmap: number | null
+  support: number | null
 }
 
-export interface BoardHealthScore {
-  overall: number
-  roadmapAlignmentScore: number
-  supportBurdenScore: number
-  stabilityScore: number
-}
-
-export interface AllItemsBoardResult {
+export interface HealthcheckBoardResult {
   boardId: string
   boardType: 'scrum' | 'kanban'
-  items: AllItemsIssue[]
-  summary: AllItemsBoardSummary
-  healthScore: BoardHealthScore
+  /** |D| — count of tickets that started this week. */
+  denominator: number
+  stability: HealthcheckDimension
+  roadmap: HealthcheckDimension
+  support: HealthcheckDimension
+  /** Trailing 8-week trend, oldest→newest, including the selected week. */
+  trend: HealthcheckTrendPoint[]
 }
 
-export interface AllItemsTotals {
-  totalItems: number
-  startedCount: number
-  addedMidSprintCount: number
-  completedCount: number
-  onRoadmapCount: number
-  supportCount: number
-  ttbSupportCount: number
-  /** Kanban only: sum of inFlightCount across all boards. */
-  inFlightCount: number
-}
-
-export interface AllItemsResponse {
+export interface HealthcheckResponse {
   week: string
   weekStart: string
   weekEnd: string
-  boards: AllItemsBoardResult[]
-  totals: AllItemsTotals
-  /** Mean of all boards' healthScore.overall. 100 when no boards. */
-  overallScore: number
-  /**
-   * Engineering Health Check (feature 0014, proposal 0071).
-   * Present only for completed (non-current) weeks; absent otherwise.
-   */
-  healthCheck?: HealthCheckReport
+  boards: HealthcheckBoardResult[]
 }
 
-// --- Engineering Health Check (feature 0014, proposal 0071) ---
-
-export type HealthBand = 'healthy' | 'watch' | 'at-risk'
-
-export type HealthCheckVolume =
-  | { boardType: 'scrum'; committed: number; added: number; completed: number; onRoadmap: number; support: number }
-  | { boardType: 'kanban'; pulledIn: number; completed: number; onRoadmap: number; support: number }
-
-export interface HealthCheckTrendPoint {
-  week: string
-  stabilityScore: number
-  roadmapScore: number | null
-}
-
-export interface HealthCheckBoard {
-  boardId: string
-  boardType: 'scrum' | 'kanban'
-  stabilityScore: number
-  stabilityBand: HealthBand
-  roadmapScore: number | null
-  roadmapBand: HealthBand | null
-  /** This team's roadmap-delivery target (%), used for banding + attainment. */
-  roadmapDeliveryTarget: number
-  volume: HealthCheckVolume
-  trend: HealthCheckTrendPoint[]
-}
-
-export interface HealthBandDistribution {
-  healthy: number
-  watch: number
-  atRisk: number
-  na: number
-}
-
-export interface HealthCheckReport {
-  boards: HealthCheckBoard[]
-  stabilityDistribution: HealthBandDistribution
-  roadmapDistribution: HealthBandDistribution
-  /** Org overall stability: mean of team stability scores. */
-  overallStabilityScore: number
-  /** Org overall roadmap delivery: mean attainment vs each team's target; null if all n/a. */
-  overallRoadmapScore: number | null
-}
-
-export type AllItemsFilter = 'added-mid-sprint' | 'not-on-roadmap' | 'support' | 'ttb-support'
-
-export function getAllItems(week: string, filters?: AllItemsFilter[]): Promise<AllItemsResponse> {
-  const filterParam = filters && filters.length > 0 ? filters.join('|') : undefined
-  return apiFetch<AllItemsResponse>(
-    `/api/all-items${toQueryString({ week, filter: filterParam })}`,
+export function getHealthcheck(week?: string): Promise<HealthcheckResponse> {
+  return apiFetch<HealthcheckResponse>(
+    `/api/healthcheck${toQueryString({ week })}`,
   )
 }
+
 
 // ---- Auth (proposal 0074) ------------------------------------------------
 
