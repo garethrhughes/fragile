@@ -22,6 +22,7 @@ import { HealthcheckModule } from './healthcheck/healthcheck.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { UsersModule } from './users/users.module.js';
 import { ApiKeysModule } from './api-keys/api-keys.module.js';
+import { DebugModule } from './debug/debug.module.js';
 import { AuthenticatedGuard } from './auth/guards/authenticated.guard.js';
 
 // YamlConfigModule is intentionally NOT imported here directly.
@@ -68,6 +69,7 @@ import { AuthenticatedGuard } from './auth/guards/authenticated.guard.js';
     AuthModule,
     UsersModule,
     ApiKeysModule,
+    DebugModule,
   ],
   providers: [
     {

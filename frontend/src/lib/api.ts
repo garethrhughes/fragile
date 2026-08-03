@@ -1243,6 +1243,80 @@ export function getHealthcheck(week?: string): Promise<HealthcheckResponse> {
 }
 
 
+// ---------------------------------------------------------------------------
+// Debug — admin-only ticket inspection (feature 0020, ADR 0076)
+// Everything stored in the Postgres mirror for a single issue key.
+// ---------------------------------------------------------------------------
+
+export interface IssueDebugChangelogEntry {
+  id: number
+  field: string
+  fromValue: string | null
+  toValue: string | null
+  fromId: string | null
+  toId: string | null
+  changedAt: string
+}
+
+export interface IssueDebugSprintMembership {
+  sprintId: string
+  name: string | null
+  state: string | null
+  startDate: string | null
+  endDate: string | null
+  completeDate: string | null
+  boardId: string | null
+}
+
+export interface IssueDebugLink {
+  id: number
+  sourceIssueKey: string
+  targetIssueKey: string
+  linkTypeName: string
+  isInward: boolean
+}
+
+export interface IssueDebugRoadmapIdea {
+  key: string
+  summary: string
+  status: string
+  jpdKey: string
+  startDate: string | null
+  targetDate: string | null
+  matchReason: 'epic' | 'direct'
+}
+
+export interface IssueDebugIssue {
+  key: string
+  summary: string
+  status: string
+  statusId: string | null
+  issueType: string
+  fixVersion: string | null
+  points: number | null
+  boardId: string
+  epicKey: string | null
+  labels: string[]
+  priority: string | null
+  assignee: string | null
+  createdAt: string
+  updatedAt: string
+  inBacklog: boolean
+}
+
+export interface IssueDebugResponse {
+  issue: IssueDebugIssue
+  changelog: IssueDebugChangelogEntry[]
+  sprintMemberships: IssueDebugSprintMembership[]
+  linksAsSource: IssueDebugLink[]
+  linksAsTarget: IssueDebugLink[]
+  roadmapIdeas: IssueDebugRoadmapIdea[]
+}
+
+export function getIssueDebug(key: string): Promise<IssueDebugResponse> {
+  return apiFetch<IssueDebugResponse>(`/api/debug/issue/${encodeURIComponent(key)}`)
+}
+
 // ---- Auth (proposal 0074) ------------------------------------------------
 
 export interface AuthUser {
