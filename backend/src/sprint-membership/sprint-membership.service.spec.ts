@@ -232,6 +232,51 @@ describe('SprintMembershipService.reconstruct', () => {
     expect(result.addedKeys.size).toBe(0);
   });
 
+  it('classifies a current member as committed when its only Sprint changelog is the completion carry-over just after completeDate (DATA-450 regression)', async () => {
+    // Reproduces DATA-450 / sprint 4134: the issue was in the sprint at start
+    // (present in the join table), has no "added" changelog, and its only
+    // Sprint-field changelog is the "Complete Sprint" carry-over which Jira
+    // timestamps a few hundred ms AFTER the sprint's completeDate.
+    const startedSprint = {
+      ...sprint,
+      id: '4134',
+      name: 'DATA Sprint 14 2026',
+      state: 'closed',
+      startDate: new Date('2026-07-19T16:00:28.608Z'),
+      endDate: new Date('2026-07-30T16:00:00Z'),
+      completeDate: new Date('2026-08-02T22:48:35.680Z'),
+    } as JiraSprint;
+
+    setChangelogs([
+      makeChangelog({
+        issueKey: 'DATA-450',
+        field: 'Sprint',
+        fromValue: 'DATA Sprint 14 2026',
+        toValue: 'DATA Sprint 14 2026, DATA Sprint 15 2026',
+        fromId: '4134',
+        toId: '4134, 4174',
+        // 232 ms AFTER completeDate — the carry-over write.
+        changedAt: new Date('2026-08-02T22:48:35.912Z'),
+      }),
+    ]);
+    setClosedSprints([]);
+    issueSprintRepo.find.mockResolvedValue([
+      { issueKey: 'DATA-450', sprintId: '4134' },
+    ] as JiraIssueSprint[]);
+
+    const result = await service.reconstruct({
+      sprint: startedSprint,
+      boardId: 'DATA',
+      boardIssues: [
+        makeIssue({ key: 'DATA-450', boardId: 'DATA', createdAt: new Date('2026-07-16T00:44:52Z') }),
+      ],
+    });
+
+    expect(result.committedKeys.has('DATA-450')).toBe(true);
+    expect(result.committedRemovedKeys.has('DATA-450')).toBe(false);
+    expect(result.addedKeys.has('DATA-450')).toBe(false);
+  });
+
   it('classifies a mid-sprint creation as added', async () => {
     setChangelogs([]);
     setClosedSprints([]);
