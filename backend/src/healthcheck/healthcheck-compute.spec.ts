@@ -80,6 +80,61 @@ describe('computeBoardHealthcheck — denominator (scrum)', () => {
   });
 });
 
+describe('computeBoardHealthcheck — kanban denominator (board-entry, with createdAt fallback)', () => {
+  it('counts a kanban ticket whose first board-entry transition falls in the week', () => {
+    const issues = [issue({ key: 'PLAT-1', boardId: 'PLAT' })];
+    const logs = new Map<string, JiraChangelog[]>([
+      ['PLAT-1', [statusLog('PLAT-1', 'To Do', '2026-07-21T09:00:00Z')]],
+    ]);
+    const result = computeBoardHealthcheck(
+      baseInput({ boardId: 'PLAT', boardType: 'kanban', issues, statusChangelogsByIssue: logs }),
+    );
+    expect(result.denominator).toBe(1);
+  });
+
+  it('falls back to createdAt for a kanban ticket created directly on the board (no board-entry transition)', () => {
+    // PLAT ticket created in-week with NO status changelog into a board-entry status.
+    const issues = [
+      issue({ key: 'PLAT-1', boardId: 'PLAT', createdAt: new Date('2026-07-22T08:00:00Z') }),
+    ];
+    const result = computeBoardHealthcheck(
+      baseInput({
+        boardId: 'PLAT',
+        boardType: 'kanban',
+        issues,
+        statusChangelogsByIssue: new Map(), // no changelog at all
+      }),
+    );
+    expect(result.denominator).toBe(1);
+    expect(result.tickets.map((t) => t.key)).toEqual(['PLAT-1']);
+  });
+
+  it('excludes a kanban ticket created before the week when it has no board-entry transition', () => {
+    const issues = [
+      issue({ key: 'PLAT-1', boardId: 'PLAT', createdAt: new Date('2026-07-10T08:00:00Z') }),
+    ];
+    const result = computeBoardHealthcheck(
+      baseInput({
+        boardId: 'PLAT',
+        boardType: 'kanban',
+        issues,
+        statusChangelogsByIssue: new Map(),
+      }),
+    );
+    expect(result.denominator).toBe(0);
+  });
+
+  it('does NOT fall back to createdAt for scrum tickets (in-progress transition required)', () => {
+    const issues = [
+      issue({ key: 'ACC-1', createdAt: new Date('2026-07-22T08:00:00Z') }),
+    ];
+    const result = computeBoardHealthcheck(
+      baseInput({ issues, statusChangelogsByIssue: new Map() }),
+    );
+    expect(result.denominator).toBe(0);
+  });
+});
+
 describe('computeBoardHealthcheck — stability (scrum only)', () => {
   const issues = [issue({ key: 'ACC-1' }), issue({ key: 'ACC-2' })];
   const logs = new Map<string, JiraChangelog[]>([

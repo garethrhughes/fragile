@@ -104,9 +104,14 @@ export interface BoardHealthcheckInput {
  * The first-ever start transition date for an issue, or null if it never
  * started within observable history.
  *   - scrum:  first transition into any `inProgressStatuses` status
- *   - kanban: first transition into any `boardEntryStatuses` status
+ *   - kanban: first transition into any `boardEntryStatuses` status, falling
+ *     back to `issue.createdAt` when the issue was created directly on the
+ *     board with no board-entry transition (matches the kanban board-entry
+ *     convention, ADR 0063/0067). This ensures PLAT tickets created on the
+ *     board still appear in the week they entered.
  */
 function firstStartDate(
+  issue: JiraIssue,
   logs: JiraChangelog[],
   isKanban: boolean,
   inProgressStatuses: Set<string>,
@@ -118,7 +123,10 @@ function firstStartDate(
       ? boardEntryStatuses.has(cl.toValue.toLowerCase())
       : inProgressStatuses.has(cl.toValue);
   });
-  return match?.changedAt ?? null;
+  if (match) return match.changedAt;
+  // Kanban-only fallback: created directly on the board with no board-entry
+  // transition → treat creation time as board entry.
+  return isKanban ? issue.createdAt : null;
 }
 
 export function computeBoardHealthcheck(
@@ -131,6 +139,7 @@ export function computeBoardHealthcheck(
   for (const issue of input.issues) {
     const logs = input.statusChangelogsByIssue.get(issue.key) ?? [];
     const startedAt = firstStartDate(
+      issue,
       logs,
       isKanban,
       input.inProgressStatuses,
