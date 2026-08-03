@@ -505,27 +505,6 @@ export default function SettingsPage() {
                   Issues with a board-entry date before this date are excluded from all Kanban metrics. Leave blank for no lower bound.
                 </p>
               </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium">
-                  Roadmap Delivery Target (%)
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={config.roadmapDeliveryTarget ?? 80}
-                  onChange={(e) => {
-                    const n = Math.max(0, Math.min(100, Math.round(Number(e.target.value))))
-                    updateField('roadmapDeliveryTarget', Number.isNaN(n) ? 80 : n)
-                  }}
-                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm"
-                />
-                <p className="mt-1 text-xs text-muted">
-                  Health Check target for this team. Roadmap delivery is graded relative to this value
-                  (healthy ≥ target, watch ≥ target−15, at-risk below) and contributes its attainment
-                  (score ÷ target, capped at 100%) to the org roadmap score. Default 80; e.g. Platform 50.
-                </p>
-              </div>
             </div>
 
             {/* ── Kanban Board Settings ─────────────────────────────────── */}

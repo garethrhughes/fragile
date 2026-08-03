@@ -132,13 +132,4 @@ export class BoardConfig {
    */
   @Column({ type: 'simple-json', default: '[]' })
   supportEpics!: string[];
-
-  /**
-   * Roadmap-delivery target for this board, as an integer percentage (0–100).
-   * Drives target-relative RAG banding and org attainment in the Health Check
-   * (proposal 0073). Default 80; the Platform (PLAT) board is seeded to 50 to
-   * reflect its more reactive/unplanned workload.
-   */
-  @Column({ type: 'int', default: 80 })
-  roadmapDeliveryTarget!: number;
 }
