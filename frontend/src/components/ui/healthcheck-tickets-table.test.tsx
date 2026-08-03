@@ -54,6 +54,30 @@ describe('HealthcheckTicketsTable', () => {
     expect(no).toHaveLength(1)
   })
 
+  it('renders N/A for Planned and On Roadmap on kanban tickets, but a real Support flag', () => {
+    render(
+      <HealthcheckTicketsTable
+        tickets={[
+          ticket({ key: 'PLAT-1', boardId: 'PLAT', boardType: 'kanban', support: true }),
+        ]}
+      />,
+    )
+    const row = screen.getByText('PLAT-1').closest('tr')!
+    // Planned + On Roadmap render as N/A pills within the row.
+    expect(within(row).getAllByLabelText('not applicable')).toHaveLength(2)
+    // Support still resolves to a real flag (tick here).
+    expect(within(row).getAllByLabelText('yes')).toHaveLength(1)
+    // No plain dash inside the row — the non-applicable cells use the N/A pill.
+    expect(within(row).queryByLabelText('no')).not.toBeInTheDocument()
+  })
+
+  it('explains the N/A indicator in a caption', () => {
+    render(<HealthcheckTicketsTable tickets={[ticket({ key: 'ACC-1' })]} />)
+    expect(
+      screen.getByText(/not counted toward the Stability or Roadmap metrics/i),
+    ).toBeInTheDocument()
+  })
+
   it('renders an empty state when there are no tickets', () => {
     render(<HealthcheckTicketsTable tickets={[]} />)
     expect(screen.getByText('Included tickets (0)')).toBeInTheDocument()
