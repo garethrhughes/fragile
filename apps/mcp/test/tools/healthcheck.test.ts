@@ -26,17 +26,10 @@ describe('Healthcheck tools', () => {
         week: '2026-W30',
         weekStart: '2026-07-20T00:00:00.000Z',
         weekEnd: '2026-07-26T23:59:59.999Z',
-        boards: [
-          {
-            boardId: 'ACC',
-            boardType: 'scrum',
-            denominator: 4,
-            stability: { score: 75, numerator: 3, denominator: 4, band: 'amber' },
-            roadmap: { score: 50, numerator: 2, denominator: 4, band: 'red' },
-            support: { score: 25, numerator: 1, denominator: 4, band: 'amber' },
-            trend: [],
-          },
-        ],
+        stability: { score: 75, numerator: 3, denominator: 4, band: 'amber' },
+        roadmap: { score: 50, numerator: 2, denominator: 4, band: 'red' },
+        support: { score: 25, numerator: 1, denominator: 4, band: 'amber' },
+        trend: [],
       };
       mockApiGet.mockResolvedValueOnce(mockSuccess(data));
 
@@ -49,7 +42,7 @@ describe('Healthcheck tools', () => {
     });
 
     it('omits the week parameter when not provided (defaults to last completed week)', async () => {
-      mockApiGet.mockResolvedValueOnce(mockSuccess({ week: '2026-W29', boards: [] }));
+      mockApiGet.mockResolvedValueOnce(mockSuccess({ week: '2026-W29', stability: {}, roadmap: {}, support: {}, trend: [] }));
 
       const server = makeServer();
       await callTool(server, 'get_healthcheck_report', {});

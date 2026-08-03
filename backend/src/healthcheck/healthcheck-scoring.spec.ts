@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { computeScore, type HealthcheckScore } from './healthcheck-scoring.js';
+import { computeScore, poolDimension, type HealthcheckScore } from './healthcheck-scoring.js';
 
 describe('computeScore', () => {
   it('returns null score when denominator is zero (N/A)', () => {
@@ -39,5 +39,42 @@ describe('computeScore', () => {
     expect(r.score).toBeNull();
     expect(r.numerator).toBeNull();
     expect(r.denominator).toBe(4);
+  });
+});
+
+describe('poolDimension', () => {
+  it('sums numerators and denominators across applicable boards', () => {
+    // board A: 3/4, board B: 1/6 → pooled 4/10 = 40
+    const r = poolDimension([
+      { numerator: 3, denominator: 4, applicable: true },
+      { numerator: 1, denominator: 6, applicable: true },
+    ]);
+    expect(r.numerator).toBe(4);
+    expect(r.denominator).toBe(10);
+    expect(r.score).toBe(40);
+  });
+
+  it('excludes non-applicable boards from both sums', () => {
+    // Only board A applies (scrum); board B (kanban) excluded from Stability.
+    const r = poolDimension([
+      { numerator: 2, denominator: 5, applicable: true },
+      { numerator: 0, denominator: 8, applicable: false },
+    ]);
+    expect(r.denominator).toBe(5);
+    expect(r.numerator).toBe(2);
+    expect(r.score).toBe(40);
+  });
+
+  it('is N/A when no applicable board has any started tickets', () => {
+    const r = poolDimension([
+      { numerator: 0, denominator: 0, applicable: true },
+      { numerator: 0, denominator: 9, applicable: false },
+    ]);
+    expect(r.score).toBeNull();
+    expect(r.denominator).toBe(0);
+  });
+
+  it('is N/A for an empty contribution list', () => {
+    expect(poolDimension([]).score).toBeNull();
   });
 });

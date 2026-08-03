@@ -13,7 +13,6 @@ import { useReplaceParams } from '@/hooks/use-page-params'
 import {
   getHealthcheck,
   type HealthcheckResponse,
-  type HealthcheckBoardResult,
 } from '@/lib/api'
 import {
   prevWeek,
@@ -29,27 +28,6 @@ type PageState =
   | { status: 'loading' }
   | { status: 'ready'; data: HealthcheckResponse }
   | { status: 'error'; message: string }
-
-function BoardCard({ board }: { board: HealthcheckBoardResult }) {
-  return (
-    <section className="space-y-4 rounded-2xl border border-border bg-surface-raised p-5">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold">{board.boardId}</h2>
-        <span className="rounded-full border border-border px-2 py-0.5 text-xs capitalize text-text-muted">
-          {board.boardType}
-        </span>
-      </div>
-
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <HealthcheckScoreCard label="Stability" dimension={board.stability} />
-        <HealthcheckScoreCard label="Roadmap" dimension={board.roadmap} />
-        <HealthcheckScoreCard label="Support" dimension={board.support} lowerIsBetter />
-      </div>
-
-      <HealthcheckTrendChart trend={board.trend} />
-    </section>
-  )
-}
 
 function HealthcheckPageInner() {
   const searchParams = useSearchParams()
@@ -100,8 +78,8 @@ function HealthcheckPageInner() {
       <div>
         <h1 className="text-2xl font-bold">Healthcheck</h1>
         <p className="mt-1 text-sm text-muted">
-          Weekly engineering healthcheck — of the work each team started, how much was
-          planned, on the roadmap, and reactive support.
+          Weekly engineering healthcheck — across all boards, of the work started this
+          week, how much was planned, on the roadmap, and reactive support.
         </p>
       </div>
 
@@ -156,16 +134,16 @@ function HealthcheckPageInner() {
         </div>
       )}
 
-      {pageState.status === 'ready' &&
-        (pageState.data.boards.length === 0 ? (
-          <p className="text-sm text-muted">No boards configured.</p>
-        ) : (
-          <div className="space-y-6">
-            {pageState.data.boards.map((board) => (
-              <BoardCard key={board.boardId} board={board} />
-            ))}
+      {pageState.status === 'ready' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <HealthcheckScoreCard label="Stability" dimension={pageState.data.stability} />
+            <HealthcheckScoreCard label="Roadmap" dimension={pageState.data.roadmap} />
+            <HealthcheckScoreCard label="Support" dimension={pageState.data.support} lowerIsBetter />
           </div>
-        ))}
+          <HealthcheckTrendChart trend={pageState.data.trend} />
+        </div>
+      )}
     </div>
   )
 }

@@ -1186,17 +1186,19 @@ export function getSupportSummary(
 }
 
 // ---------------------------------------------------------------------------
-// Healthcheck — weekly per-board engineering healthcheck (feature 0019, ADR 0070)
-// Replaces the former Pulse (all-items) report.
+// Healthcheck — weekly org-wide engineering healthcheck (feature 0019, ADR 0070/0074)
+// Replaces the former Pulse (all-items) report. One pooled score per dimension
+// across all boards; no per-board breakdown.
 // ---------------------------------------------------------------------------
 
 export type HealthcheckBand = 'green' | 'amber' | 'red'
 
 export interface HealthcheckDimension {
-  /** Percentage in [0,100], or null when N/A. */
+  /** Pooled percentage in [0,100], or null when N/A. */
   score: number | null
-  /** Matching-ticket count, or null when N/A. */
+  /** Pooled matching-ticket count, or null when N/A. */
   numerator: number | null
+  /** Pooled denominator (Σ started tickets across contributing boards). */
   denominator: number
   /** RAG band, or null when the score is N/A. */
   band: HealthcheckBand | null
@@ -1209,23 +1211,16 @@ export interface HealthcheckTrendPoint {
   support: number | null
 }
 
-export interface HealthcheckBoardResult {
-  boardId: string
-  boardType: 'scrum' | 'kanban'
-  /** |D| — count of tickets that started this week. */
-  denominator: number
-  stability: HealthcheckDimension
-  roadmap: HealthcheckDimension
-  support: HealthcheckDimension
-  /** Trailing 8-week trend, oldest→newest, including the selected week. */
-  trend: HealthcheckTrendPoint[]
-}
-
 export interface HealthcheckResponse {
   week: string
   weekStart: string
   weekEnd: string
-  boards: HealthcheckBoardResult[]
+  /** Org-wide pooled scores for the selected week. */
+  stability: HealthcheckDimension
+  roadmap: HealthcheckDimension
+  support: HealthcheckDimension
+  /** Trailing 8-week org trend, oldest→newest, including the selected week. */
+  trend: HealthcheckTrendPoint[]
 }
 
 export function getHealthcheck(week?: string): Promise<HealthcheckResponse> {

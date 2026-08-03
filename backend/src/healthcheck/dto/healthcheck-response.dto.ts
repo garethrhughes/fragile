@@ -1,37 +1,32 @@
 import type { HealthcheckBand } from '../healthcheck-bands.js';
 
 /**
- * Healthcheck report response (ADR 0070).
+ * Healthcheck report response (ADR 0070, ADR 0074).
  *
- * For a selected ISO week, each board reports three scores computed against a
- * single shared denominator — tickets whose first-ever start transition fell
- * in the week. Live-computed; not persisted.
+ * For a selected ISO week, the org-wide healthcheck reports three pooled scores
+ * combining all boards — Stability, Roadmap, Support — computed against a
+ * per-dimension denominator (tickets whose first-ever start transition fell in
+ * the week). Live-computed; not persisted.
  */
 export interface HealthcheckResponse {
   /** ISO week key, e.g. "2026-W30". */
   week: string;
   weekStart: string;
   weekEnd: string;
-  boards: HealthcheckBoardResult[];
-}
-
-export interface HealthcheckBoardResult {
-  boardId: string;
-  boardType: 'scrum' | 'kanban';
-  /** |D| — count of tickets that started this week. */
-  denominator: number;
+  /** Org-wide pooled score for the selected week. */
   stability: HealthcheckDimension;
   roadmap: HealthcheckDimension;
   support: HealthcheckDimension;
-  /** Trailing 8-week trend, oldest→newest, including the selected week. */
+  /** Trailing 8-week org trend, oldest→newest, including the selected week. */
   trend: HealthcheckTrendPoint[];
 }
 
 export interface HealthcheckDimension {
-  /** Percentage in [0,100], or null when N/A. */
+  /** Pooled percentage in [0,100], or null when N/A (empty denominator). */
   score: number | null;
-  /** Matching-ticket count, or null when N/A. */
+  /** Pooled matching-ticket count across contributing boards, or null when N/A. */
   numerator: number | null;
+  /** Pooled denominator (Σ started tickets across contributing boards). */
   denominator: number;
   /** RAG band, or null when the score is N/A. */
   band: HealthcheckBand | null;

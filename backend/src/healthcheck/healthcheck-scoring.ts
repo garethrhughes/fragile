@@ -55,3 +55,33 @@ export function computeScore(
     denominator,
   };
 }
+
+/**
+ * A board's raw contribution to a pooled dimension. `applicable` is false when
+ * the dimension does not apply to the board (e.g. Stability/Roadmap on kanban) —
+ * non-applicable boards contribute nothing to the pool (ADR 0074).
+ */
+export interface DimensionContribution {
+  numerator: number;
+  denominator: number;
+  applicable: boolean;
+}
+
+/**
+ * Pool a dimension across boards (ADR 0074): sum numerators and denominators
+ * over the applicable boards, then `score = (100 / Σdenominator) * Σnumerator`.
+ * Non-applicable boards are excluded from both sums. Returns N/A (null score)
+ * when the pooled denominator is zero.
+ */
+export function poolDimension(
+  contributions: readonly DimensionContribution[],
+): HealthcheckScore {
+  let numerator = 0;
+  let denominator = 0;
+  for (const c of contributions) {
+    if (!c.applicable) continue;
+    numerator += c.numerator;
+    denominator += c.denominator;
+  }
+  return computeScore(numerator, denominator);
+}

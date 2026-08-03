@@ -98,10 +98,11 @@ describe('computeBoardHealthcheck — stability (scrum only)', () => {
     );
     expect(result.denominator).toBe(2);
     expect(result.stability.numerator).toBe(1);
-    expect(result.stability.score).toBe(50);
+    expect(result.stability.denominator).toBe(2);
+    expect(result.stability.applicable).toBe(true);
   });
 
-  it('is N/A (null) for kanban boards', () => {
+  it('is not applicable for kanban boards', () => {
     const result = computeBoardHealthcheck(
       baseInput({
         boardType: 'kanban',
@@ -109,8 +110,7 @@ describe('computeBoardHealthcheck — stability (scrum only)', () => {
         statusChangelogsByIssue: logs,
       }),
     );
-    expect(result.stability.score).toBeNull();
-    expect(result.stability.numerator).toBeNull();
+    expect(result.stability.applicable).toBe(false);
   });
 });
 
@@ -130,14 +130,15 @@ describe('computeBoardHealthcheck — roadmap (scrum only)', () => {
       }),
     );
     expect(result.roadmap.numerator).toBe(1);
-    expect(result.roadmap.score).toBe(50);
+    expect(result.roadmap.denominator).toBe(2);
+    expect(result.roadmap.applicable).toBe(true);
   });
 
-  it('is N/A (null) for kanban boards', () => {
+  it('is not applicable for kanban boards', () => {
     const result = computeBoardHealthcheck(
       baseInput({ boardType: 'kanban', issues, statusChangelogsByIssue: logs }),
     );
-    expect(result.roadmap.score).toBeNull();
+    expect(result.roadmap.applicable).toBe(false);
   });
 });
 
@@ -159,7 +160,8 @@ describe('computeBoardHealthcheck — support (all boards)', () => {
       }),
     );
     expect(result.support.numerator).toBe(1);
-    expect(result.support.score).toBe(50);
+    expect(result.support.denominator).toBe(2);
+    expect(result.support.applicable).toBe(true);
   });
 
   it('computes support for kanban boards using board-entry as the start signal', () => {
@@ -179,18 +181,18 @@ describe('computeBoardHealthcheck — support (all boards)', () => {
     );
     expect(result.denominator).toBe(1);
     expect(result.support.numerator).toBe(1);
-    expect(result.support.score).toBe(100);
-    expect(result.stability.score).toBeNull();
-    expect(result.roadmap.score).toBeNull();
+    expect(result.support.applicable).toBe(true);
+    expect(result.stability.applicable).toBe(false);
+    expect(result.roadmap.applicable).toBe(false);
   });
 });
 
 describe('computeBoardHealthcheck — empty denominator', () => {
-  it('reports all three dimensions as N/A when nothing started this week', () => {
+  it('reports a zero denominator for all dimensions when nothing started this week', () => {
     const result = computeBoardHealthcheck(baseInput({ issues: [], statusChangelogsByIssue: new Map() }));
     expect(result.denominator).toBe(0);
-    expect(result.stability.score).toBeNull();
-    expect(result.roadmap.score).toBeNull();
-    expect(result.support.score).toBeNull();
+    expect(result.stability.denominator).toBe(0);
+    expect(result.roadmap.denominator).toBe(0);
+    expect(result.support.denominator).toBe(0);
   });
 });

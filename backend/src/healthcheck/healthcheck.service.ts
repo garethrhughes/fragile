@@ -31,16 +31,28 @@ import {
   resolveEpicIdeas,
   type EpicConflictResolution,
 } from '../roadmap/resolve-epic-ideas.js';
-import { computeBoardHealthcheck } from './healthcheck-compute.js';
+import { computeBoardHealthcheck, type BoardHealthcheckResult } from './healthcheck-compute.js';
+import { poolDimension } from './healthcheck-scoring.js';
+import {
+  classifyStabilityBand,
+  classifyRoadmapBand,
+  classifySupportBand,
+} from './healthcheck-bands.js';
 import type { SupportClassifierConfig } from '../support/support-classification.js';
 import type {
   HealthcheckResponse,
-  HealthcheckBoardResult,
   HealthcheckTrendPoint,
 } from './dto/healthcheck-response.dto.js';
 
 /** Number of weeks shown in the trend, including the selected week (ADR 0070). */
 const TREND_WEEKS = 8;
+
+/**
+ * Org-wide roadmap-delivery target (%) used for the pooled Roadmap RAG band.
+ * Only scrum boards contribute to the Roadmap score and they default to 80
+ * (ADR 0067); a single org target keeps the band meaningful (ADR 0074).
+ */
+const ORG_ROADMAP_TARGET = 80;
 
 @Injectable()
 export class HealthcheckService {
@@ -83,25 +95,62 @@ export class HealthcheckService {
       );
     }
 
-    const configs = await this.boardConfigRepo.find();
-    if (configs.length === 0) {
-      return { week, weekStart: weekStart.toISOString(), weekEnd: weekEnd.toISOString(), boards: [] };
-    }
-
     // The 8 week keys shown in the trend, oldest→newest (selected week last).
     const trendWeeks = this.trendWeekKeys(week, tz, TREND_WEEKS);
+
+    const configs = await this.boardConfigRepo.find();
+    if (configs.length === 0) {
+      return this.emptyResponse(week, weekStart, weekEnd, trendWeeks);
+    }
+
     const ideas = await this.loadAllIdeas();
 
-    const boards: HealthcheckBoardResult[] = await Promise.all(
-      configs.map((config) => this.computeBoardWithTrend(config, week, trendWeeks, tz, ideas)),
+    // One resolver per board — loads that board's data once, then computes a
+    // BoardHealthcheckResult for any requested week (no per-week re-query).
+    const boardResolvers = await Promise.all(
+      configs.map((config) => this.buildBoardWeekResolver(config, tz, ideas)),
     );
-    boards.sort((a, b) => a.boardId.localeCompare(b.boardId));
+
+    // Pool all boards per week (ADR 0074): sum applicable boards' numerators
+    // and denominators, then score = (100 / Σdenominator) * Σnumerator.
+    const scoresForWeek = (w: string) => {
+      const results = boardResolvers.map((resolve) => resolve(w));
+      return {
+        stability: poolDimension(results.map((r) => r.stability)),
+        roadmap: poolDimension(results.map((r) => r.roadmap)),
+        support: poolDimension(results.map((r) => r.support)),
+      };
+    };
+
+    const trend: HealthcheckTrendPoint[] = trendWeeks.map((w) => {
+      const s = scoresForWeek(w);
+      return {
+        week: w,
+        stability: s.stability.score,
+        roadmap: s.roadmap.score,
+        support: s.support.score,
+      };
+    });
+
+    const selected = scoresForWeek(week);
 
     return {
       week,
       weekStart: weekStart.toISOString(),
       weekEnd: weekEnd.toISOString(),
-      boards,
+      stability: {
+        ...selected.stability,
+        band: classifyStabilityBand(selected.stability.score),
+      },
+      roadmap: {
+        ...selected.roadmap,
+        band: classifyRoadmapBand(selected.roadmap.score, ORG_ROADMAP_TARGET),
+      },
+      support: {
+        ...selected.support,
+        band: classifySupportBand(selected.support.score),
+      },
+      trend,
     };
   }
 
@@ -109,23 +158,25 @@ export class HealthcheckService {
   // Per-board orchestration
   // ---------------------------------------------------------------------------
 
-  private async computeBoardWithTrend(
+  /**
+   * Load a board's data once and return a resolver that computes the board's
+   * raw Healthcheck contribution for any given week.
+   */
+  private async buildBoardWeekResolver(
     config: BoardConfig,
-    selectedWeek: string,
-    trendWeeks: string[],
     tz: string,
     ideas: { allIdeas: JpdIdea[]; ruleByJpdKey: Map<string, EpicConflictResolution> },
-  ): Promise<HealthcheckBoardResult> {
-    // Load the board's work items + status/Sprint changelogs once, then reuse
-    // across all trend weeks (no per-week re-query — avoids N+1).
+  ): Promise<(week: string) => BoardHealthcheckResult> {
+    const boardType: 'scrum' | 'kanban' = config.boardType === 'kanban' ? 'kanban' : 'scrum';
+
+    // Load the board's work items + status changelogs once, then reuse across
+    // all trend weeks (no per-week re-query — avoids N+1).
     const issues = (await this.issueRepo.find({ where: { boardId: config.boardId } })).filter(
       (i) => isWorkItem(i.issueType),
     );
 
-    const boardType: 'scrum' | 'kanban' = config.boardType === 'kanban' ? 'kanban' : 'scrum';
-
     if (issues.length === 0) {
-      return this.emptyBoardResult(config.boardId, boardType, selectedWeek, trendWeeks);
+      return () => this.emptyBoardResult(config.boardId, boardType);
     }
 
     const issueKeys = issues.map((i) => i.key);
@@ -171,9 +222,8 @@ export class HealthcheckService {
       (config.cancelledStatusNames ?? ['Cancelled', "Won't Do"]).map((s) => s.toLowerCase()),
     );
     const doneStatusNames = config.doneStatusNames ?? ['Done', 'Closed', 'Released'];
-    const roadmapDeliveryTarget = config.roadmapDeliveryTarget ?? 80;
 
-    const resultForWeek = (week: string): HealthcheckBoardResult => {
+    return (week: string): BoardHealthcheckResult => {
       const { weekStart, weekEnd } = isoWeekKeyToDates(week, tz);
       return computeBoardHealthcheck({
         boardId: config.boardId,
@@ -191,22 +241,8 @@ export class HealthcheckService {
         isRoadmapLinked: (key) => roadmapLinkedKeys.has(key),
         supportConfig,
         linksByIssue,
-        roadmapDeliveryTarget,
       });
     };
-
-    const trend: HealthcheckTrendPoint[] = trendWeeks.map((week) => {
-      const r = resultForWeek(week);
-      return {
-        week,
-        stability: r.stability.score,
-        roadmap: r.roadmap.score,
-        support: r.support.score,
-      };
-    });
-
-    const selected = resultForWeek(selectedWeek);
-    return { ...selected, trend };
   }
 
   // ---------------------------------------------------------------------------
@@ -393,22 +429,39 @@ export class HealthcheckService {
     return keys.reverse();
   }
 
+  /** Board with no issues — contributes a zero, non-matching result to the pool. */
   private emptyBoardResult(
     boardId: string,
     boardType: 'scrum' | 'kanban',
-    selectedWeek: string,
-    trendWeeks: string[],
-  ): HealthcheckBoardResult {
-    const naDimension = { score: null, numerator: null, denominator: 0, band: null };
+  ): BoardHealthcheckResult {
+    const isKanban = boardType === 'kanban';
     return {
       boardId,
       boardType,
       denominator: 0,
+      stability: { numerator: 0, denominator: 0, applicable: !isKanban },
+      roadmap: { numerator: 0, denominator: 0, applicable: !isKanban },
+      support: { numerator: 0, denominator: 0, applicable: true },
+    };
+  }
+
+  /** Org response when there are no boards configured — all dimensions N/A. */
+  private emptyResponse(
+    week: string,
+    weekStart: Date,
+    weekEnd: Date,
+    trendWeeks: string[],
+  ): HealthcheckResponse {
+    const naDimension = { score: null, numerator: null, denominator: 0, band: null };
+    return {
+      week,
+      weekStart: weekStart.toISOString(),
+      weekEnd: weekEnd.toISOString(),
       stability: { ...naDimension },
       roadmap: { ...naDimension },
       support: { ...naDimension },
-      trend: trendWeeks.map((week) => ({
-        week,
+      trend: trendWeeks.map((w) => ({
+        week: w,
         stability: null,
         roadmap: null,
         support: null,

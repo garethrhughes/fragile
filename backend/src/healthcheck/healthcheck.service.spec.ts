@@ -103,7 +103,12 @@ async function buildService(mocks: Mocks): Promise<HealthcheckService> {
       { provide: getRepositoryToken(BoardConfig), useValue: { find: async () => mocks.configs } },
       {
         provide: getRepositoryToken(JiraIssue),
-        useValue: { find: async () => mocks.issues },
+        useValue: {
+          find: async (opts?: { where?: { boardId?: string } }) => {
+            const boardId = opts?.where?.boardId
+            return boardId ? mocks.issues.filter((i) => i.boardId === boardId) : mocks.issues
+          },
+        },
       },
       {
         provide: getRepositoryToken(JiraChangelog),
@@ -111,7 +116,12 @@ async function buildService(mocks: Mocks): Promise<HealthcheckService> {
       },
       {
         provide: getRepositoryToken(JiraSprint),
-        useValue: { find: async () => mocks.sprints },
+        useValue: {
+          find: async (opts?: { where?: { boardId?: string } }) => {
+            const boardId = opts?.where?.boardId
+            return boardId ? mocks.sprints.filter((s) => s.boardId === boardId) : mocks.sprints
+          },
+        },
       },
       {
         provide: getRepositoryToken(JiraIssueLink),
@@ -140,11 +150,13 @@ describe('HealthcheckService', () => {
       membership: new Map(),
     });
     const result = await service.getHealthcheck('2026-W30');
-    expect(result.boards).toEqual([]);
+    expect(result.stability.score).toBeNull();
+    expect(result.roadmap.score).toBeNull();
+    expect(result.support.score).toBeNull();
     expect(result.week).toBe('2026-W30');
   });
 
-  it('computes scrum stability, roadmap and support against the shared denominator', async () => {
+  it('computes pooled scrum stability, roadmap and support for a single board', async () => {
     const issues = [
       issue({ key: 'ACC-1', labels: ['support'] }),
       issue({ key: 'ACC-2' }),
@@ -163,14 +175,45 @@ describe('HealthcheckService', () => {
     });
 
     const result = await service.getHealthcheck('2026-W30');
-    expect(result.boards).toHaveLength(1);
-    const board = result.boards[0];
-    expect(board.denominator).toBe(2);
-    expect(board.stability.score).toBe(50); // 1 of 2 committed
-    expect(board.stability.band).toBe('red');
-    expect(board.support.score).toBe(50); // ACC-1 is support
-    expect(board.support.band).toBe('red'); // burden > 40
+    expect(result.stability.denominator).toBe(2);
+    expect(result.stability.score).toBe(50); // 1 of 2 committed
+    expect(result.stability.band).toBe('red');
+    expect(result.support.score).toBe(50); // ACC-1 is support
+    expect(result.support.band).toBe('red'); // burden > 40
   });
+
+  it('pools numerators and denominators across multiple boards', async () => {
+    // ACC (scrum): 2 started, 1 committed. BPT (scrum): 2 started, 2 committed.
+    // Pooled stability = 3 / 4 = 75.
+    const issues = [
+      issue({ key: 'ACC-1', boardId: 'ACC' }),
+      issue({ key: 'ACC-2', boardId: 'ACC' }),
+      issue({ key: 'BPT-1', boardId: 'BPT' }),
+      issue({ key: 'BPT-2', boardId: 'BPT' }),
+    ]
+    const changelogs = [
+      statusLog('ACC-1', 'In Progress', IN_WEEK),
+      statusLog('ACC-2', 'In Progress', IN_WEEK),
+      statusLog('BPT-1', 'In Progress', IN_WEEK),
+      statusLog('BPT-2', 'In Progress', IN_WEEK),
+    ]
+    const service = await buildService({
+      configs: [config({ boardId: 'ACC' }), config({ boardId: 'BPT' })],
+      issues,
+      changelogs,
+      sprints: [sprint({ boardId: 'ACC' }), sprint({ id: 'S2', boardId: 'BPT' })],
+      membership: new Map([
+        ['S1', membershipWith(['ACC-1'])],
+        ['S2', membershipWith(['BPT-1', 'BPT-2'])],
+      ]),
+    })
+
+    const result = await service.getHealthcheck('2026-W30')
+    expect(result.stability.denominator).toBe(4)
+    expect(result.stability.numerator).toBe(3)
+    expect(result.stability.score).toBe(75)
+    expect(result.stability.band).toBe('amber')
+  })
 
   it('excludes tickets whose first in-progress transition predates the week', async () => {
     const service = await buildService({
@@ -181,11 +224,11 @@ describe('HealthcheckService', () => {
       membership: new Map([['S1', membershipWith(['ACC-1'])]]),
     });
     const result = await service.getHealthcheck('2026-W30');
-    expect(result.boards[0].denominator).toBe(0);
-    expect(result.boards[0].stability.score).toBeNull();
+    expect(result.stability.denominator).toBe(0);
+    expect(result.stability.score).toBeNull();
   });
 
-  it('returns N/A stability and roadmap for kanban boards but computes support', async () => {
+  it('excludes kanban boards from Stability/Roadmap but pools their Support', async () => {
     const service = await buildService({
       configs: [config({ boardId: 'PLAT', boardType: 'kanban', supportLabels: ['support'] })],
       issues: [issue({ key: 'PLAT-1', boardId: 'PLAT', labels: ['support'] })],
@@ -194,15 +237,15 @@ describe('HealthcheckService', () => {
       membership: new Map(),
     });
     const result = await service.getHealthcheck('2026-W30');
-    const board = result.boards[0];
-    expect(board.boardType).toBe('kanban');
-    expect(board.denominator).toBe(1);
-    expect(board.stability.score).toBeNull();
-    expect(board.roadmap.score).toBeNull();
-    expect(board.support.score).toBe(100);
+    // No scrum board contributes → Stability/Roadmap denominators are 0 (N/A).
+    expect(result.stability.score).toBeNull();
+    expect(result.roadmap.score).toBeNull();
+    // Support pools the kanban board.
+    expect(result.support.denominator).toBe(1);
+    expect(result.support.score).toBe(100);
   });
 
-  it('returns an 8-point trend per board, oldest to newest, ending at the selected week', async () => {
+  it('returns an 8-point org trend, oldest to newest, ending at the selected week', async () => {
     const service = await buildService({
       configs: [config()],
       issues: [issue({ key: 'ACC-1' })],
@@ -211,7 +254,7 @@ describe('HealthcheckService', () => {
       membership: new Map([['S1', membershipWith(['ACC-1'])]]),
     });
     const result = await service.getHealthcheck('2026-W30');
-    const trend = result.boards[0].trend;
+    const trend = result.trend;
     expect(trend).toHaveLength(8);
     expect(trend[trend.length - 1].week).toBe('2026-W30');
     expect(trend[0].week).toBe('2026-W23');

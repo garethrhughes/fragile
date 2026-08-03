@@ -6,6 +6,13 @@
 **Related ADRs:** _(to be produced on acceptance — see Decision section)_
 **Related feature:** docs/features/0019-healthcheck-report.md
 
+> **Amendment (2026-08-03, ADR 0074):** The Healthcheck is **org-wide**, not per-board.
+> Each dimension's score is **pooled** — `score = (100 / Σdenominator) * Σnumerator` — using a
+> per-dimension denominator (Stability & Roadmap pool scrum boards only; Support pools all
+> boards). The response exposes only the three org scores + one 8-week org trend; per-board
+> results are removed from the API, frontend, and MCP payload. The per-board scoring core
+> (`computeBoardHealthcheck`) is retained internally as the pooling input.
+
 ## Problem Statement
 
 The current "Pulse" report is implemented as the `all-items` NestJS module (route

@@ -18,17 +18,35 @@
  *   - Support  (all boards): started tickets classified as support.
  */
 import type { JiraIssue, JiraChangelog, JiraIssueLink } from '../database/entities/index.js';
-import { computeScore } from './healthcheck-scoring.js';
-import {
-  classifyStabilityBand,
-  classifyRoadmapBand,
-  classifySupportBand,
-} from './healthcheck-bands.js';
 import {
   classifySupport,
   type SupportClassifierConfig,
 } from '../support/support-classification.js';
-import type { HealthcheckBoardResult, HealthcheckDimension } from './dto/healthcheck-response.dto.js';
+
+/**
+ * Raw per-dimension counts for one board/week. `applicable` is false when the
+ * dimension does not apply to the board (Stability/Roadmap on kanban) — such
+ * boards contribute nothing to the pooled denominator or numerator.
+ */
+export interface DimensionCount {
+  numerator: number;
+  denominator: number;
+  applicable: boolean;
+}
+
+/**
+ * Per-board Healthcheck contribution — raw counts only. The service pools these
+ * across boards (ADR 0074) to produce the org-wide scores and bands.
+ */
+export interface BoardHealthcheckResult {
+  boardId: string;
+  boardType: 'scrum' | 'kanban';
+  /** |D| — tickets that started this week on this board. */
+  denominator: number;
+  stability: DimensionCount;
+  roadmap: DimensionCount;
+  support: DimensionCount;
+}
 
 export interface BoardHealthcheckInput {
   boardId: string;
@@ -57,11 +75,7 @@ export interface BoardHealthcheckInput {
   supportConfig: SupportClassifierConfig;
   /** Per-issue links (source = issue) for support link classification. */
   linksByIssue: Map<string, JiraIssueLink[]>;
-  /** Roadmap-delivery target (%) for the board (default 80). */
-  roadmapDeliveryTarget?: number;
 }
-
-const DEFAULT_ROADMAP_TARGET = 80;
 
 /**
  * The first-ever start transition date for an issue, or null if it never
@@ -86,9 +100,8 @@ function firstStartDate(
 
 export function computeBoardHealthcheck(
   input: BoardHealthcheckInput,
-): HealthcheckBoardResult {
+): BoardHealthcheckResult {
   const isKanban = input.boardType === 'kanban';
-  const target = input.roadmapDeliveryTarget ?? DEFAULT_ROADMAP_TARGET;
 
   // --- Build denominator D: first-ever start transition within the week ---
   const started: { issue: JiraIssue; startedAt: Date }[] = [];
@@ -133,34 +146,14 @@ export function computeBoardHealthcheck(
     if (classification.isSupport) supportNumerator += 1;
   }
 
-  const stabilityScore = computeScore(stabilityNumerator, denominator, {
-    applicable: !isKanban,
-  });
-  const roadmapScore = computeScore(roadmapNumerator, denominator, {
-    applicable: !isKanban,
-  });
-  const supportScore = computeScore(supportNumerator, denominator);
-
-  const stability: HealthcheckDimension = {
-    ...stabilityScore,
-    band: classifyStabilityBand(stabilityScore.score),
-  };
-  const roadmap: HealthcheckDimension = {
-    ...roadmapScore,
-    band: classifyRoadmapBand(roadmapScore.score, target),
-  };
-  const support: HealthcheckDimension = {
-    ...supportScore,
-    band: classifySupportBand(supportScore.score),
-  };
-
   return {
     boardId: input.boardId,
     boardType: input.boardType,
     denominator,
-    stability,
-    roadmap,
-    support,
-    trend: [], // filled by the service across the 8-week window
+    // Stability & Roadmap only apply to scrum boards (ADR 0070).
+    stability: { numerator: stabilityNumerator, denominator, applicable: !isKanban },
+    roadmap: { numerator: roadmapNumerator, denominator, applicable: !isKanban },
+    // Support applies to all boards.
+    support: { numerator: supportNumerator, denominator, applicable: true },
   };
 }
