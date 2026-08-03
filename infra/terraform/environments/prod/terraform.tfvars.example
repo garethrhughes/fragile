@@ -63,3 +63,9 @@ domain_name = "example.com"
 # Use the AWS Console (Systems Manager → Parameter Store) or:
 #   aws ssm put-parameter --name /fragile/prod/jira-base-url \
 #     --value "https://your-org.atlassian.net" --type String --overwrite
+
+# Google OAuth client ID (public — baked into the frontend, verifies ID tokens)
+google_client_id = "your-client-id.apps.googleusercontent.com"
+
+# Google Workspace domain allowed to log in (hd claim)
+google_allowed_domain = "yourorg.com"

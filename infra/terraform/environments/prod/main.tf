@@ -62,9 +62,8 @@ module "iam" {
   db_password_secret_arn    = module.secrets.db_password_secret_arn
   jira_api_token_secret_arn = module.secrets.jira_api_token_secret_arn
 
-  google_client_id_secret_arn     = module.secrets.google_client_id_secret_arn
-  google_client_secret_secret_arn = module.secrets.google_client_secret_secret_arn
-  session_secret_secret_arn       = module.secrets.session_secret_secret_arn
+  google_client_id_secret_arn = module.secrets.google_client_id_secret_arn
+  session_secret_secret_arn   = module.secrets.session_secret_secret_arn
 
   ssm_parameter_path_prefix = "/fragile/${var.environment}/"
 
@@ -83,6 +82,8 @@ module "secrets" {
   source      = "../../modules/secrets"
   environment = var.environment
   aws_region  = var.aws_region
+
+  google_client_id = var.google_client_id
 }
 
 # ── RDS ────────────────────────────────────────────────────
@@ -138,20 +139,33 @@ module "ecs" {
   db_password_secret_arn    = module.secrets.db_password_secret_arn
   jira_api_token_secret_arn = module.secrets.jira_api_token_secret_arn
 
-  google_client_id_secret_arn     = module.secrets.google_client_id_secret_arn
-  google_client_secret_secret_arn = module.secrets.google_client_secret_secret_arn
-  session_secret_secret_arn       = module.secrets.session_secret_secret_arn
+  google_client_id_secret_arn = module.secrets.google_client_id_secret_arn
+  session_secret_secret_arn   = module.secrets.session_secret_secret_arn
 
   jira_base_url_param_arn   = module.secrets.jira_base_url_param_arn
   jira_user_email_param_arn = module.secrets.jira_user_email_param_arn
   timezone_param_arn        = module.secrets.timezone_param_arn
 
   frontend_url = "https://${var.frontend_subdomain}.${var.domain_name}"
+
+  google_allowed_domain = var.google_allowed_domain
+  cookie_domain         = ".${var.domain_name}"
 }
 
 # ── CDN -- ACM + CloudFront ─────────────────────────────────
 # Issues ACM certificates in us-east-1, validates them via Route 53,
 # and creates CloudFront distributions in front of both ECS Express services.
+# ── WAF (CloudFront-scoped IP allowlist) ───────────────────
+module "waf" {
+  source = "../../modules/waf"
+
+  providers = {
+    aws = aws.us_east_1
+  }
+
+  allowed_cidrs = var.allowed_cidrs
+}
+
 module "cdn" {
   source = "../../modules/cdn"
 
@@ -166,6 +180,8 @@ module "cdn" {
 
   alb_dns_name = module.ecs.alb_dns_name
   alb_arn      = module.ecs.alb_arn
+
+  web_acl_arn = module.waf.web_acl_arn
 }
 
 # ── DNS ────────────────────────────────────────────────────
