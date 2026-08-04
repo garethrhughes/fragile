@@ -1,13 +1,16 @@
 import { create } from 'zustand';
-import { triggerSync, getSyncStatus, type SyncStatusItem } from '@/lib/api';
+import { triggerSync, getSyncStatus, type SyncStatusItem, type SyncMode } from '@/lib/api';
 
 const POLL_INTERVAL_MS = 5_000;
 const POLL_TIMEOUT_MS = 180_000;
 
 export interface SyncState {
+  /** boardId -> latest sync ISO timestamp */
   lastSynced: Record<string, string>;
+  /** boardId -> syncType of the latest sync ('full' | 'incremental') */
+  lastSyncType: Record<string, string>;
   isSyncing: boolean;
-  triggerSync: () => Promise<void>;
+  triggerSync: (mode?: SyncMode) => Promise<void>;
   fetchStatus: () => Promise<void>;
 }
 
@@ -38,11 +41,52 @@ function allBoardsUpdated(
   });
 }
 
+/**
+ * Map a status response into the store's two lookup maps, keyed by boardId.
+ * Boards with a null lastSync (never synced) are omitted from both maps.
+ */
+function mapStatus(items: SyncStatusItem[]): {
+  lastSynced: Record<string, string>;
+  lastSyncType: Record<string, string>;
+} {
+  const lastSynced: Record<string, string> = {};
+  const lastSyncType: Record<string, string> = {};
+  for (const b of items) {
+    if (b.lastSync) {
+      lastSynced[b.boardId] = b.lastSync;
+      if (b.syncType) lastSyncType[b.boardId] = b.syncType;
+    }
+  }
+  return { lastSynced, lastSyncType };
+}
+
+/**
+ * Derive the single most-recent sync across all boards, with the syncType that
+ * produced it, for display as "Last synced: <time> (<type>)". Returns null when
+ * no board has ever synced.
+ */
+export function deriveLatestSync(
+  lastSynced: Record<string, string>,
+  lastSyncType: Record<string, string>,
+): { timestamp: string; syncType: string | null } | null {
+  let latestBoard: string | null = null;
+  let latestTs: string | null = null;
+  for (const [boardId, ts] of Object.entries(lastSynced)) {
+    if (ts && (latestTs === null || ts > latestTs)) {
+      latestTs = ts;
+      latestBoard = boardId;
+    }
+  }
+  if (latestTs === null || latestBoard === null) return null;
+  return { timestamp: latestTs, syncType: lastSyncType[latestBoard] ?? null };
+}
+
 export const useSyncStore = create<SyncState>((set, get) => ({
   lastSynced: {},
+  lastSyncType: {},
   isSyncing: false,
 
-  triggerSync: async () => {
+  triggerSync: async (mode: SyncMode = 'full') => {
     // Guard: do not start a second polling loop if one is already running.
     if (get().isSyncing) return;
 
@@ -68,7 +112,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     set({ isSyncing: true });
 
     try {
-      await triggerSync();
+      await triggerSync(mode);
     } catch {
       set({ isSyncing: false });
       return;
@@ -85,11 +129,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
         intervalId = null;
       }
       if (current) {
-        const mapped: Record<string, string> = {};
-        for (const b of current) {
-          if (b.lastSync) mapped[b.boardId] = b.lastSync;
-        }
-        set({ lastSynced: mapped });
+        set(mapStatus(current));
       }
       set({ isSyncing: false });
     };
@@ -115,11 +155,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
   fetchStatus: async () => {
     try {
       const status = await getSyncStatus();
-      const mapped: Record<string, string> = {};
-      for (const b of status ?? []) {
-        if (b.lastSync) mapped[b.boardId] = b.lastSync;
-      }
-      set({ lastSynced: mapped });
+      set(mapStatus(status ?? []));
     } catch {
       // Silently fail on status fetch
     }

@@ -79,6 +79,7 @@ export interface SyncStatusItem {
   boardId: string;
   lastSync: string | null;
   status: string;
+  syncType: string | null;
 }
 
 type SyncStatusResponse = SyncStatusItem[];
@@ -195,8 +196,10 @@ function toQueryString(params: Record<string, string | undefined>): string {
 
 // ---- Typed endpoint wrappers ---------------------------------------------
 
-export function triggerSync(): Promise<{ message: string }> {
-  return apiFetch('/api/sync', { method: 'POST' });
+export type SyncMode = 'full' | 'incremental';
+
+export function triggerSync(mode: SyncMode = 'full'): Promise<{ message: string }> {
+  return apiFetch(`/api/sync${toQueryString({ mode })}`, { method: 'POST' });
 }
 
 export function getSyncStatus(): Promise<SyncStatusResponse> {
