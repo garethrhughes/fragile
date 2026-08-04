@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Save, Loader2, CheckCircle, XCircle, Plus, Trash2, RefreshCw, X, AlertTriangle } from 'lucide-react';
 import {
@@ -18,7 +18,7 @@ import {
   ApiError,
 } from '@/lib/api'
 import { useBoardsStore } from '@/store/boards-store'
-import { useSyncStore } from '@/store/sync-store'
+import { useSyncStore, deriveLatestSync } from '@/store/sync-store'
 import { useAuth } from '@/hooks/use-auth'
 
 // ---------------------------------------------------------------------------
@@ -150,11 +150,18 @@ export default function SettingsPage() {
   const refreshBoards = useBoardsStore((s) => s.refreshBoards);
 
   // Jira data sync
-  const { isSyncing, lastSynced, triggerSync, fetchStatus } = useSyncStore();
+  const { isSyncing, lastSynced, lastSyncType, triggerSync, fetchStatus } = useSyncStore();
 
   useEffect(() => {
     void fetchStatus();
   }, [fetchStatus]);
+
+  // The most recent sync across all boards, with the syncType that produced it.
+  // Used to render a single "Last synced: <time> (full|hourly)" line.
+  const latestSync = useMemo(
+    () => deriveLatestSync(lastSynced, lastSyncType),
+    [lastSynced, lastSyncType],
+  );
 
   // JPD / Roadmap config
   const [jpdConfigs, setJpdConfigs] = useState<RoadmapConfig[]>([]);
@@ -338,25 +345,47 @@ export default function SettingsPage() {
         </p>
         <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>Sync runs automatically once a day. Use this button to trigger an immediate sync.</span>
+          <span>
+            A full sync runs automatically once a day; an hourly sync fetches only
+            recently-changed issues. Use these buttons to trigger a sync immediately.
+          </span>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           <button
             type="button"
-            onClick={() => void triggerSync()}
+            onClick={() => void triggerSync('full')}
             disabled={isSyncing}
             title={isSyncing ? 'Sync in progress — may take up to 2 minutes' : 'Trigger a full Jira sync'}
             className="inline-flex items-center gap-2 rounded-lg border border-border px-5 py-2.5 text-sm font-medium transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
           >
             <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
-            {isSyncing ? 'Syncing…' : 'Sync Now'}
+            {isSyncing ? 'Syncing…' : 'Full Sync Now'}
           </button>
-          {Object.values(lastSynced).filter(Boolean).length > 0 && (
+          <button
+            type="button"
+            onClick={() => void triggerSync('incremental')}
+            disabled={isSyncing}
+            title={
+              isSyncing
+                ? 'Sync in progress — may take up to 2 minutes'
+                : 'Trigger an hourly (incremental) Jira sync — only recently-changed issues'
+            }
+            className="inline-flex items-center gap-2 rounded-lg border border-border px-5 py-2.5 text-sm font-medium transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
+            {isSyncing ? 'Syncing…' : 'Hourly Sync Now'}
+          </button>
+          {latestSync && (
             <p className="text-sm text-muted">
-              Last synced:{' '}
-              {new Date(
-                Object.values(lastSynced).filter(Boolean).reduce((a, b) => (a > b ? a : b)),
-              ).toLocaleString()}
+              Last synced: {new Date(latestSync.timestamp).toLocaleString()}
+              {latestSync.syncType && (
+                <>
+                  {' '}
+                  <span className="text-muted">
+                    ({latestSync.syncType === 'incremental' ? 'hourly' : latestSync.syncType})
+                  </span>
+                </>
+              )}
             </p>
           )}
         </div>
