@@ -22,6 +22,9 @@ export class SyncLog {
   @Column({ default: 'success' })
   status!: string; // 'success' | 'failed'
 
+  @Column({ default: 'full' })
+  syncType!: string; // 'full' | 'incremental' (proposal 0078)
+
   @Column({ type: 'text', nullable: true })
   errorMessage!: string | null;
 }

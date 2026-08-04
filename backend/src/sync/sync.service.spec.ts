@@ -209,11 +209,12 @@ describe('SyncService', () => {
     it('registers a midnight cron job using the configured TIMEZONE', () => {
       service.onModuleInit();
 
-      expect(schedulerRegistry.addCronJob).toHaveBeenCalledTimes(1);
-      const [name, job] = (schedulerRegistry.addCronJob as jest.Mock).mock.calls[0] as [string, { cronTime: { source: string; timeZone: string } }];
-      expect(name).toBe('jira-sync');
-      expect(job.cronTime.source).toBe('0 0 * * *');
-      expect(job.cronTime.timeZone).toBe('Australia/Sydney');
+      const fullCall = (schedulerRegistry.addCronJob as jest.Mock).mock.calls.find(
+        (c: [string, unknown]) => c[0] === 'jira-sync',
+      ) as [string, { cronTime: { source: string; timeZone: string } }] | undefined;
+      expect(fullCall).toBeDefined();
+      expect(fullCall![1].cronTime.source).toBe('0 0 * * *');
+      expect(fullCall![1].cronTime.timeZone).toBe('Australia/Sydney');
     });
 
     it('falls back to UTC when TIMEZONE is not configured', () => {
@@ -2113,6 +2114,254 @@ describe('SyncService', () => {
       const result = await service.getStatus();
 
       expect(result).toEqual([]);
+    });
+
+    it('surfaces the syncType of the most recent log', async () => {
+      boardConfigRepo.find.mockResolvedValue([{ boardId: 'PROJ' } as BoardConfig]);
+      const syncedAt = new Date('2026-04-01T12:00:00Z');
+      syncLogRepo.findOne.mockResolvedValue({
+        boardId: 'PROJ',
+        syncedAt,
+        status: 'success',
+        syncType: 'incremental',
+      } as SyncLog);
+
+      const result = await service.getStatus();
+
+      expect(result[0].syncType).toBe('incremental');
+    });
+
+    it('reports syncType null when a board has never synced', async () => {
+      boardConfigRepo.find.mockResolvedValue([{ boardId: 'PROJ' } as BoardConfig]);
+      syncLogRepo.findOne.mockResolvedValue(null);
+
+      const result = await service.getStatus();
+
+      expect(result[0].syncType).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Incremental sync (proposal 0078)
+  // -------------------------------------------------------------------------
+
+  describe('incremental sync', () => {
+    beforeEach(() => {
+      boardConfigRepo.find.mockResolvedValue([{ boardId: 'PROJ' } as BoardConfig]);
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardId: 'PROJ',
+        boardType: 'scrum',
+      } as BoardConfig);
+      jiraClient.getBoardsForProject.mockResolvedValue({
+        values: [{ id: 42, name: 'PROJ board', type: 'scrum' }],
+      } as never);
+      jiraClient.getSprints.mockResolvedValue({ values: [] } as never);
+      jiraClient.searchIssues.mockResolvedValue({ issues: [], nextPageToken: undefined } as never);
+      jiraClient.getProjectVersions.mockResolvedValue([]);
+      roadmapConfigRepo.find.mockResolvedValue([]);
+      syncLogRepo.save.mockImplementation((log) => Promise.resolve(log as SyncLog));
+    });
+
+    it('records syncType=full for a default (full) sync', async () => {
+      const log = await service.syncBoard('PROJ');
+      expect(log.syncType).toBe('full');
+    });
+
+    it('appends `updated >=` clause to the scrum JQL when a watermark exists', async () => {
+      // Last successful sync for PROJ was at a known time
+      const lastSync = new Date('2026-05-01T10:00:00Z');
+      syncLogRepo.findOne.mockResolvedValue({
+        boardId: 'PROJ',
+        syncedAt: lastSync,
+        status: 'success',
+      } as SyncLog);
+
+      await service.syncAll('incremental');
+
+      const jql = jiraClient.searchIssues.mock.calls[0][0] as string;
+      expect(jql).toContain('AND updated >=');
+      expect(jql).toContain('sprint is not EMPTY');
+      expect(jql).toContain('ORDER BY updated DESC');
+    });
+
+    it('applies the overlap buffer: watermark = lastSyncedAt − INCREMENTAL_SYNC_OVERLAP_MINUTES', async () => {
+      configService.get.mockImplementation((key: string, fallback?: unknown) => {
+        if (key === 'TIMEZONE') return 'UTC';
+        if (key === 'INCREMENTAL_SYNC_OVERLAP_MINUTES') return 10;
+        return fallback;
+      });
+      const lastSync = new Date('2026-05-01T10:00:00Z');
+      syncLogRepo.findOne.mockResolvedValue({
+        boardId: 'PROJ',
+        syncedAt: lastSync,
+        status: 'success',
+      } as SyncLog);
+
+      await service.syncAll('incremental');
+
+      const jql = jiraClient.searchIssues.mock.calls[0][0] as string;
+      // 10:00 − 10min = 09:50, formatted as Jira "yyyy-MM-dd HH:mm"
+      expect(jql).toContain('2026-05-01 09:50');
+    });
+
+    it('formats the watermark in the configured TIMEZONE (Jira interprets JQL dates in the account timezone)', async () => {
+      // Australia/Sydney is UTC+10 in May (no DST). A watermark of 2026-05-01T10:00:00Z
+      // must be rendered as 2026-05-01 20:00 (Sydney wall-clock), not UTC.
+      configService.get.mockImplementation((key: string, fallback?: unknown) => {
+        if (key === 'TIMEZONE') return 'Australia/Sydney';
+        if (key === 'INCREMENTAL_SYNC_OVERLAP_MINUTES') return 0;
+        return fallback;
+      });
+      const lastSync = new Date('2026-05-01T10:00:00Z');
+      syncLogRepo.findOne.mockResolvedValue({
+        boardId: 'PROJ',
+        syncedAt: lastSync,
+        status: 'success',
+      } as SyncLog);
+
+      await service.syncAll('incremental');
+
+      const jql = jiraClient.searchIssues.mock.calls[0][0] as string;
+      expect(jql).toContain('2026-05-01 20:00');
+    });
+
+    it('only considers successful sync logs when computing the watermark', async () => {
+      // findOne is called with a where clause including status='success';
+      // assert the query constrains status to success.
+      const lastSync = new Date('2026-05-01T10:00:00Z');
+      syncLogRepo.findOne.mockResolvedValue({
+        boardId: 'PROJ',
+        syncedAt: lastSync,
+        status: 'success',
+      } as SyncLog);
+
+      await service.syncAll('incremental');
+
+      const findOneCall = (syncLogRepo.findOne as jest.Mock).mock.calls.find(
+        (args: unknown[]) => {
+          const where = (args[0] as { where?: Record<string, unknown> })?.where;
+          return where !== undefined && 'boardId' in where && 'status' in where;
+        },
+      );
+      expect(findOneCall).toBeDefined();
+      const where = (findOneCall![0] as { where: Record<string, unknown> }).where;
+      expect(where.status).toBe('success');
+    });
+
+    it('falls back to a full sync (no watermark clause) when the board has no prior successful sync', async () => {
+      syncLogRepo.findOne.mockResolvedValue(null);
+
+      const result = await service.syncAll('incremental');
+
+      const jql = jiraClient.searchIssues.mock.calls[0][0] as string;
+      expect(jql).not.toContain('updated >=');
+      // The written log records that this board fell back to full
+      expect(result.results[0].syncType).toBe('full');
+    });
+
+    it('records syncType=incremental when a watermark is applied', async () => {
+      const lastSync = new Date('2026-05-01T10:00:00Z');
+      syncLogRepo.findOne.mockResolvedValue({
+        boardId: 'PROJ',
+        syncedAt: lastSync,
+        status: 'success',
+      } as SyncLog);
+
+      const result = await service.syncAll('incremental');
+
+      expect(result.results[0].syncType).toBe('incremental');
+    });
+
+    it('appends `updated >=` clause to the kanban JQL when a watermark exists', async () => {
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardId: 'PLAT',
+        boardType: 'kanban',
+      } as BoardConfig);
+      boardConfigRepo.find.mockResolvedValue([{ boardId: 'PLAT' } as BoardConfig]);
+      jiraClient.getBoardsForProject.mockResolvedValue({
+        values: [{ id: 55, name: 'PLAT board', type: 'kanban' }],
+      } as never);
+      const lastSync = new Date('2026-05-01T10:00:00Z');
+      syncLogRepo.findOne.mockResolvedValue({
+        boardId: 'PLAT',
+        syncedAt: lastSync,
+        status: 'success',
+      } as SyncLog);
+
+      await service.syncAll('incremental');
+
+      const jql = jiraClient.searchIssues.mock.calls[0][0] as string;
+      expect(jql).toContain('AND updated >=');
+      expect(jql).toContain('ORDER BY updated DESC');
+    });
+
+    it('does NOT run kanban phantom-deletion reconciliation on an incremental sync', async () => {
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardId: 'PLAT',
+        boardType: 'kanban',
+      } as BoardConfig);
+      boardConfigRepo.find.mockResolvedValue([{ boardId: 'PLAT' } as BoardConfig]);
+      jiraClient.getBoardsForProject.mockResolvedValue({
+        values: [{ id: 55, name: 'PLAT board', type: 'kanban' }],
+      } as never);
+      const lastSync = new Date('2026-05-01T10:00:00Z');
+      syncLogRepo.findOne.mockResolvedValue({
+        boardId: 'PLAT',
+        syncedAt: lastSync,
+        status: 'success',
+      } as SyncLog);
+
+      await service.syncAll('incremental');
+
+      // Reconciliation issues a boardId-scoped find with a `select` — must not happen
+      const findCalls = (issueRepo.find as jest.Mock).mock.calls;
+      const reconciliationQuery = findCalls.find((args: unknown[]) => {
+        const opts = args[0] as Record<string, unknown> | undefined;
+        return opts !== undefined && 'select' in opts;
+      });
+      expect(reconciliationQuery).toBeUndefined();
+    });
+
+    it('still runs kanban reconciliation on a full sync', async () => {
+      boardConfigRepo.findOne.mockResolvedValue({
+        boardId: 'PLAT',
+        boardType: 'kanban',
+      } as BoardConfig);
+      boardConfigRepo.find.mockResolvedValue([{ boardId: 'PLAT' } as BoardConfig]);
+      jiraClient.getBoardsForProject.mockResolvedValue({
+        values: [{ id: 55, name: 'PLAT board', type: 'kanban' }],
+      } as never);
+      issueRepo.find.mockResolvedValue([{ key: 'PLAT-1' }] as JiraIssue[]);
+
+      await service.syncAll('full');
+
+      const findCalls = (issueRepo.find as jest.Mock).mock.calls;
+      const reconciliationQuery = findCalls.find((args: unknown[]) => {
+        const opts = args[0] as Record<string, unknown> | undefined;
+        return opts !== undefined && 'select' in opts;
+      });
+      expect(reconciliationQuery).toBeDefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // onModuleInit — incremental cron registration (proposal 0078)
+  // -------------------------------------------------------------------------
+
+  describe('onModuleInit (incremental cron)', () => {
+    it('registers an hourly incremental cron alongside the daily full cron', () => {
+      service.onModuleInit();
+
+      const calls = (schedulerRegistry.addCronJob as jest.Mock).mock.calls as [
+        string,
+        { cronTime: { source: string } },
+      ][];
+      const names = calls.map((c) => c[0]);
+      expect(names).toContain('jira-sync');
+      expect(names).toContain('jira-sync-incremental');
+
+      const incremental = calls.find((c) => c[0] === 'jira-sync-incremental');
+      expect(incremental![1].cronTime.source).toBe('0 * * * *');
     });
   });
 });
