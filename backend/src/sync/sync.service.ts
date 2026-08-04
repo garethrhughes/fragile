@@ -38,6 +38,16 @@ interface FieldConfig {
   sprintFieldId: string;
 }
 
+/**
+ * Sync granularity (proposal 0078).
+ * - 'full'        — fetch every issue for each board (correctness backstop; daily cron)
+ * - 'incremental' — fetch only issues changed since the last successful sync (hourly cron)
+ */
+export type SyncMode = 'full' | 'incremental';
+
+/** Default overlap buffer (minutes) subtracted from the watermark. */
+const DEFAULT_INCREMENTAL_OVERLAP_MINUTES = 5;
+
 /** Fallback values that match the previously hardcoded behaviour. */
 const DEFAULT_FIELD_CONFIG: FieldConfig = {
   storyPointsFieldIds: [
@@ -121,6 +131,30 @@ export class SyncService implements OnModuleInit {
     );
     this.schedulerRegistry.addCronJob('jira-sync', job);
     job.start();
+
+    // Hourly incremental sync (proposal 0078). Fetches only issues changed
+    // since the last successful sync per board. The advisory lock makes a
+    // collision with the daily full run at midnight a no-op.
+    const incrementalJob = new CronJob(
+      '0 * * * *',
+      () => {
+        this.handleIncrementalCron().catch((err: unknown) => {
+          this.logger.error(
+            'Scheduled incremental sync failed',
+            err instanceof Error ? err.stack : String(err),
+          );
+        });
+      },
+      null,
+      false,
+      timezone,
+      null,
+      false,
+      null,
+      true,
+    );
+    this.schedulerRegistry.addCronJob('jira-sync-incremental', incrementalJob);
+    incrementalJob.start();
   }
 
   /**
@@ -172,14 +206,19 @@ export class SyncService implements OnModuleInit {
 
   async handleCron(): Promise<void> {
     this.logger.log('Scheduled sync triggered');
-    await this.syncAll();
+    await this.syncAll('full');
+  }
+
+  async handleIncrementalCron(): Promise<void> {
+    this.logger.log('Scheduled incremental sync triggered');
+    await this.syncAll('incremental');
   }
 
   get isSyncRunning(): boolean {
     return this.syncLockRunner !== null;
   }
 
-  async syncAll(): Promise<{ boards: string[]; results: SyncLog[] }> {
+  async syncAll(mode: SyncMode = 'full'): Promise<{ boards: string[]; results: SyncLog[] }> {
     const locked = await this.acquireSyncLock();
     if (!locked) {
       this.logger.warn(
@@ -197,7 +236,11 @@ export class SyncService implements OnModuleInit {
       const fieldConfig = await this.loadFieldConfig();
 
       for (const boardId of boardIds) {
-        const result = await this.syncBoard(boardId, fieldConfig);
+        // For incremental runs, resolve a per-board watermark; a null watermark
+        // (no prior successful sync) makes syncBoard fall back to a full sync.
+        const since =
+          mode === 'incremental' ? await this.resolveWatermark(boardId) : null;
+        const result = await this.syncBoard(boardId, fieldConfig, since);
         results.push(result);
       }
 
@@ -274,11 +317,71 @@ export class SyncService implements OnModuleInit {
     };
   }
 
-  async syncBoard(boardId: string, fieldConfig?: FieldConfig): Promise<SyncLog> {
+  /**
+   * Resolve the incremental-sync watermark for a board (proposal 0078).
+   *
+   * Returns the `syncedAt` of the most recent SUCCESSFUL SyncLog for the board,
+   * minus the configured overlap buffer (INCREMENTAL_SYNC_OVERLAP_MINUTES,
+   * default 5). The buffer absorbs clock skew and edge-of-window changes so no
+   * update is missed between runs.
+   *
+   * Returns null when the board has no prior successful sync — the caller then
+   * performs a full sync for that board.
+   */
+  private async resolveWatermark(boardId: string): Promise<Date | null> {
+    const lastSuccess = await this.syncLogRepo.findOne({
+      where: { boardId, status: 'success' },
+      order: { syncedAt: 'DESC' },
+    });
+    if (!lastSuccess) return null;
+
+    const overlapMinutes = this.configService.get<number>(
+      'INCREMENTAL_SYNC_OVERLAP_MINUTES',
+      DEFAULT_INCREMENTAL_OVERLAP_MINUTES,
+    );
+    return new Date(lastSuccess.syncedAt.getTime() - overlapMinutes * 60_000);
+  }
+
+  /**
+   * Format a Date as the JQL datetime literal Jira expects: `yyyy-MM-dd HH:mm`.
+   *
+   * Jira interprets an unqualified JQL datetime in the API account's timezone
+   * (see Jira Cloud REST docs — timestamps use the system/user default zone),
+   * so we render the watermark in the configured TIMEZONE rather than UTC.
+   * Formatting via Intl.DateTimeFormat matches the project convention in
+   * working-time.service.ts (no date library dependency).
+   */
+  private formatJqlDate(date: Date): string {
+    const timezone = this.configService.get<string>('TIMEZONE', 'UTC');
+    // en-CA yields yyyy-MM-dd; hourCycle h23 yields 24-hour HH:mm.
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    });
+    const parts = fmt.formatToParts(date);
+    const get = (type: string): string =>
+      parts.find((p) => p.type === type)?.value ?? '';
+    return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`;
+  }
+
+  async syncBoard(
+    boardId: string,
+    fieldConfig?: FieldConfig,
+    since?: Date | null,
+  ): Promise<SyncLog> {
+    // A watermark is only applied when this is an incremental run AND a prior
+    // successful sync exists. Otherwise the board is fully synced.
+    const watermark = since ?? null;
     const syncLog = this.syncLogRepo.create({
       boardId,
       issueCount: 0,
       status: 'success',
+      syncType: watermark ? 'incremental' : 'full',
     });
 
     // Allow callers (e.g. the controller) to trigger a single-board sync
@@ -300,7 +403,7 @@ export class SyncService implements OnModuleInit {
 
       if (config.boardType === 'kanban') {
         // Kanban boards don't have sprints — fetch issues via JQL, then sync backlog membership
-        const issues = await this.syncKanbanIssuesWithConfig(boardId, numericBoardId, extraFields, resolvedFieldConfig);
+        const issues = await this.syncKanbanIssuesWithConfig(boardId, numericBoardId, extraFields, resolvedFieldConfig, watermark);
         totalIssues = issues.length;
         allIssueKeys.push(...issues.map((i) => i.key));
         this.logger.log(
@@ -319,6 +422,7 @@ export class SyncService implements OnModuleInit {
           extraFields,
           resolvedFieldConfig,
           allIssueKeys,
+          watermark,
         );
       }
 
@@ -402,8 +506,11 @@ export class SyncService implements OnModuleInit {
     numericBoardId: string,
     extraFields: string[],
     fieldConfig: FieldConfig,
+    watermark?: Date | null,
   ): Promise<JiraIssue[]> {
-    const jql = `project = ${boardId} ORDER BY updated DESC`;
+    const jql = watermark
+      ? `project = ${boardId} AND updated >= "${this.formatJqlDate(watermark)}" ORDER BY updated DESC`
+      : `project = ${boardId} ORDER BY updated DESC`;
     const allIssues: JiraIssue[] = [];
     const allRawIssues: JiraIssueValue[] = [];
     let nextPageToken: string | undefined;
@@ -425,8 +532,17 @@ export class SyncService implements OnModuleInit {
     }
 
     // -----------------------------------------------------------------------
-    // Backlog membership sync (proposal 0067 / ADR 0067)
-    //
+    // Backlog membership sync (proposal 0067 / ADR 0067) and phantom-deletion
+    // reconciliation (ADR 0064 / proposal 0068) both require a FULL JQL scan of
+    // the board: they reset/compare against every current issue. On an
+    // incremental run (watermark set) the JQL returns only changed issues, so
+    // these steps are skipped — the daily full sync remains the authority for
+    // backlog state and deletion detection (proposal 0078).
+    // -----------------------------------------------------------------------
+    if (watermark) {
+      return allIssues;
+    }
+
     // The Jira Agile backlog endpoint is the authoritative source of whether
     // a kanban issue is in the backlog or on the board. statusId is unreliable
     // because the same status can serve both roles (e.g. PLAT's "To Do").
@@ -434,7 +550,6 @@ export class SyncService implements OnModuleInit {
     // 1. Reset all board issues to inBacklog=false
     // 2. Fetch all backlog keys from Jira (paginated)
     // 3. Mark backlog keys as inBacklog=true
-    // -----------------------------------------------------------------------
     await this.issueRepo.update({ boardId }, { inBacklog: false });
 
     const backlogKeys: string[] = [];
@@ -531,8 +646,11 @@ export class SyncService implements OnModuleInit {
     extraFields: string[],
     fieldConfig: FieldConfig,
     allIssueKeys: string[],
+    watermark?: Date | null,
   ): Promise<number> {
-    const jql = `project = "${boardId}" AND sprint is not EMPTY ORDER BY updated DESC`;
+    const jql = watermark
+      ? `project = "${boardId}" AND sprint is not EMPTY AND updated >= "${this.formatJqlDate(watermark)}" ORDER BY updated DESC`
+      : `project = "${boardId}" AND sprint is not EMPTY ORDER BY updated DESC`;
     let nextPageToken: string | undefined;
     let totalIssues = 0;
 
@@ -995,13 +1113,17 @@ export class SyncService implements OnModuleInit {
   }
 
   async getStatus(): Promise<
-    { boardId: string; lastSync: Date | null; status: string }[]
+    { boardId: string; lastSync: Date | null; status: string; syncType: string | null }[]
   > {
     const configs = await this.boardConfigRepo.find();
     const boardIds = configs.map((c) => c.boardId);
 
-    const results: { boardId: string; lastSync: Date | null; status: string }[] =
-      [];
+    const results: {
+      boardId: string;
+      lastSync: Date | null;
+      status: string;
+      syncType: string | null;
+    }[] = [];
 
     for (const boardId of boardIds) {
       const lastLog = await this.syncLogRepo.findOne({
@@ -1013,6 +1135,7 @@ export class SyncService implements OnModuleInit {
         boardId,
         lastSync: lastLog?.syncedAt ?? null,
         status: lastLog?.status ?? 'never',
+        syncType: lastLog?.syncType ?? null,
       });
     }
 

@@ -30,7 +30,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 import { triggerSync as mockTriggerSync, getSyncStatus as mockGetSyncStatus } from '@/lib/api';
-import { useSyncStore } from './sync-store';
+import { useSyncStore, deriveLatestSync } from './sync-store';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -40,9 +40,14 @@ const POLL_MS = 5_000;
 const TIMEOUT_MS = 180_000;
 
 function makeStatus(
-  boards: Array<{ boardId: string; lastSync: string | null }>,
+  boards: Array<{ boardId: string; lastSync: string | null; syncType?: string | null }>,
 ) {
-  return boards.map((b) => ({ ...b, status: b.lastSync ? 'success' : 'never' }));
+  return boards.map((b) => ({
+    boardId: b.boardId,
+    lastSync: b.lastSync,
+    status: b.lastSync ? 'success' : 'never',
+    syncType: b.syncType ?? (b.lastSync ? 'full' : null),
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -53,7 +58,7 @@ beforeEach(() => {
   vi.useFakeTimers();
 
   // Reset to a clean store state before each test
-  useSyncStore.setState({ lastSynced: {}, isSyncing: false });
+  useSyncStore.setState({ lastSynced: {}, lastSyncType: {}, isSyncing: false });
 
   // Default: triggerSync POST succeeds
   (mockTriggerSync as Mock).mockResolvedValue({ message: 'ok' });
@@ -265,6 +270,73 @@ describe('useSyncStore.triggerSync', () => {
     expect(useSyncStore.getState().isSyncing).toBe(false);
   });
 
+  it("defaults to a full sync when called with no argument", async () => {
+    (mockGetSyncStatus as Mock).mockResolvedValue(
+      makeStatus([{ boardId: 'ACC', lastSync: null }]),
+    );
+
+    let syncPromise!: Promise<void>;
+    await act(async () => {
+      syncPromise = useSyncStore.getState().triggerSync();
+      await flushMicrotasks();
+    });
+
+    expect(mockTriggerSync).toHaveBeenCalledWith('full');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TIMEOUT_MS + POLL_MS);
+      await flushMicrotasks();
+      await syncPromise;
+    });
+  });
+
+  it("forwards mode='incremental' to the API when triggering an hourly sync", async () => {
+    (mockGetSyncStatus as Mock).mockResolvedValue(
+      makeStatus([{ boardId: 'ACC', lastSync: null }]),
+    );
+
+    let syncPromise!: Promise<void>;
+    await act(async () => {
+      syncPromise = useSyncStore.getState().triggerSync('incremental');
+      await flushMicrotasks();
+    });
+
+    expect(mockTriggerSync).toHaveBeenCalledWith('incremental');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TIMEOUT_MS + POLL_MS);
+      await flushMicrotasks();
+      await syncPromise;
+    });
+  });
+
+  it('records the syncType per board on convergence', async () => {
+    const PRE_SYNC_TS = '2026-04-24T10:00:00.000Z';
+    const POST_SYNC_TS = '2026-04-24T10:01:00.000Z';
+
+    useSyncStore.setState({ lastSynced: { ACC: PRE_SYNC_TS } });
+
+    (mockGetSyncStatus as Mock).mockResolvedValueOnce(
+      makeStatus([{ boardId: 'ACC', lastSync: PRE_SYNC_TS, syncType: 'full' }]),
+    );
+    (mockGetSyncStatus as Mock).mockResolvedValue(
+      makeStatus([{ boardId: 'ACC', lastSync: POST_SYNC_TS, syncType: 'incremental' }]),
+    );
+
+    await act(async () => {
+      void useSyncStore.getState().triggerSync('incremental');
+      await flushMicrotasks();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      await flushMicrotasks();
+    });
+
+    expect(useSyncStore.getState().isSyncing).toBe(false);
+    expect(useSyncStore.getState().lastSyncType['ACC']).toBe('incremental');
+  });
+
   it('handles a board that has never synced — any non-null timestamp satisfies convergence', async () => {
     const FIRST_SYNC_TS = '2026-04-24T06:00:00.000Z';
 
@@ -316,6 +388,23 @@ describe('useSyncStore.fetchStatus', () => {
     expect(lastSynced['BPT']).toBeUndefined(); // null entries are excluded
   });
 
+  it('maps syncType into lastSyncType', async () => {
+    (mockGetSyncStatus as Mock).mockResolvedValue(
+      makeStatus([
+        { boardId: 'ACC', lastSync: '2026-04-24T05:00:00.000Z', syncType: 'incremental' },
+        { boardId: 'BPT', lastSync: null },
+      ]),
+    );
+
+    await act(async () => {
+      await useSyncStore.getState().fetchStatus();
+    });
+
+    const { lastSyncType } = useSyncStore.getState();
+    expect(lastSyncType['ACC']).toBe('incremental');
+    expect(lastSyncType['BPT']).toBeUndefined();
+  });
+
   it('does not throw when getSyncStatus rejects', async () => {
     (mockGetSyncStatus as Mock).mockRejectedValue(new Error('Network error'));
 
@@ -324,5 +413,33 @@ describe('useSyncStore.fetchStatus', () => {
         await useSyncStore.getState().fetchStatus();
       }),
     ).resolves.not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('deriveLatestSync', () => {
+  it('returns null when no board has synced', () => {
+    expect(deriveLatestSync({}, {})).toBeNull();
+  });
+
+  it('returns the most recent timestamp across boards with its syncType', () => {
+    const lastSynced = {
+      ACC: '2026-04-24T10:00:00.000Z',
+      BPT: '2026-04-24T12:00:00.000Z',
+    };
+    const lastSyncType = { ACC: 'full', BPT: 'incremental' };
+
+    const result = deriveLatestSync(lastSynced, lastSyncType);
+
+    expect(result).toEqual({
+      timestamp: '2026-04-24T12:00:00.000Z',
+      syncType: 'incremental',
+    });
+  });
+
+  it('returns a null syncType when the latest board has no recorded type', () => {
+    const result = deriveLatestSync({ ACC: '2026-04-24T10:00:00.000Z' }, {});
+    expect(result).toEqual({ timestamp: '2026-04-24T10:00:00.000Z', syncType: null });
   });
 });
