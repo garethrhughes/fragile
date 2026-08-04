@@ -74,3 +74,4 @@
 | [0075](0075-remove-custom-reports-and-api-key-auth.md) | Remove Custom Reports & Add API-Key Authentication | Accepted | 2026-07-28 |
 | [0076](0076-healthcheck-report.md) | Healthcheck Report (replaces Pulse) | Accepted | 2026-08-03 |
 | [0077](0077-ticket-debug-page.md) | Ticket Debug Page | Accepted | 2026-08-03 |
+| [0078](0078-incremental-jira-sync.md) | Incremental Jira Sync | Accepted | 2026-08-04 |

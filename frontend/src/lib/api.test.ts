@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { apiFetch, ApiError, getDoraAggregate, getDoraTrend, getIssueDebug } from './api';
+import { apiFetch, ApiError, getDoraAggregate, getDoraTrend, getIssueDebug, triggerSync } from './api';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -180,5 +180,28 @@ describe('getIssueDebug', () => {
       text: () => Promise.resolve('No stored data'),
     });
     await expect(getIssueDebug('NOPE-1')).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('triggerSync', () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ message: 'ok' }) });
+  });
+
+  it('defaults to a full sync (mode=full) when called with no argument', async () => {
+    await triggerSync();
+    const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/api/sync?mode=full');
+    expect(options.method).toBe('POST');
+  });
+
+  it('POSTs ?mode=incremental for an incremental sync', async () => {
+    await triggerSync('incremental');
+    const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/api/sync?mode=incremental');
+    expect(options.method).toBe('POST');
   });
 });
