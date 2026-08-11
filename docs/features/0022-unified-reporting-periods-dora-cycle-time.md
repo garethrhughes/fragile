@@ -1,9 +1,10 @@
 # 0022 — Unified Reporting Periods for DORA & Cycle Time
 
 **Date:** 2026-08-11
-**Status:** In Progress
+**Status:** Implemented
 **Source:** Manual
 **Related proposal:** docs/proposals/0079-unified-reporting-periods-dora-cycle-time.md
+**Related decisions:** docs/decisions/0079–0082
 
 ## Summary
 

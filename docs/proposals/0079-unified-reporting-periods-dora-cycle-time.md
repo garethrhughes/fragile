@@ -3,7 +3,7 @@
 **Date:** 2026-08-11
 **Status:** Accepted
 **Author:** Architect Agent
-**Related ADRs:** _(to be created on acceptance — see Decision section)_
+**Related ADRs:** 0079, 0080, 0081, 0082 (see docs/decisions/)
 **Related feature:** docs/features/0022-unified-reporting-periods-dora-cycle-time.md
 
 ## Problem Statement
