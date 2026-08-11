@@ -51,6 +51,13 @@ function abbreviateQuarter(label: string): string {
   // "2026-Q1" → "Q1 '26"
   const m = label.match(/^(\d{4})-Q([1-4])$/)
   if (m) return `Q${m[2]} '${m[1].slice(2)}`
+  // Time-period bucket "2026-05-13" → "May 13" (must precede the sprint-number
+  // fallback, whose \d+ would otherwise match the year and render "SP 2026").
+  const day = label.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (day) {
+    const d = new Date(Number(day[1]), Number(day[2]) - 1, Number(day[3]))
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  }
   // Sprint names — truncate
   const numMatch = label.match(/(\d+)/)
   if (numMatch) return `SP ${numMatch[1]}`
