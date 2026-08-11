@@ -14,6 +14,7 @@ import { usePeriodFilter } from '@/hooks/use-period-filter'
 import { PeriodFilterBar } from '@/components/ui/period-filter-bar'
 import { EmptyState } from '@/components/ui/empty-state'
 import { NoBoardsConfigured } from '@/components/ui/no-boards-configured'
+import { SnapshotPending } from '@/components/ui/snapshot-pending'
 import { CycleTimeBandBadge } from '@/components/ui/cycle-time-band-badge'
 import { SupportDistributionChart } from '@/components/ui/support-distribution-chart'
 import { SupportPercentageStat } from '@/components/ui/support-percentage-stat'
@@ -197,10 +198,7 @@ function SupportPageInner() {
 
       {/* Snapshot pending */}
       {pageState.status === 'pending' && (
-        <EmptyState
-          title="Snapshot not ready"
-          message="Time-period support metrics are being computed. Trigger a sync or try again shortly."
-        />
+        <SnapshotPending label="support metrics" onRetry={reload} />
       )}
 
       {/* Skeleton */}
