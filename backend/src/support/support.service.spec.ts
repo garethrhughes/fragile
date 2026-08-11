@@ -166,6 +166,12 @@ describe('SupportService', () => {
   let membership: ReturnType<typeof mockSprintMembership>;
 
   beforeEach(async () => {
+    // Freeze the clock. These tests use fixed 2026 Q1–Q2 fixtures and assert
+    // "current period" behaviour (default sprint / default 90-day window with no
+    // completion gate). Without a fixed clock the assertions depend on the real
+    // date and break once the window rolls past the fixtures. 2026-05-14 is just
+    // after the default sprint end (05-13) and within 90 days of the March
+    // changelog dates, so every fixture falls in the current period.
     issueRepo = repoMock();
     changelogRepo = repoMock();
     versionRepo = repoMock();
@@ -203,6 +209,20 @@ describe('SupportService', () => {
     }).compile();
 
     service = module.get(SupportService);
+
+    // Freeze the clock AFTER async DI setup (faking timers before
+    // createTestingModule's await stalls it). These tests use fixed 2026 Q1–Q2
+    // fixtures and assert "current period" behaviour (default sprint / default
+    // 90-day window, no completion gate); without a fixed clock the assertions
+    // break once the real date rolls past the fixtures. 2026-05-14 is just after
+    // the default sprint end (05-13) and within 90 days of the March changelog
+    // dates, so every fixture falls in the current period.
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-05-14T00:00:00.000Z').getTime());
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   // ── Board resolution ──────────────────────────────────────────────────────
