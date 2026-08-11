@@ -27,8 +27,10 @@ import {
   WorkingTimeConfigEntity,
   DoraSnapshot,
   CycleTimeSnapshot,
+  SupportSnapshot,
   JiraFieldConfig,
   JiraSprint,
+  JiraIssueSprint,
   SyncLog,
   RoadmapConfig,
   JpdIdea,
@@ -37,6 +39,7 @@ import {
 import type {
   DoraSnapshotType,
   CycleTimeSnapshotType,
+  SupportSnapshotType,
 } from '../database/entities/index.js';
 import { TrendDataLoader } from '../metrics/trend-data-loader.service.js';
 import type { TrendDataSlice } from '../metrics/trend-data-loader.service.js';
@@ -46,6 +49,8 @@ import { CfrService } from '../metrics/cfr.service.js';
 import { MttrService } from '../metrics/mttr.service.js';
 import { CycleTimeService } from '../metrics/cycle-time.service.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
+import { SupportService } from '../support/support.service.js';
+import { SprintMembershipService } from '../sprint-membership/sprint-membership.service.js';
 import {
   listRecentQuarters,
   listRollingBuckets,
@@ -272,6 +277,33 @@ function buildDoraWindowRows(
 }
 
 /**
+ * Builds the Support summary time-period (7/30/90-day) snapshot rows for the
+ * given board selection. Only the summary is snapshotted (proposal 0080). The
+ * SupportService resolves the window date range internally via its
+ * timezone-aware resolvePeriod, so we pass the board query string + window.
+ */
+async function buildSupportWindowRows(
+  supportService: SupportService,
+  boardIdQuery: string,
+  snapshotKey: string,
+): Promise<Array<{ boardId: string; snapshotType: SupportSnapshotType; payload: object; triggeredBy: string; stale: boolean }>> {
+  const rows: Array<{ boardId: string; snapshotType: SupportSnapshotType; payload: object; triggeredBy: string; stale: boolean }> = [];
+
+  for (const window of TIME_PERIOD_WINDOWS) {
+    const summary = await supportService.getSupportSummary({ boardId: boardIdQuery, window });
+    rows.push({
+      boardId: snapshotKey,
+      snapshotType: `summary-${window}d` as SupportSnapshotType,
+      payload: summary,
+      triggeredBy: snapshotKey,
+      stale: false,
+    });
+  }
+
+  return rows;
+}
+
+/**
  * Builds the cycle-time time-period (7/30/90-day) snapshot rows for the given
  * board selection. Aggregate = CycleTimeService result per board over the whole
  * window; trend = pooled cross-board percentiles per rolling bucket. Mirrors
@@ -284,11 +316,10 @@ async function buildCycleTimeWindowRows(
   tz: string,
 ): Promise<Array<{ boardId: string; snapshotType: CycleTimeSnapshotType; payload: object; triggeredBy: string; stale: boolean }>> {
   const rows: Array<{ boardId: string; snapshotType: CycleTimeSnapshotType; payload: object; triggeredBy: string; stale: boolean }> = [];
+  // The cycle-time helper below builds daily/weekly bucketed trend + aggregate.
 
   for (const window of TIME_PERIOD_WINDOWS) {
     const { startDate, endDate } = windowToDates(window, tz);
-
-    // Aggregate: one CycleTimeResult per board over the whole window.
     const aggregate = await Promise.all(
       boardIds.map((boardId) =>
         cycleTimeService.calculate(boardId, startDate, endDate, `last-${window}d`),
@@ -404,8 +435,10 @@ async function getDataSource(): Promise<DataSource> {
       WorkingTimeConfigEntity,
       DoraSnapshot,
       CycleTimeSnapshot,
+      SupportSnapshot,
       JiraFieldConfig,
       JiraSprint,
+      JiraIssueSprint,
       SyncLog,
       RoadmapConfig,
       JpdIdea,
@@ -474,6 +507,26 @@ export const handler = async (event: SnapshotHandlerEvent): Promise<void> => {
     workingTimeService,
   );
   const cycleTimeSnapshotRepo = ds.getRepository(CycleTimeSnapshot);
+  const supportSnapshotRepo   = ds.getRepository(SupportSnapshot);
+  const sprintRepo            = ds.getRepository(JiraSprint);
+  const issueSprintRepo       = ds.getRepository(JiraIssueSprint);
+
+  const sprintMembershipService = new SprintMembershipService(
+    sprintRepo,
+    issueSprintRepo,
+    changelogRepo,
+  );
+  const supportService = new SupportService(
+    issueRepo,
+    changelogRepo,
+    versionRepo,
+    sprintRepo,
+    boardConfigRepo,
+    issueLinkRepo,
+    configServiceStub as unknown as import('@nestjs/config').ConfigService,
+    workingTimeService,
+    sprintMembershipService,
+  );
 
   // Compute the trend window: last N quarters (newest first)
   const quarters = listRecentQuarters(quartersBack);
@@ -639,6 +692,13 @@ export const handler = async (event: SnapshotHandlerEvent): Promise<void> => {
     );
     await cycleTimeSnapshotRepo.upsert(orgCycleWindowRows, ['boardId', 'snapshotType']);
 
+    const orgSupportWindowRows = await buildSupportWindowRows(
+      supportService,
+      allBoardIds.join(','),
+      ORG_SNAPSHOT_KEY,
+    );
+    await supportSnapshotRepo.upsert(orgSupportWindowRows, ['boardId', 'snapshotType']);
+
     console.log(`[snapshot-handler] Org-level time-period snapshots written.`);
     return;
   }
@@ -736,6 +796,13 @@ export const handler = async (event: SnapshotHandlerEvent): Promise<void> => {
     tz,
   );
   await cycleTimeSnapshotRepo.upsert(boardCycleWindowRows, ['boardId', 'snapshotType']);
+
+  const boardSupportWindowRows = await buildSupportWindowRows(
+    supportService,
+    boardId,
+    boardId,
+  );
+  await supportSnapshotRepo.upsert(boardSupportWindowRows, ['boardId', 'snapshotType']);
 
   console.log(`[snapshot-handler] Snapshot written for board: ${boardId}`);
   // DataSource remains open — reused on next warm invocation.

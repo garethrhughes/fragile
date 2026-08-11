@@ -13,6 +13,7 @@ import type { SnapshotHandlerEvent } from './snapshot.handler.js';
 
 const mockUpsert = jest.fn().mockResolvedValue(undefined);
 const mockCtUpsert = jest.fn().mockResolvedValue(undefined);
+const mockSupUpsert = jest.fn().mockResolvedValue(undefined);
 const mockGetRepository = jest.fn();
 
 const mockDataSourceInstance = {
@@ -85,6 +86,20 @@ jest.mock('../metrics/cycle-time.service.js', () => ({
   })),
 }));
 
+// Stub SupportService + SprintMembershipService — support snapshots delegate to them.
+const mockGetSupportSummary = jest.fn().mockResolvedValue({
+  totalIssues: 0, supportIssues: 0, supportPercentage: 0,
+  p50Days: 0, p95Days: 0, reopenedIssueCount: 0, byBoard: [],
+});
+jest.mock('../support/support.service.js', () => ({
+  SupportService: jest.fn().mockImplementation(() => ({
+    getSupportSummary: mockGetSupportSummary,
+  })),
+}));
+jest.mock('../sprint-membership/sprint-membership.service.js', () => ({
+  SprintMembershipService: jest.fn().mockImplementation(() => ({})),
+}));
+
 // Stub listRecentQuarters so ordering tests can inject a fixed newest-first list
 // without depending on the current calendar date. Other period-utils helpers
 // (windowToDates, listRollingBuckets, TIME_PERIOD_WINDOWS) use the real impls.
@@ -136,6 +151,7 @@ describe('snapshot Lambda handler', () => {
   beforeEach(() => {
     mockUpsert.mockClear();
     mockCtUpsert.mockClear();
+    mockSupUpsert.mockClear();
     mockLoad.mockClear();
     mockDfCalc.mockClear();
     mockLtCalc.mockClear();
@@ -143,13 +159,22 @@ describe('snapshot Lambda handler', () => {
     mockMttrCalc.mockClear();
     mockCtCalculate.mockClear();
     mockCtObservations.mockClear();
+    mockGetSupportSummary.mockClear();
     mockListRecentQuarters.mockClear();
     mockListRecentQuarters.mockImplementation(realListRecentQuarters);
-    // Route CycleTimeSnapshot to its own upsert mock; all other entities share mockUpsert.
+    // Route CycleTimeSnapshot / SupportSnapshot to their own upsert mocks;
+    // all other entities share mockUpsert.
     mockGetRepository.mockImplementation((entity: { name?: string }) => {
       if (entity?.name === 'CycleTimeSnapshot') {
         return {
           upsert: mockCtUpsert,
+          find: jest.fn().mockResolvedValue([]),
+          findOne: jest.fn().mockResolvedValue(null),
+        };
+      }
+      if (entity?.name === 'SupportSnapshot') {
+        return {
+          upsert: mockSupUpsert,
           find: jest.fn().mockResolvedValue([]),
           findOne: jest.fn().mockResolvedValue(null),
         };
@@ -250,6 +275,26 @@ describe('snapshot Lambda handler', () => {
       .flatMap(([rows]) => rows);
     expect(ctRows).toHaveLength(6);
     expect(ctRows.every((r) => r.boardId === '__org__')).toBe(true);
+  });
+
+  it('upserts per-board support summary time-period snapshots', async () => {
+    await handler({ boardId: 'BPT' });
+    const supRows = (mockSupUpsert.mock.calls as [Array<{ boardId: string; snapshotType: string }>, string[]][])
+      .flatMap(([rows]) => rows);
+    expect(supRows.map((r) => r.snapshotType).sort()).toEqual([
+      'summary-30d',
+      'summary-7d',
+      'summary-90d',
+    ]);
+    expect(supRows.every((r) => r.boardId === 'BPT')).toBe(true);
+  });
+
+  it('upserts org-level support summary snapshots when orgSnapshot=true', async () => {
+    await handler({ boardId: '__org__', orgSnapshot: true });
+    const supRows = (mockSupUpsert.mock.calls as [Array<{ boardId: string; snapshotType: string }>, string[]][])
+      .flatMap(([rows]) => rows);
+    expect(supRows).toHaveLength(3);
+    expect(supRows.every((r) => r.boardId === '__org__')).toBe(true);
   });
 
   it('calls all four metric services with the loaded slice', async () => {

@@ -1,5 +1,7 @@
 import { IsOptional, IsString, IsIn } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { TIME_PERIOD_WINDOWS, type TimePeriodWindow } from '../../metrics/period-utils.js';
 
 export class SupportQueryDto {
   @ApiPropertyOptional({ description: 'Comma-separated board IDs. Defaults to all boards.' })
@@ -24,11 +26,13 @@ export class SupportQueryDto {
 
   @ApiPropertyOptional({
     description:
-      'Filter tickets by match reason. When set to "link", only tickets classified via issue link are returned. ' +
-      'totalIssues (denominator) is unaffected. Supported values: "link", "label", "epic".',
-    enum: ['link', 'label', 'epic'],
+      'Rolling time-period window in days (7, 30, or 90). When provided ' +
+      '(and no quarter/sprintId), metrics cover the last N full days ending ' +
+      'at 23:59:59 yesterday in the configured timezone.',
+    enum: TIME_PERIOD_WINDOWS,
   })
   @IsOptional()
-  @IsIn(['link', 'label', 'epic'])
-  matchReason?: 'link' | 'label' | 'epic';
+  @Type(() => Number)
+  @IsIn(TIME_PERIOD_WINDOWS)
+  window?: TimePeriodWindow;
 }

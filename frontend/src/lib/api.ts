@@ -1172,19 +1172,21 @@ export interface SupportQueryParams {
   quarter?: string
   sprintId?: string
   period?: string
-  matchReason?: 'link' | 'label' | 'epic'
+  /** Rolling time-period window in days (7, 30, or 90). */
+  window?: TimePeriodWindow
 }
 
 export function getSupportTickets(
   params: SupportQueryParams,
 ): Promise<SupportResult[]> {
+  // Ticket list is always live-computed (never snapshotted), including time period.
   return apiFetch(
     `/api/support${toQueryString({
       boardId: params.boardId,
       quarter: params.quarter,
       sprintId: params.sprintId,
       period: params.period,
-      matchReason: params.matchReason,
+      window: params.window !== undefined ? String(params.window) : undefined,
     })}`,
   )
 }
@@ -1192,15 +1194,15 @@ export function getSupportTickets(
 export function getSupportSummary(
   params: SupportQueryParams,
 ): Promise<SupportSummary> {
-  return apiFetch(
-    `/api/support/summary${toQueryString({
-      boardId: params.boardId,
-      quarter: params.quarter,
-      sprintId: params.sprintId,
-      period: params.period,
-      matchReason: params.matchReason,
-    })}`,
-  )
+  const path = `/api/support/summary${toQueryString({
+    boardId: params.boardId,
+    quarter: params.quarter,
+    sprintId: params.sprintId,
+    period: params.period,
+    window: params.window !== undefined ? String(params.window) : undefined,
+  })}`
+  // Time-period summary is snapshot-backed and may return HTTP 202 pending.
+  return params.window !== undefined ? fetchDoraSnapshot(path) : apiFetch(path)
 }
 
 // ---------------------------------------------------------------------------

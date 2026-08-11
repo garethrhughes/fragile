@@ -193,7 +193,11 @@ describe('SupportService', () => {
         { provide: SprintMembershipService, useValue: membership.service },
         {
           provide: ConfigService,
-          useValue: { get: jest.fn().mockReturnValue('https://jira.example.com') },
+          useValue: {
+            get: jest.fn((key: string, defaultValue?: unknown) =>
+              key === 'JIRA_BASE_URL' ? 'https://jira.example.com' : defaultValue,
+            ),
+          },
         },
       ],
     }).compile();
@@ -1075,9 +1079,9 @@ describe('SupportService', () => {
     expect(issueLinkRepo.createQueryBuilder).not.toHaveBeenCalled();
   });
 
-  // ── matchReason filter ────────────────────────────────────────────────────
+  // ── classification is unaffected by the removed TTB filter ────────────────
 
-  it('matchReason=link filter: returns only link-matched tickets', async () => {
+  it('returns all classified tickets regardless of match reason (TTB filter removed)', async () => {
     const config = makeConfig({ supportLabels: ['support'], supportLinkTypes: ['clones'], triageBoardKey: 'TTB' });
     boardConfigRepo.findOne.mockResolvedValue(config);
     issueRepo.find.mockResolvedValue([
@@ -1095,14 +1099,14 @@ describe('SupportService', () => {
     ]);
     versionRepo.find.mockResolvedValue([]);
 
-    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1', matchReason: 'link' });
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
+    // Both the label-only and link-only tickets are returned — no filtering.
     expect(result.totalIssues).toBe(2);
-    expect(result.supportIssues).toBe(1);
-    expect(result.tickets).toHaveLength(1);
-    expect(result.tickets[0].issueKey).toBe('ACC-2');
+    expect(result.supportIssues).toBe(2);
+    expect(result.tickets).toHaveLength(2);
   });
 
-  it('matchReason=link filter: includes tickets with combined reasons containing link', async () => {
+  it('still records each ticket match reason for the Match column (classification retained)', async () => {
     const config = makeConfig({ supportLabels: ['support'], supportLinkTypes: ['clones'], triageBoardKey: 'TTB' });
     boardConfigRepo.findOne.mockResolvedValue(config);
     issueRepo.find.mockResolvedValue([
@@ -1117,7 +1121,7 @@ describe('SupportService', () => {
     ]);
     versionRepo.find.mockResolvedValue([]);
 
-    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1', matchReason: 'link' });
+    const [result] = await service.getSupportTickets({ boardId: 'ACC', quarter: '2026-Q1' });
     expect(result.supportIssues).toBe(1);
     expect(result.tickets[0].matchReason).toBe('label+link');
   });

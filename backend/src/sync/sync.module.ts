@@ -17,11 +17,13 @@ import {
   JiraFieldConfig,
   DoraSnapshot,
   CycleTimeSnapshot,
+  SupportSnapshot,
 } from '../database/entities/index.js';
 import { SprintReportModule } from '../sprint-report/sprint-report.module.js';
 import { LambdaInvokerService } from '../lambda/lambda-invoker.service.js';
 import { InProcessSnapshotService } from '../lambda/in-process-snapshot.service.js';
 import { MetricsModule } from '../metrics/metrics.module.js';
+import { SupportModule } from '../support/support.module.js';
 
 @Module({
   imports: [
@@ -39,10 +41,12 @@ import { MetricsModule } from '../metrics/metrics.module.js';
       JiraFieldConfig,
       DoraSnapshot,
       CycleTimeSnapshot,
+      SupportSnapshot,
     ]),
     JiraModule,
     forwardRef(() => SprintReportModule),
     MetricsModule,
+    SupportModule,
   ],
   controllers: [SyncController],
   providers: [SyncService, LambdaInvokerService, InProcessSnapshotService],

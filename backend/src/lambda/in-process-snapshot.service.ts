@@ -28,12 +28,15 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { MetricsService } from '../metrics/metrics.service.js';
+import { SupportService } from '../support/support.service.js';
 import {
   BoardConfig,
   CycleTimeSnapshot,
   CycleTimeSnapshotType,
   DoraSnapshot,
   DoraSnapshotType,
+  SupportSnapshot,
+  SupportSnapshotType,
 } from '../database/entities/index.js';
 import { listRecentQuarters, TIME_PERIOD_WINDOWS } from '../metrics/period-utils.js';
 
@@ -60,10 +63,13 @@ export class InProcessSnapshotService {
 
   constructor(
     private readonly metricsService: MetricsService,
+    private readonly supportService: SupportService,
     @InjectRepository(DoraSnapshot)
     private readonly snapshotRepo: Repository<DoraSnapshot>,
     @InjectRepository(CycleTimeSnapshot)
     private readonly cycleTimeSnapshotRepo: Repository<CycleTimeSnapshot>,
+    @InjectRepository(SupportSnapshot)
+    private readonly supportSnapshotRepo: Repository<SupportSnapshot>,
     @InjectRepository(BoardConfig)
     private readonly boardConfigRepo: Repository<BoardConfig>,
   ) {}
@@ -152,6 +158,7 @@ export class InProcessSnapshotService {
 
     // Cycle-time time-period snapshots for this board.
     await this.computeCycleTimeWindows(boardId, boardId);
+    await this.computeSupportWindows(boardId, boardId);
 
     this.logger.log(`Per-board snapshots persisted for board ${boardId}`);
   }
@@ -219,6 +226,7 @@ export class InProcessSnapshotService {
 
     // Cycle-time org-level time-period snapshots (all boards pooled).
     await this.computeCycleTimeWindows(allBoardIdStr, ORG_SNAPSHOT_KEY);
+    await this.computeSupportWindows(allBoardIdStr, ORG_SNAPSHOT_KEY);
 
     this.logger.log(`Org-level snapshots persisted`);
   }
@@ -258,6 +266,37 @@ export class InProcessSnapshotService {
     }
 
     await this.cycleTimeSnapshotRepo.upsert(rows, ['boardId', 'snapshotType']);
+  }
+
+  /**
+   * Computes and persists the Support summary time-period snapshots (one per
+   * 7/30/90-day window) for the given board selection. Only the summary is
+   * snapshotted — the per-ticket list stays live-computed (proposal 0080).
+   */
+  private async computeSupportWindows(
+    boardIdQuery: string,
+    snapshotKey: string,
+  ): Promise<void> {
+    const rows: Array<{
+      boardId: string;
+      snapshotType: SupportSnapshotType;
+      payload: object;
+      triggeredBy: string;
+      stale: boolean;
+    }> = [];
+
+    for (const window of TIME_PERIOD_WINDOWS) {
+      const summary = await this.supportService.getSupportSummary({ boardId: boardIdQuery, window });
+      rows.push({
+        boardId: snapshotKey,
+        snapshotType: `summary-${window}d` as SupportSnapshotType,
+        payload: summary,
+        triggeredBy: snapshotKey,
+        stale: false,
+      });
+    }
+
+    await this.supportSnapshotRepo.upsert(rows, ['boardId', 'snapshotType']);
   }
 
   /** @deprecated Use computeBoard() + computeOrg() separately. */
