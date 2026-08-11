@@ -35,12 +35,12 @@ Builds on ADR 0040 (Lambda snapshots), 0079/0081 (time-period snapshots), 0084 (
 snapshots).
 
 > **Implementation note (2026-08-11):** the in-process snapshot writer
-> (`InProcessSnapshotService`) and the read controllers implement this decision now. The
-> **Lambda handler** (`snapshot.handler.ts`) still re-implements metric aggregation
-> independently and has **not** yet been extended for quarter snapshots — so in the prod
-> (Lambda) path, quarter Cycle Time / Support / historical-DORA views remain live-computed until
-> a follow-up refactors the Lambda to reuse the shared writer (the same duplication that caused
-> the ADR 0068-era DORA divergence). Tracked as a separate proposal.
+> (`InProcessSnapshotService`) and the read controllers implement this decision. The **Lambda
+> handler** (`snapshot.handler.ts`) has also been extended with the equivalent quarter logic —
+> per-board DORA/Cycle Time/Support quarter rows, org Cycle Time/Support quarter rows, and org
+> DORA quarter aggregates derived from the existing per-board trend merge (no raw reload). The
+> Lambda keeps its own separate implementation for now (it was **not** unified with the shared
+> writer); that duplication — and the intent to remove it — is tracked in proposal 0083.
 
 ## Consequences
 
