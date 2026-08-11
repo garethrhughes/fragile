@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useReplaceParams } from '@/hooks/use-page-params'
 import { useBoardsStore } from '@/store/boards-store'
@@ -91,19 +91,60 @@ export function usePeriodFilter(): PeriodFilterState {
 
   const boardIdForApi = isAllBoards ? undefined : board
 
-  return {
-    board,
-    isAllBoards,
-    boardIdForApi,
-    mode,
-    quarter,
-    sprintId,
-    window,
-    sprintAvailable,
-    setBoard: (next: string) => replaceParams({ board: next === ALL_BOARDS ? null : next }),
-    setMode: (next: PeriodMode) => replaceParams({ mode: next }),
-    setQuarter: (next: string | null) => replaceParams({ quarter: next }),
-    setSprintId: (next: string | null) => replaceParams({ sprintId: next }),
-    setWindow: (next: TimePeriodWindow) => replaceParams({ window: String(next) }),
-  }
+  // Setters are memoized so the returned object is stable enough to use in
+  // effect dependency arrays without churning on every render. replaceParams is
+  // itself memoized (useReplaceParams).
+  const setBoard = useCallback(
+    (next: string) => replaceParams({ board: next === ALL_BOARDS ? null : next }),
+    [replaceParams],
+  )
+  const setMode = useCallback(
+    (next: PeriodMode) => replaceParams({ mode: next }),
+    [replaceParams],
+  )
+  const setQuarter = useCallback(
+    (next: string | null) => replaceParams({ quarter: next }),
+    [replaceParams],
+  )
+  const setSprintId = useCallback(
+    (next: string | null) => replaceParams({ sprintId: next }),
+    [replaceParams],
+  )
+  const setWindow = useCallback(
+    (next: TimePeriodWindow) => replaceParams({ window: String(next) }),
+    [replaceParams],
+  )
+
+  return useMemo(
+    () => ({
+      board,
+      isAllBoards,
+      boardIdForApi,
+      mode,
+      quarter,
+      sprintId,
+      window,
+      sprintAvailable,
+      setBoard,
+      setMode,
+      setQuarter,
+      setSprintId,
+      setWindow,
+    }),
+    [
+      board,
+      isAllBoards,
+      boardIdForApi,
+      mode,
+      quarter,
+      sprintId,
+      window,
+      sprintAvailable,
+      setBoard,
+      setMode,
+      setQuarter,
+      setSprintId,
+      setWindow,
+    ],
+  )
 }
