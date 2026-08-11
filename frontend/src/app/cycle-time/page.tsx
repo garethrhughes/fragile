@@ -201,7 +201,11 @@ function CycleTimePageInner() {
           }),
         ])
         if (!cancelled) {
-          setPageState({ status: 'ready', results, trend })
+          // Older quarter snapshots stored a bare CycleTimeResult object instead
+          // of CycleTimeResult[]. Normalise so results is always an array —
+          // guards against the pre-fix snapshot shape until the next recompute.
+          const normalisedResults = Array.isArray(results) ? results : [results]
+          setPageState({ status: 'ready', results: normalisedResults, trend })
         }
       } catch (err: unknown) {
         if (!cancelled) {

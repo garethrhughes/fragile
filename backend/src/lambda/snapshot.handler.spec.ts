@@ -254,6 +254,14 @@ describe('snapshot Lambda handler', () => {
     // aggregate (no closed sprints in this mock → no historical quarters).
     expect(types).toContain('trend-quarters');
     expect(types.filter((t) => /^aggregate-\d{4}-Q[1-4]$/.test(t))).toHaveLength(1);
+
+    // Regression: per-board quarter aggregate payload must be an ARRAY
+    // (CycleTimeResult[]), matching the live endpoint. A bare object breaks the
+    // frontend's results.flatMap(...).
+    const allCtRows = (mockCtUpsert.mock.calls as [Array<{ snapshotType: string; payload: unknown }>, string[]][])
+      .flatMap(([rows]) => rows);
+    const quarterAgg = allCtRows.find((r) => /^aggregate-\d{4}-Q[1-4]$/.test(r.snapshotType));
+    expect(Array.isArray(quarterAgg?.payload)).toBe(true);
   });
 
   it('upserts the org-level quarter snapshot rows when orgSnapshot=true', async () => {

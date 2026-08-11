@@ -983,7 +983,10 @@ export const handler = async (event: SnapshotHandlerEvent): Promise<void> => {
     ctQuarterRows.push({
       boardId,
       snapshotType: `aggregate-${q}` as CycleTimeSnapshotType,
-      payload: aggregate,
+      // Wrap in an array to match the live GET /api/cycle-time/:boardId shape
+      // (CycleTimeResult[]) and the org quarter / window snapshots. The frontend
+      // does results.flatMap(...) — a bare object breaks it.
+      payload: [aggregate],
       triggeredBy: boardId,
       stale: false,
     });
