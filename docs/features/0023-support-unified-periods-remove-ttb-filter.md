@@ -1,9 +1,10 @@
 # 0023 — Unified reporting periods for the Support report; remove TTB-linked filter
 
 **Date:** 2026-08-11
-**Status:** In Progress
+**Status:** Implemented
 **Source:** Manual
 **Related proposal:** docs/proposals/0080-support-unified-periods-remove-ttb-filter.md
+**Related decisions:** docs/decisions/0083–0085
 
 ## Summary
 

@@ -3,7 +3,7 @@
 **Date:** 2026-08-11
 **Status:** Accepted
 **Author:** Architect Agent
-**Related ADRs:** _(to be created on acceptance — see Decision section)_
+**Related ADRs:** 0083, 0084, 0085 (see docs/decisions/)
 **Related feature:** docs/features/0023-support-unified-periods-remove-ttb-filter.md
 **Builds on:** proposal 0079 / ADRs 0079–0082 (unified reporting periods for DORA & Cycle Time)
 
