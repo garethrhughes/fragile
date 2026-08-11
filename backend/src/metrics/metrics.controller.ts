@@ -9,6 +9,7 @@ import { MetricsQueryDto } from './dto/metrics-query.dto.js';
 import { DoraAggregateQueryDto } from './dto/dora-aggregate-query.dto.js';
 import { DoraTrendQueryDto } from './dto/dora-trend-query.dto.js';
 import type { OrgDoraResult, TrendResponse } from './dto/org-dora-response.dto.js';
+import type { DoraSnapshotType } from '../database/entities/index.js';
 import { ORG_SNAPSHOT_KEY } from '../lambda/in-process-snapshot.service.js';
 import { listRecentQuarters } from './period-utils.js';
 import { BoardConfig } from '../database/entities/index.js';
@@ -60,25 +61,24 @@ export class MetricsController {
       return snapshot.payload as OrgDoraResult;
     }
 
-    // Historical quarter: bypass snapshot and compute live (snapshot only holds the
-    // current quarter). The service layer respects query.quarter and the in-memory
-    // DoraCacheService (60s TTL) covers repeated requests efficiently.
+    // Quarter mode (current or historical): serve from the pre-computed snapshot.
+    // Current quarter → `aggregate`; historical quarters → `aggregate-<quarter>`
+    // (proposal 0082). When a single boardId is provided use the per-board
+    // snapshot; otherwise (no boardId, or multiple) use the org-level snapshot.
     const currentQuarter = listRecentQuarters(1)[0].label;
-    if (query.quarter && query.quarter !== currentQuarter) {
-      return this.metricsService.getDoraAggregate(query);
-    }
-
-    // Quarter mode: serve from pre-computed snapshot.
-    // When a single boardId is provided use the per-board snapshot;
-    // otherwise (no boardId, or multiple) use the org-level snapshot.
     const snapshotKey =
       query.boardId && !query.boardId.includes(',')
         ? query.boardId
         : ORG_SNAPSHOT_KEY;
 
+    const snapshotType =
+      query.quarter && query.quarter !== currentQuarter
+        ? (`aggregate-${query.quarter}` as DoraSnapshotType)
+        : ('aggregate' as const);
+
     const snapshot = await this.doraSnapshotReadService.getSnapshot(
       snapshotKey,
-      'aggregate',
+      snapshotType,
     );
 
     if (!snapshot) {

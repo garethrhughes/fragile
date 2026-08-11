@@ -120,19 +120,28 @@ describe('MetricsController — snapshot-aware endpoints', () => {
       expect(res.setHeader).toHaveBeenCalledWith('X-Snapshot-Age', '7200');
     });
 
-    it('routes historical quarter to live compute — bypasses snapshot', async () => {
+    it('routes historical quarter to its per-quarter snapshot (proposal 0082)', async () => {
+      const snapshot: SnapshotResult = {
+        payload: { period: { label: '2020-Q1' } } as unknown as OrgDoraResult,
+        ageSeconds: 42,
+        stale: false,
+      };
+      snapshotSvc.getSnapshot.mockResolvedValue(snapshot);
       let metricsSvc!: jest.Mocked<MetricsService>;
       metricsSvc = mockMetricsService();
       const ctrl = new MetricsController(metricsSvc, snapshotSvc, mockBoardConfigRepo());
       const res = mockRes();
 
       // Use a quarter guaranteed to be in the past relative to any test run
-      await ctrl.getDoraAggregate({ boardId: 'ACC', quarter: '2020-Q1' } as DoraAggregateQueryDto, res as never);
-
-      expect(snapshotSvc.getSnapshot).not.toHaveBeenCalled();
-      expect(metricsSvc.getDoraAggregate).toHaveBeenCalledWith(
-        expect.objectContaining({ quarter: '2020-Q1' }),
+      const result = await ctrl.getDoraAggregate(
+        { boardId: 'ACC', quarter: '2020-Q1' } as DoraAggregateQueryDto,
+        res as never,
       );
+
+      // Historical quarter is now snapshot-served (aggregate-<quarter>), not live.
+      expect(snapshotSvc.getSnapshot).toHaveBeenCalledWith('ACC', 'aggregate-2020-Q1');
+      expect(metricsSvc.getDoraAggregate).not.toHaveBeenCalled();
+      expect(result).toBe(snapshot.payload);
     });
 
     it('routes current quarter (no quarter param) through snapshot fast-path', async () => {

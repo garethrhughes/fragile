@@ -7,14 +7,17 @@ import {
 } from 'typeorm';
 
 /**
- * Support snapshot types. Only the rolling time-period window summaries are
- * snapshotted (proposal 0080); quarter/sprint summaries and the per-ticket list
- * remain live-computed.
+ * Support snapshot types.
+ *   - Rolling time-period window summaries (proposal 0080): summary-{7,30,90}d.
+ *   - Quarter summaries (proposal 0082): summary-<YYYY-QN> for every quarter the
+ *     UI can request. Sprint summaries and the per-ticket list remain live.
  */
+type QuarterLabel = `${number}-Q${1 | 2 | 3 | 4}`;
 export type SupportSnapshotType =
   | 'summary-7d'
   | 'summary-30d'
-  | 'summary-90d';
+  | 'summary-90d'
+  | `summary-${QuarterLabel}`;
 
 @Entity('support_snapshots')
 @Index(['boardId'])
