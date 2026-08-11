@@ -59,6 +59,26 @@ describe('DORA tools', () => {
       expect(mockApiGet).toHaveBeenCalledWith('/api/metrics/dora/aggregate', {});
     });
 
+    it('passes window for the rolling time-period view', async () => {
+      mockApiGet.mockResolvedValueOnce(mockSuccess({}));
+      const server = makeServer();
+      await callTool(server, 'get_dora_metrics', { boardId: 'ACC', window: 30 });
+      expect(mockApiGet).toHaveBeenCalledWith('/api/metrics/dora/aggregate', {
+        boardId: 'ACC',
+        window: 30,
+      });
+    });
+
+    it('passes sprintId when provided', async () => {
+      mockApiGet.mockResolvedValueOnce(mockSuccess({}));
+      const server = makeServer();
+      await callTool(server, 'get_dora_metrics', { boardId: 'ACC', sprintId: '123' });
+      expect(mockApiGet).toHaveBeenCalledWith('/api/metrics/dora/aggregate', {
+        boardId: 'ACC',
+        sprintId: '123',
+      });
+    });
+
     it('prepends partial-period annotation when period.partial is true', async () => {
       const data = {
         period: { label: '2026-Q2', partial: true, elapsedDays: 41, totalDays: 91 },
@@ -128,6 +148,30 @@ describe('DORA tools', () => {
       const server = makeServer();
       await callTool(server, 'get_dora_trend', { boardId: 'ACC', limit: 4 });
       expect(mockApiGet).toHaveBeenCalledWith('/api/metrics/dora/trend', { boardId: 'ACC', limit: 4 });
+    });
+
+    it('passes mode=timeperiod with a window', async () => {
+      mockApiGet.mockResolvedValueOnce(mockSuccess([]));
+      const server = makeServer();
+      await callTool(server, 'get_dora_trend', { boardId: 'ACC', mode: 'timeperiod', window: 90 });
+      expect(mockApiGet).toHaveBeenCalledWith('/api/metrics/dora/trend', {
+        boardId: 'ACC',
+        mode: 'timeperiod',
+        limit: 6,
+        window: 90,
+      });
+    });
+
+    it('passes mode=sprint with a sprintId', async () => {
+      mockApiGet.mockResolvedValueOnce(mockSuccess([]));
+      const server = makeServer();
+      await callTool(server, 'get_dora_trend', { boardId: 'ACC', mode: 'sprint', sprintId: '77' });
+      expect(mockApiGet).toHaveBeenCalledWith('/api/metrics/dora/trend', {
+        boardId: 'ACC',
+        mode: 'sprint',
+        limit: 6,
+        sprintId: '77',
+      });
     });
   });
 
