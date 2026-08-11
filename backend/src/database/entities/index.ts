@@ -13,5 +13,7 @@ export { JiraFieldConfig } from './jira-field-config.entity.js';
 export { WorkingTimeConfigEntity } from './working-time-config.entity.js';
 export { DoraSnapshot } from './dora-snapshot.entity.js';
 export type { DoraSnapshotType } from './dora-snapshot.entity.js';
+export { CycleTimeSnapshot } from './cycle-time-snapshot.entity.js';
+export type { CycleTimeSnapshotType } from './cycle-time-snapshot.entity.js';
 export { User } from './user.entity.js';
 export { ApiKey } from './api-key.entity.js';

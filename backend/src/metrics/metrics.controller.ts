@@ -41,6 +41,25 @@ export class MetricsController {
       return this.metricsService.getDoraAggregate(query);
     }
 
+    // Time-period (rolling window) aggregate: serve from the window snapshot.
+    if (query.window) {
+      const snapshotKey =
+        query.boardId && !query.boardId.includes(',')
+          ? query.boardId
+          : ORG_SNAPSHOT_KEY;
+      const snapshot = await this.doraSnapshotReadService.getSnapshot(
+        snapshotKey,
+        `aggregate-${query.window}d`,
+      );
+      if (!snapshot) {
+        res.status(202);
+        return { status: 'pending', message: 'Snapshot not yet computed. Trigger a sync.' };
+      }
+      if (snapshot.stale) res.setHeader('X-Snapshot-Stale', 'true');
+      res.setHeader('X-Snapshot-Age', String(snapshot.ageSeconds));
+      return snapshot.payload as OrgDoraResult;
+    }
+
     // Historical quarter: bypass snapshot and compute live (snapshot only holds the
     // current quarter). The service layer respects query.quarter and the in-memory
     // DoraCacheService (60s TTL) covers repeated requests efficiently.
@@ -93,11 +112,17 @@ export class MetricsController {
 
     const snapshotKey = isSingleBoard ? query.boardId! : ORG_SNAPSHOT_KEY;
 
+    // Time-period mode uses the window-suffixed trend snapshot.
     // Sprint mode uses the dedicated trend-sprint snapshot (per-board only).
     // Quarter mode uses trend-display (per-board) or trend (org).
-    const snapshotType = query.mode === 'sprint'
-      ? 'trend-sprint' as const
-      : isSingleBoard ? ('trend-display' as const) : ('trend' as const);
+    const snapshotType =
+      query.mode === 'timeperiod'
+        ? (`trend-${query.window ?? 90}d` as const)
+        : query.mode === 'sprint'
+          ? ('trend-sprint' as const)
+          : isSingleBoard
+            ? ('trend-display' as const)
+            : ('trend' as const);
 
     const snapshot = await this.doraSnapshotReadService.getSnapshot(
       snapshotKey,

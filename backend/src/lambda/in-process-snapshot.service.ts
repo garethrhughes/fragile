@@ -28,14 +28,31 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { MetricsService } from '../metrics/metrics.service.js';
-import { BoardConfig, DoraSnapshot } from '../database/entities/index.js';
-import { listRecentQuarters } from '../metrics/period-utils.js';
+import {
+  BoardConfig,
+  CycleTimeSnapshot,
+  CycleTimeSnapshotType,
+  DoraSnapshot,
+  DoraSnapshotType,
+} from '../database/entities/index.js';
+import { listRecentQuarters, TIME_PERIOD_WINDOWS } from '../metrics/period-utils.js';
 
 /** Snapshot key for the org-level (all boards) aggregate and trend. */
 export const ORG_SNAPSHOT_KEY = '__org__';
 
 /** Number of quarters to include in trend snapshots. */
 const TREND_QUARTERS = 8;
+
+/** Maps a time-period window (days) to its aggregate/trend snapshot type names. */
+function windowSnapshotTypes(window: number): {
+  aggregate: DoraSnapshotType;
+  trend: DoraSnapshotType;
+} {
+  return {
+    aggregate: `aggregate-${window}d` as DoraSnapshotType,
+    trend: `trend-${window}d` as DoraSnapshotType,
+  };
+}
 
 @Injectable()
 export class InProcessSnapshotService {
@@ -45,6 +62,8 @@ export class InProcessSnapshotService {
     private readonly metricsService: MetricsService,
     @InjectRepository(DoraSnapshot)
     private readonly snapshotRepo: Repository<DoraSnapshot>,
+    @InjectRepository(CycleTimeSnapshot)
+    private readonly cycleTimeSnapshotRepo: Repository<CycleTimeSnapshot>,
     @InjectRepository(BoardConfig)
     private readonly boardConfigRepo: Repository<BoardConfig>,
   ) {}
@@ -71,7 +90,7 @@ export class InProcessSnapshotService {
 
     const rows: Array<{
       boardId: string;
-      snapshotType: 'aggregate' | 'trend' | 'trend-display' | 'trend-sprint';
+      snapshotType: DoraSnapshotType;
       payload: object;
       triggeredBy: string;
       stale: boolean;
@@ -116,7 +135,23 @@ export class InProcessSnapshotService {
       });
     }
 
+    // Time-period snapshots (7/30/90-day rolling windows) — DORA aggregate + trend.
+    for (const window of TIME_PERIOD_WINDOWS) {
+      const types = windowSnapshotTypes(window);
+      const [aggregate, trend] = await Promise.all([
+        this.metricsService.getDoraAggregate({ boardId, window }),
+        this.metricsService.getDoraTrend({ boardId, mode: 'timeperiod', window }),
+      ]);
+      rows.push(
+        { boardId, snapshotType: types.aggregate, payload: aggregate, triggeredBy: boardId, stale: false },
+        { boardId, snapshotType: types.trend, payload: trend, triggeredBy: boardId, stale: false },
+      );
+    }
+
     await this.snapshotRepo.upsert(rows, ['boardId', 'snapshotType']);
+
+    // Cycle-time time-period snapshots for this board.
+    await this.computeCycleTimeWindows(boardId, boardId);
 
     this.logger.log(`Per-board snapshots persisted for board ${boardId}`);
   }
@@ -144,27 +179,85 @@ export class InProcessSnapshotService {
     );
     const orgTrend = orgTrendItems.reverse(); // oldest → newest
 
-    await this.snapshotRepo.upsert(
-      [
-        {
-          boardId: ORG_SNAPSHOT_KEY,
-          snapshotType: 'aggregate' as const,
-          payload: orgAggregate,
-          triggeredBy: ORG_SNAPSHOT_KEY,
-          stale: false,
-        },
-        {
-          boardId: ORG_SNAPSHOT_KEY,
-          snapshotType: 'trend' as const,
-          payload: orgTrend,
-          triggeredBy: ORG_SNAPSHOT_KEY,
-          stale: false,
-        },
-      ],
-      ['boardId', 'snapshotType'],
-    );
+    const orgRows: Array<{
+      boardId: string;
+      snapshotType: DoraSnapshotType;
+      payload: object;
+      triggeredBy: string;
+      stale: boolean;
+    }> = [
+      {
+        boardId: ORG_SNAPSHOT_KEY,
+        snapshotType: 'aggregate',
+        payload: orgAggregate,
+        triggeredBy: ORG_SNAPSHOT_KEY,
+        stale: false,
+      },
+      {
+        boardId: ORG_SNAPSHOT_KEY,
+        snapshotType: 'trend',
+        payload: orgTrend,
+        triggeredBy: ORG_SNAPSHOT_KEY,
+        stale: false,
+      },
+    ];
+
+    // Org-level time-period snapshots (7/30/90-day rolling windows).
+    for (const window of TIME_PERIOD_WINDOWS) {
+      const types = windowSnapshotTypes(window);
+      const [aggregate, trend] = await Promise.all([
+        this.metricsService.getDoraAggregate({ boardId: allBoardIdStr, window }),
+        this.metricsService.getDoraTrend({ boardId: allBoardIdStr, mode: 'timeperiod', window }),
+      ]);
+      orgRows.push(
+        { boardId: ORG_SNAPSHOT_KEY, snapshotType: types.aggregate, payload: aggregate, triggeredBy: ORG_SNAPSHOT_KEY, stale: false },
+        { boardId: ORG_SNAPSHOT_KEY, snapshotType: types.trend, payload: trend, triggeredBy: ORG_SNAPSHOT_KEY, stale: false },
+      );
+    }
+
+    await this.snapshotRepo.upsert(orgRows, ['boardId', 'snapshotType']);
+
+    // Cycle-time org-level time-period snapshots (all boards pooled).
+    await this.computeCycleTimeWindows(allBoardIdStr, ORG_SNAPSHOT_KEY);
 
     this.logger.log(`Org-level snapshots persisted`);
+  }
+
+  /**
+   * Computes and persists the cycle-time time-period snapshots (aggregate +
+   * trend for each of the 7/30/90-day windows) for the given board selection.
+   *
+   * @param boardIdQuery - Comma-separated board IDs passed to MetricsService
+   *                       (a single board key, or all boards for the org row).
+   * @param snapshotKey  - The key the snapshot rows are stored under
+   *                       (a board key, or ORG_SNAPSHOT_KEY).
+   */
+  private async computeCycleTimeWindows(
+    boardIdQuery: string,
+    snapshotKey: string,
+  ): Promise<void> {
+    const rows: Array<{
+      boardId: string;
+      snapshotType: CycleTimeSnapshotType;
+      payload: object;
+      triggeredBy: string;
+      stale: boolean;
+    }> = [];
+
+    for (const window of TIME_PERIOD_WINDOWS) {
+      const aggregate = await this.metricsService.getCycleTime({ boardId: boardIdQuery, window });
+      const trend = await this.metricsService.getCycleTimeTrend({
+        boardId: boardIdQuery,
+        mode: 'timeperiod',
+        window,
+      });
+      rows.push(
+        { boardId: snapshotKey, snapshotType: `aggregate-${window}d` as CycleTimeSnapshotType, payload: aggregate, triggeredBy: snapshotKey, stale: false },
+        { boardId: snapshotKey, snapshotType: `trend-${window}d` as CycleTimeSnapshotType, payload: trend, triggeredBy: snapshotKey, stale: false },
+      );
+    }
+
+    await this.cycleTimeSnapshotRepo.upsert(rows, ['boardId', 'snapshotType']);
   }
 
   /** @deprecated Use computeBoard() + computeOrg() separately. */

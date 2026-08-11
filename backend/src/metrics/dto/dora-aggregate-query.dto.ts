@@ -1,5 +1,7 @@
-import { IsOptional, IsString, Matches } from 'class-validator';
+import { IsOptional, IsString, Matches, IsIn } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { TIME_PERIOD_WINDOWS, type TimePeriodWindow } from '../period-utils.js';
 
 export class DoraAggregateQueryDto {
   @ApiPropertyOptional({
@@ -28,4 +30,16 @@ export class DoraAggregateQueryDto {
   @IsOptional()
   @IsString()
   sprintId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Rolling time-period window in days (7, 30, or 90). When provided ' +
+      '(and no quarter/sprintId), metrics are scoped to the last N full days ' +
+      'ending at 23:59:59 yesterday in the configured timezone.',
+    enum: TIME_PERIOD_WINDOWS,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsIn(TIME_PERIOD_WINDOWS)
+  window?: TimePeriodWindow;
 }

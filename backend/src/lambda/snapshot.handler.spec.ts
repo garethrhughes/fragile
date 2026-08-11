@@ -12,6 +12,7 @@ import type { SnapshotHandlerEvent } from './snapshot.handler.js';
 // ---------------------------------------------------------------------------
 
 const mockUpsert = jest.fn().mockResolvedValue(undefined);
+const mockCtUpsert = jest.fn().mockResolvedValue(undefined);
 const mockGetRepository = jest.fn();
 
 const mockDataSourceInstance = {
@@ -74,12 +75,27 @@ jest.mock('../metrics/working-time.service.js', () => ({
   WorkingTimeService: jest.fn().mockImplementation(() => ({})),
 }));
 
-// Stub listRecentQuarters so ordering tests can inject a fixed newest-first list
-// without depending on the current calendar date.
-const mockListRecentQuarters = jest.fn();
-jest.mock('../metrics/period-utils.js', () => ({
-  listRecentQuarters: (...args: [number, string?]) => mockListRecentQuarters(...args),
+// Stub CycleTimeService — cycle-time snapshots delegate to it.
+const mockCtCalculate = jest.fn().mockResolvedValue({ p50Days: 0, p85Days: 0, count: 0, band: null, observations: [] });
+const mockCtObservations = jest.fn().mockResolvedValue({ observations: [], anomalyCount: 0, reopenedIssueCount: 0 });
+jest.mock('../metrics/cycle-time.service.js', () => ({
+  CycleTimeService: jest.fn().mockImplementation(() => ({
+    calculate: mockCtCalculate,
+    getCycleTimeObservations: mockCtObservations,
+  })),
 }));
+
+// Stub listRecentQuarters so ordering tests can inject a fixed newest-first list
+// without depending on the current calendar date. Other period-utils helpers
+// (windowToDates, listRollingBuckets, TIME_PERIOD_WINDOWS) use the real impls.
+const mockListRecentQuarters = jest.fn();
+jest.mock('../metrics/period-utils.js', () => {
+  const actual = jest.requireActual('../metrics/period-utils.js');
+  return {
+    ...actual,
+    listRecentQuarters: (...args: [number, string?]) => mockListRecentQuarters(...args),
+  };
+});
 
 // Capture the real implementation once; used as the default in beforeEach so
 // existing tests that don't override the mock still get a valid quarter list.
@@ -119,17 +135,30 @@ const { handler } = require('./snapshot.handler.js') as {
 describe('snapshot Lambda handler', () => {
   beforeEach(() => {
     mockUpsert.mockClear();
+    mockCtUpsert.mockClear();
     mockLoad.mockClear();
     mockDfCalc.mockClear();
     mockLtCalc.mockClear();
     mockCfrCalc.mockClear();
     mockMttrCalc.mockClear();
+    mockCtCalculate.mockClear();
+    mockCtObservations.mockClear();
     mockListRecentQuarters.mockClear();
     mockListRecentQuarters.mockImplementation(realListRecentQuarters);
-    mockGetRepository.mockReturnValue({
-      upsert: mockUpsert,
-      find: jest.fn().mockResolvedValue([{ boardId: 'ACC' }]),
-      findOne: jest.fn().mockResolvedValue(null),
+    // Route CycleTimeSnapshot to its own upsert mock; all other entities share mockUpsert.
+    mockGetRepository.mockImplementation((entity: { name?: string }) => {
+      if (entity?.name === 'CycleTimeSnapshot') {
+        return {
+          upsert: mockCtUpsert,
+          find: jest.fn().mockResolvedValue([]),
+          findOne: jest.fn().mockResolvedValue(null),
+        };
+      }
+      return {
+        upsert: mockUpsert,
+        find: jest.fn().mockResolvedValue([{ boardId: 'ACC' }]),
+        findOne: jest.fn().mockResolvedValue(null),
+      };
     });
     mockLoad.mockResolvedValue(makeEmptySlice());
 
@@ -158,9 +187,10 @@ describe('snapshot Lambda handler', () => {
     );
   });
 
-  it('upserts two per-board snapshot rows (trend + aggregate) when boardId is a regular board', async () => {
+  it('upserts the per-board quarter snapshot rows (trend + aggregate + trend-display) when boardId is a regular board', async () => {
     await handler({ boardId: 'BPT' });
-    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    // First DORA upsert holds the quarter rows; a second DORA upsert holds the
+    // time-period window rows (see dedicated test below).
     const [rows] = mockUpsert.mock.calls[0] as [
       Array<{ boardId: string; snapshotType: string }>,
       string[],
@@ -171,14 +201,39 @@ describe('snapshot Lambda handler', () => {
     expect(types).toEqual(['aggregate', 'trend', 'trend-display']);
   });
 
-  it('upserts two org-level snapshot rows when orgSnapshot=true', async () => {
-    mockGetRepository.mockReturnValue({
-      upsert: mockUpsert,
-      find: jest.fn().mockResolvedValue([{ boardId: 'ACC' }, { boardId: 'BPT' }]),
-      findOne: jest.fn().mockResolvedValue(null),
-    });
+  it('upserts per-board DORA time-period window rows (aggregate + trend for 7/30/90d)', async () => {
+    await handler({ boardId: 'BPT' });
+    const windowRows = (mockUpsert.mock.calls as [Array<{ boardId: string; snapshotType: string }>, string[]][])
+      .flatMap(([rows]) => rows)
+      .filter((r) => /-(7|30|90)d$/.test(r.snapshotType));
+    expect(windowRows.map((r) => r.snapshotType).sort()).toEqual([
+      'aggregate-30d',
+      'aggregate-7d',
+      'aggregate-90d',
+      'trend-30d',
+      'trend-7d',
+      'trend-90d',
+    ]);
+    expect(windowRows.every((r) => r.boardId === 'BPT')).toBe(true);
+  });
+
+  it('upserts per-board cycle-time time-period snapshots', async () => {
+    await handler({ boardId: 'BPT' });
+    const ctRows = (mockCtUpsert.mock.calls as [Array<{ boardId: string; snapshotType: string }>, string[]][])
+      .flatMap(([rows]) => rows);
+    expect(ctRows.map((r) => r.snapshotType).sort()).toEqual([
+      'aggregate-30d',
+      'aggregate-7d',
+      'aggregate-90d',
+      'trend-30d',
+      'trend-7d',
+      'trend-90d',
+    ]);
+  });
+
+  it('upserts the org-level quarter snapshot rows when orgSnapshot=true', async () => {
     await handler({ boardId: '__org__', orgSnapshot: true });
-    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    // First org DORA upsert holds the quarter aggregate + trend rows.
     const [rows] = mockUpsert.mock.calls[0] as [
       Array<{ boardId: string; snapshotType: string }>,
       string[],
@@ -187,6 +242,14 @@ describe('snapshot Lambda handler', () => {
     expect(rows.every((r) => r.boardId === '__org__')).toBe(true);
     const types = rows.map((r) => r.snapshotType).sort();
     expect(types).toEqual(['aggregate', 'trend']);
+  });
+
+  it('upserts org-level cycle-time time-period snapshots when orgSnapshot=true', async () => {
+    await handler({ boardId: '__org__', orgSnapshot: true });
+    const ctRows = (mockCtUpsert.mock.calls as [Array<{ boardId: string; snapshotType: string }>, string[]][])
+      .flatMap(([rows]) => rows);
+    expect(ctRows).toHaveLength(6);
+    expect(ctRows.every((r) => r.boardId === '__org__')).toBe(true);
   });
 
   it('calls all four metric services with the loaded slice', async () => {

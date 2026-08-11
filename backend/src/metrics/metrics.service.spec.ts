@@ -488,6 +488,32 @@ describe('MetricsService', () => {
       expect(points).toHaveLength(2);
     });
 
+    it('returns 7 daily buckets for a 7-day time-period trend', async () => {
+      const points = await service.getDoraTrend({
+        boardId: 'ACC',
+        mode: 'timeperiod',
+        window: 7,
+      });
+      expect(points).toHaveLength(7);
+      const starts = points.map((p) => new Date(p.period.start).getTime());
+      // oldest → newest
+      expect(starts[0]).toBeLessThan(starts[starts.length - 1]);
+    });
+
+    it('returns ~13 weekly buckets for a 90-day time-period trend', async () => {
+      const points = await service.getDoraTrend({
+        boardId: 'ACC',
+        mode: 'timeperiod',
+        window: 90,
+      });
+      expect(points).toHaveLength(13);
+    });
+
+    it('defaults time-period window to 90 days when omitted', async () => {
+      const points = await service.getDoraTrend({ boardId: 'ACC', mode: 'timeperiod' });
+      expect(points).toHaveLength(13);
+    });
+
     it('trend points contain OrgDoraResult fields', async () => {
       const points = await service.getDoraTrend({ boardId: 'ACC', limit: 1 });
       const p = points[0];
@@ -528,14 +554,13 @@ describe('MetricsService', () => {
       expect(sprintRepo.findOne).toHaveBeenCalledWith({ where: { id: 's1' } });
     });
 
-    it('passes issueType filter to cycleTimeService', async () => {
-      await service.getCycleTime({ boardId: 'ACC', quarter: '2026-Q1', issueType: 'Story' });
+    it('does not pass an issue type filter to cycleTimeService (filter removed)', async () => {
+      await service.getCycleTime({ boardId: 'ACC', quarter: '2026-Q1' });
       expect(cycleTimeService.calculate).toHaveBeenCalledWith(
         'ACC',
         expect.any(Date),
         expect.any(Date),
         '2026-Q1',
-        'Story',
       );
     });
   });
@@ -615,6 +640,41 @@ describe('MetricsService', () => {
       expect(p).toHaveProperty('sampleSize');
       expect(p).toHaveProperty('band');
     });
+
+    it('returns 7 daily buckets for a 7-day time-period trend', async () => {
+      const points = await service.getCycleTimeTrend({
+        boardId: 'ACC',
+        mode: 'timeperiod',
+        window: 7,
+      });
+      expect(points).toHaveLength(7);
+      const starts = points.map((p) => new Date(p.start).getTime());
+      expect(starts[0]).toBeLessThan(starts[starts.length - 1]);
+    });
+
+    it('returns ~13 weekly buckets for a 90-day time-period trend', async () => {
+      const points = await service.getCycleTimeTrend({
+        boardId: 'ACC',
+        mode: 'timeperiod',
+        window: 90,
+      });
+      expect(points).toHaveLength(13);
+    });
+
+    it('pools observations across boards in time-period mode', async () => {
+      boardConfigRepo.find.mockResolvedValue([
+        { boardId: 'ACC' } as BoardConfig,
+        { boardId: 'PLAT' } as BoardConfig,
+      ]);
+      cycleTimeService.getCycleTimeObservations.mockResolvedValue({
+        observations: [{ cycleTimeDays: 3 } as never],
+        anomalyCount: 0,
+        reopenedIssueCount: 0,
+      });
+      const points = await service.getCycleTimeTrend({ mode: 'timeperiod', window: 7 });
+      // 2 boards × 1 obs each, pooled per daily bucket → sampleSize 2
+      expect(points[0].sampleSize).toBe(2);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -628,11 +688,14 @@ describe('MetricsService', () => {
       expect(results[0].period.end).toContain('2026-03-31');
     });
 
-    it('falls back to last 90 days for invalid period string', async () => {
-      const before = Date.now();
+    it('falls back to last 90 full days (ending yesterday) for invalid period string', async () => {
       const results = await service.getDora({ boardId: 'ACC', period: 'not-a-date' });
       const endMs = new Date(results[0].period.end).getTime();
-      expect(endMs).toBeGreaterThanOrEqual(before - 1000);
+      const startMs = new Date(results[0].period.start).getTime();
+      // Window ends at 23:59:59.999 yesterday (before now) and spans ~90 days.
+      expect(endMs).toBeLessThan(Date.now());
+      const diffDays = (endMs - startMs) / (1000 * 60 * 60 * 24);
+      expect(Math.round(diffDays)).toBe(90);
     });
   });
 

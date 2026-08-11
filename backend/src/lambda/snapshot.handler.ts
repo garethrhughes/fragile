@@ -26,6 +26,7 @@ import {
   JiraIssueLink,
   WorkingTimeConfigEntity,
   DoraSnapshot,
+  CycleTimeSnapshot,
   JiraFieldConfig,
   JiraSprint,
   SyncLog,
@@ -33,13 +34,24 @@ import {
   JpdIdea,
   SprintReport,
 } from '../database/entities/index.js';
+import type {
+  DoraSnapshotType,
+  CycleTimeSnapshotType,
+} from '../database/entities/index.js';
 import { TrendDataLoader } from '../metrics/trend-data-loader.service.js';
+import type { TrendDataSlice } from '../metrics/trend-data-loader.service.js';
 import { DeploymentFrequencyService } from '../metrics/deployment-frequency.service.js';
 import { LeadTimeService } from '../metrics/lead-time.service.js';
 import { CfrService } from '../metrics/cfr.service.js';
 import { MttrService } from '../metrics/mttr.service.js';
+import { CycleTimeService } from '../metrics/cycle-time.service.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
-import { listRecentQuarters } from '../metrics/period-utils.js';
+import {
+  listRecentQuarters,
+  listRollingBuckets,
+  windowToDates,
+  TIME_PERIOD_WINDOWS,
+} from '../metrics/period-utils.js';
 import { percentile, round2 } from '../metrics/statistics.js';
 import {
   classifyDeploymentFrequency,
@@ -47,6 +59,7 @@ import {
   classifyChangeFailureRate,
   classifyMTTR,
 } from '../metrics/dora-bands.js';
+import { classifyCycleTime } from '../metrics/cycle-time-bands.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -199,6 +212,135 @@ export interface SnapshotHandlerEvent {
   orgSnapshot?: boolean;
 }
 
+/** Services needed to build DORA window snapshots from a loaded data slice. */
+interface DoraMetricServices {
+  df: DeploymentFrequencyService;
+  lt: LeadTimeService;
+  cfr: CfrService;
+  mttr: MttrService;
+}
+
+/**
+ * Builds the DORA time-period (7/30/90-day) snapshot rows for one or more
+ * boards from their pre-loaded data slices. Aggregate = whole window;
+ * trend = rolling daily/weekly buckets. Payloads match the shapes the
+ * frontend reads (mirrors MetricsService.getDoraAggregate / getDoraTrend).
+ */
+function buildDoraWindowRows(
+  svc: DoraMetricServices,
+  slices: TrendDataSlice[],
+  boardTypeMap: Map<string, 'scrum' | 'kanban'>,
+  snapshotKey: string,
+  tz: string,
+): Array<{ boardId: string; snapshotType: DoraSnapshotType; payload: object; triggeredBy: string; stale: boolean }> {
+  const rows: Array<{ boardId: string; snapshotType: DoraSnapshotType; payload: object; triggeredBy: string; stale: boolean }> = [];
+
+  const rawFor = (slice: TrendDataSlice, start: Date, end: Date): RawPeriodMetrics => ({
+    df:   svc.df.calculateFromData(slice, start, end),
+    lt:   svc.lt.getLeadTimeObservationsFromData(slice, start, end),
+    cfr:  svc.cfr.calculateFromData(slice, start, end),
+    mttr: svc.mttr.getMttrObservationsFromData(slice, start, end),
+    boardType: boardTypeMap.get(slice.boardId) ?? 'scrum',
+  });
+
+  for (const window of TIME_PERIOD_WINDOWS) {
+    const { startDate, endDate } = windowToDates(window, tz);
+    const aggregate = buildAggregatePayload(
+      slices.map((s) => rawFor(s, startDate, endDate)),
+      startDate,
+      endDate,
+      `last-${window}d`,
+    );
+
+    const buckets = listRollingBuckets(window, tz); // oldest → newest
+    const trend = buckets.map((b) =>
+      buildAggregatePayload(
+        slices.map((s) => rawFor(s, b.startDate, b.endDate)),
+        b.startDate,
+        b.endDate,
+        b.label,
+      ),
+    );
+
+    rows.push(
+      { boardId: snapshotKey, snapshotType: `aggregate-${window}d` as DoraSnapshotType, payload: aggregate, triggeredBy: snapshotKey, stale: false },
+      { boardId: snapshotKey, snapshotType: `trend-${window}d` as DoraSnapshotType, payload: trend, triggeredBy: snapshotKey, stale: false },
+    );
+  }
+
+  return rows;
+}
+
+/**
+ * Builds the cycle-time time-period (7/30/90-day) snapshot rows for the given
+ * board selection. Aggregate = CycleTimeService result per board over the whole
+ * window; trend = pooled cross-board percentiles per rolling bucket. Mirrors
+ * MetricsService.getCycleTime / getCycleTimeTrend.
+ */
+async function buildCycleTimeWindowRows(
+  cycleTimeService: CycleTimeService,
+  boardIds: string[],
+  snapshotKey: string,
+  tz: string,
+): Promise<Array<{ boardId: string; snapshotType: CycleTimeSnapshotType; payload: object; triggeredBy: string; stale: boolean }>> {
+  const rows: Array<{ boardId: string; snapshotType: CycleTimeSnapshotType; payload: object; triggeredBy: string; stale: boolean }> = [];
+
+  for (const window of TIME_PERIOD_WINDOWS) {
+    const { startDate, endDate } = windowToDates(window, tz);
+
+    // Aggregate: one CycleTimeResult per board over the whole window.
+    const aggregate = await Promise.all(
+      boardIds.map((boardId) =>
+        cycleTimeService.calculate(boardId, startDate, endDate, `last-${window}d`),
+      ),
+    );
+
+    // Trend: pooled cross-board percentiles per rolling bucket (oldest → newest).
+    const buckets = listRollingBuckets(window, tz);
+    const trend = await Promise.all(
+      buckets.map(async (b) => {
+        const results = await Promise.all(
+          boardIds.map((boardId) =>
+            cycleTimeService.getCycleTimeObservations(boardId, b.startDate, b.endDate, b.label),
+          ),
+        );
+        const sorted = results
+          .flatMap((r) => r.observations)
+          .map((o) => o.cycleTimeDays)
+          .sort((a, z) => a - z);
+        if (sorted.length === 0) {
+          return {
+            label: b.label,
+            start: b.startDate.toISOString(),
+            end: b.endDate.toISOString(),
+            medianCycleTimeDays: null,
+            p85CycleTimeDays: null,
+            sampleSize: 0,
+            band: null,
+          };
+        }
+        const p50 = percentile(sorted, 50);
+        return {
+          label: b.label,
+          start: b.startDate.toISOString(),
+          end: b.endDate.toISOString(),
+          medianCycleTimeDays: round2(p50),
+          p85CycleTimeDays: round2(percentile(sorted, 85)),
+          sampleSize: sorted.length,
+          band: classifyCycleTime(p50),
+        };
+      }),
+    );
+
+    rows.push(
+      { boardId: snapshotKey, snapshotType: `aggregate-${window}d` as CycleTimeSnapshotType, payload: aggregate, triggeredBy: snapshotKey, stale: false },
+      { boardId: snapshotKey, snapshotType: `trend-${window}d` as CycleTimeSnapshotType, payload: trend, triggeredBy: snapshotKey, stale: false },
+    );
+  }
+
+  return rows;
+}
+
 // ── DB password cache ─────────────────────────────────────────────────────────
 
 let resolvedDbPassword: string | null = null;
@@ -261,6 +403,7 @@ async function getDataSource(): Promise<DataSource> {
       JiraIssueLink,
       WorkingTimeConfigEntity,
       DoraSnapshot,
+      CycleTimeSnapshot,
       JiraFieldConfig,
       JiraSprint,
       SyncLog,
@@ -322,12 +465,25 @@ export const handler = async (event: SnapshotHandlerEvent): Promise<void> => {
   const ltService   = new LeadTimeService(issueRepo, changelogRepo, versionRepo, boardConfigRepo, workingTimeService);
   const cfrService  = new CfrService(issueRepo, changelogRepo, versionRepo, boardConfigRepo, issueLinkRepo);
   const mttrService = new MttrService(issueRepo, changelogRepo, boardConfigRepo);
+  const cycleTimeService = new CycleTimeService(
+    issueRepo,
+    changelogRepo,
+    versionRepo,
+    boardConfigRepo,
+    configServiceStub as unknown as import('@nestjs/config').ConfigService,
+    workingTimeService,
+  );
+  const cycleTimeSnapshotRepo = ds.getRepository(CycleTimeSnapshot);
 
   // Compute the trend window: last N quarters (newest first)
   const quarters = listRecentQuarters(quartersBack);
   const rangeStart = quarters[quarters.length - 1].startDate;
   const rangeEnd   = quarters[0].endDate;
   const latestQuarter = quarters[0];
+
+  // Timezone for rolling time-period window boundaries (matches MetricsService).
+  const tz = configServiceStub.get<string>('TIMEZONE', 'UTC') ?? 'UTC';
+  const doraSvc: DoraMetricServices = { df: dfService, lt: ltService, cfr: cfrService, mttr: mttrService };
 
   // ── Org-level snapshot ────────────────────────────────────────────────────
   // Fired once after all per-board syncs complete. Reads the already-written
@@ -456,6 +612,34 @@ export const handler = async (event: SnapshotHandlerEvent): Promise<void> => {
     );
 
     console.log(`[snapshot-handler] Org-level snapshot written from ${boardTrendSnapshots.length} board snapshots.`);
+
+    // ── Org-level time-period (rolling window) snapshots ────────────────────
+    // Load raw slices only for the widest window (90 days) across all boards,
+    // then derive all three windows in-memory. Bounded to ≤90 days of data.
+    const widestWindow = Math.max(...TIME_PERIOD_WINDOWS);
+    const { startDate: winRangeStart, endDate: winRangeEnd } = windowToDates(widestWindow, tz);
+    const windowSlices = await Promise.all(
+      allBoardIds.map((id) => trendLoader.load(id, winRangeStart, winRangeEnd)),
+    );
+
+    const orgDoraWindowRows = buildDoraWindowRows(
+      doraSvc,
+      windowSlices,
+      boardTypeMap,
+      ORG_SNAPSHOT_KEY,
+      tz,
+    );
+    await snapshotRepo.upsert(orgDoraWindowRows, ['boardId', 'snapshotType']);
+
+    const orgCycleWindowRows = await buildCycleTimeWindowRows(
+      cycleTimeService,
+      allBoardIds,
+      ORG_SNAPSHOT_KEY,
+      tz,
+    );
+    await cycleTimeSnapshotRepo.upsert(orgCycleWindowRows, ['boardId', 'snapshotType']);
+
+    console.log(`[snapshot-handler] Org-level time-period snapshots written.`);
     return;
   }
 
@@ -532,6 +716,26 @@ export const handler = async (event: SnapshotHandlerEvent): Promise<void> => {
     ],
     ['boardId', 'snapshotType'],
   );
+
+  // Per-board time-period (rolling window) snapshots. The quarter `slice` spans
+  // the last 8 quarters, which fully covers the widest (90-day) window.
+  const boardTypeMapSingle = new Map<string, 'scrum' | 'kanban'>([[boardId, boardType]]);
+  const boardDoraWindowRows = buildDoraWindowRows(
+    doraSvc,
+    [slice],
+    boardTypeMapSingle,
+    boardId,
+    tz,
+  );
+  await snapshotRepo.upsert(boardDoraWindowRows, ['boardId', 'snapshotType']);
+
+  const boardCycleWindowRows = await buildCycleTimeWindowRows(
+    cycleTimeService,
+    [boardId],
+    boardId,
+    tz,
+  );
+  await cycleTimeSnapshotRepo.upsert(boardCycleWindowRows, ['boardId', 'snapshotType']);
 
   console.log(`[snapshot-handler] Snapshot written for board: ${boardId}`);
   // DataSource remains open — reused on next warm invocation.

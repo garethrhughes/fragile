@@ -185,6 +185,40 @@ describe('MetricsController — snapshot-aware endpoints', () => {
         expect.objectContaining({ sprintId: '123' }),
       );
     });
+
+    it('serves time-period window from the aggregate-Nd snapshot', async () => {
+      const snapshot: SnapshotResult = {
+        payload: { period: { label: 'last-30d' } } as unknown as OrgDoraResult,
+        ageSeconds: 60,
+        stale: false,
+      };
+      snapshotSvc.getSnapshot.mockResolvedValue(snapshot);
+      const res = mockRes();
+
+      const result = await controller.getDoraAggregate(
+        { boardId: 'ACC', window: 30 } as DoraAggregateQueryDto,
+        res as never,
+      );
+
+      expect(snapshotSvc.getSnapshot).toHaveBeenCalledWith('ACC', 'aggregate-30d');
+      expect(result).toEqual(snapshot.payload);
+    });
+
+    it('uses the org snapshot key for multi-board time-period windows', async () => {
+      snapshotSvc.getSnapshot.mockResolvedValue({
+        payload: {} as OrgDoraResult,
+        ageSeconds: 10,
+        stale: false,
+      });
+      const res = mockRes();
+
+      await controller.getDoraAggregate(
+        { boardId: 'ACC,BPT', window: 90 } as DoraAggregateQueryDto,
+        res as never,
+      );
+
+      expect(snapshotSvc.getSnapshot).toHaveBeenCalledWith('__org__', 'aggregate-90d');
+    });
   });
 
   // ── getDoraTrend ──────────────────────────────────────────────────────────
@@ -254,6 +288,22 @@ describe('MetricsController — snapshot-aware endpoints', () => {
 
       expect(Array.isArray(result)).toBe(true);
       expect((result as unknown[]).length).toBe(3);
+    });
+
+    it('reads the trend-Nd snapshot in time-period mode', async () => {
+      snapshotSvc.getSnapshot.mockResolvedValue({
+        payload: [] as unknown as TrendResponse,
+        ageSeconds: 10,
+        stale: false,
+      });
+      const res = mockRes();
+
+      await controller.getDoraTrend(
+        { boardId: 'ACC', mode: 'timeperiod', window: 7 } as DoraTrendQueryDto,
+        res as never,
+      );
+
+      expect(snapshotSvc.getSnapshot).toHaveBeenCalledWith('ACC', 'trend-7d');
     });
   });
 
