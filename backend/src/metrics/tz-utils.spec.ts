@@ -64,6 +64,33 @@ describe('startOfDayInTz', () => {
     expect(parts.month).toBe(month);
     expect(parts.day).toBe(day);
   });
+
+  // O(1) offset-probe correctness across DST transitions (the two-probe
+  // correction must land on true local midnight, not the pre-transition offset).
+  it('DST spring-forward day: America/New_York 2026-03-08 midnight = EST 05:00Z', () => {
+    // 2026-03-08 is the US DST start; midnight that day is still EST (UTC-5).
+    const result = startOfDayInTz(2026, 2, 8, 'America/New_York');
+    expect(result.toISOString()).toBe('2026-03-08T05:00:00.000Z');
+  });
+
+  it('DST fall-back day: America/New_York 2026-11-01 midnight = EDT 04:00Z', () => {
+    // 2026-11-01 is the US DST end; midnight that day is still EDT (UTC-4).
+    const result = startOfDayInTz(2026, 10, 1, 'America/New_York');
+    expect(result.toISOString()).toBe('2026-11-01T04:00:00.000Z');
+  });
+
+  it('southern-hemisphere DST: Australia/Sydney 2026-04-05 midnight = AEDT 13:00Z prior day', () => {
+    // Sydney DST ends 2026-04-05; midnight that day is still AEDT (UTC+11).
+    const result = startOfDayInTz(2026, 3, 5, 'Australia/Sydney');
+    expect(result.toISOString()).toBe('2026-04-04T13:00:00.000Z');
+  });
+
+  it('memoised repeat call returns an equal (fresh) Date instance', () => {
+    const a = startOfDayInTz(2026, 5, 15, 'Australia/Sydney');
+    const b = startOfDayInTz(2026, 5, 15, 'Australia/Sydney');
+    expect(a.getTime()).toBe(b.getTime());
+    expect(a).not.toBe(b); // cache stores the ms, returns a new Date each call
+  });
 });
 
 describe('midnightInTz', () => {
