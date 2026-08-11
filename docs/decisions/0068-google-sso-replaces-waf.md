@@ -21,6 +21,10 @@
 > A future change may remove the WAF again, but must do so in two applies: (1) drop
 > `web_acl_id` from the CloudFront distributions and let it propagate, (2) destroy the WebACL —
 > to avoid the association error hit here.
+>
+> **Update (2026-08-11):** that future change has occurred — see **ADR 0086**, which removes
+> the WAF via the two-apply sequence above and makes SSO the sole access control. ADR 0034 is
+> now `Superseded by 0086`.
 
 ## Context
 

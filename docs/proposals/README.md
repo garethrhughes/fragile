@@ -77,3 +77,4 @@
 | [0078](0078-incremental-jira-sync.md) | Incremental Jira Sync | Accepted | 2026-08-04 |
 | [0079](0079-unified-reporting-periods-dora-cycle-time.md) | Unified Reporting Periods for DORA & Cycle Time | Accepted | 2026-08-11 |
 | [0080](0080-support-unified-periods-remove-ttb-filter.md) | Support report: unified reporting periods & remove TTB-linked filter | Accepted | 2026-08-11 |
+| [0081](0081-remove-waf-sso-sole-control.md) | Remove CloudFront WAF IP-allowlist; SSO becomes sole access control | Proposed | 2026-08-11 |
