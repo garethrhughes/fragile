@@ -3,7 +3,7 @@
 **Date:** 2026-08-12
 **Status:** Accepted
 **Author:** Architect Agent
-**Related ADRs:** 0036, 0040, 0041, 0078, 0081, 0084, 0087; **supersedes proposal 0083**
+**Related ADRs:** 0088, 0089, 0090 (see docs/decisions/); 0036, 0040, 0041, 0078, 0081, 0087; **supersedes proposal 0083**
 **Related feature:** docs/features/0024-snapshot-compute-rearchitecture.md
 
 ## Problem Statement

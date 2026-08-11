@@ -1,9 +1,10 @@
 # 0024 — Re-architect snapshot computation: one shared writer + change-scoped recompute
 
 **Date:** 2026-08-12
-**Status:** In Progress
+**Status:** Implemented
 **Source:** Manual
 **Related proposal:** docs/proposals/0084-snapshot-compute-rearchitecture.md
+**Related decisions:** docs/decisions/0088–0090
 
 ## Summary
 
