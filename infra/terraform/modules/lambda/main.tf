@@ -124,6 +124,10 @@ resource "aws_lambda_function" "dora_snapshot" {
 
   runtime     = "nodejs20.x"
   handler     = "lambda/index.handler"
+  # Sizing (proposal 0084 / ADR 0040-corrected): 3008 MB / 300 s reflects the
+  # real working set of the snapshot compute (the whole Nest module + metric
+  # services). Invocation is synchronous (RequestResponse) from SyncService so
+  # per-board rows are written before the org rollup reads them.
   timeout     = 300
   memory_size = 3008
 

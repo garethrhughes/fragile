@@ -4,7 +4,7 @@ import type { Response } from 'express';
 import { SupportService } from './support.service.js';
 import { SupportSnapshotReadService } from './support-snapshot-read.service.js';
 import { SupportQueryDto } from './dto/support-query.dto.js';
-import { ORG_SNAPSHOT_KEY } from '../lambda/in-process-snapshot.service.js';
+import { ORG_SNAPSHOT_KEY } from '../snapshot/snapshot-compute.service.js';
 import type { SupportSnapshotType } from '../database/entities/index.js';
 import type { SupportResult, SupportSummaryDto } from './dto/support-response.dto.js';
 

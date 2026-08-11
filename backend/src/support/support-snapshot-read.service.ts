@@ -41,7 +41,7 @@ export class SupportSnapshotReadService {
       (Date.now() - row.computedAt.getTime()) / 1000,
     );
     const staleThresholdSeconds =
-      (this.config.get<number>('SNAPSHOT_STALE_THRESHOLD_MINUTES') ?? 60) * 60;
+      (this.config.get<number>('SNAPSHOT_STALE_THRESHOLD_MINUTES') ?? 2880) * 60;
     const stale = ageSeconds > staleThresholdSeconds;
 
     return { payload: row.payload, ageSeconds, stale };

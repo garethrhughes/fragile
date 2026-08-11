@@ -79,4 +79,5 @@
 | [0080](0080-support-unified-periods-remove-ttb-filter.md) | Support report: unified reporting periods & remove TTB-linked filter | Accepted | 2026-08-11 |
 | [0081](0081-remove-waf-sso-sole-control.md) | Remove CloudFront WAF IP-allowlist; SSO becomes sole access control | Proposed | 2026-08-11 |
 | [0082](0082-snapshot-quarter-cycle-time-support.md) | Snapshot the quarter views for DORA / Cycle Time / Support | Accepted | 2026-08-11 |
-| [0083](0083-unify-lambda-snapshot-writer.md) | Unify the Lambda snapshot handler with the in-process snapshot writer | Proposed | 2026-08-11 |
+| [0083](0083-unify-lambda-snapshot-writer.md) | Unify the Lambda snapshot handler with the in-process snapshot writer | Superseded by 0084 | 2026-08-11 |
+| [0084](0084-snapshot-compute-rearchitecture.md) | Snapshot compute re-architecture: one shared writer + change-scoped recompute | Accepted | 2026-08-12 |

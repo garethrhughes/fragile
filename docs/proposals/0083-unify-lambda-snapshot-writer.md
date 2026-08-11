@@ -1,7 +1,7 @@
 # 0083 — Unify the Lambda snapshot handler with the in-process snapshot writer
 
 **Date:** 2026-08-11
-**Status:** Proposed
+**Status:** Superseded by [0084](0084-snapshot-compute-rearchitecture.md)
 **Author:** Architect Agent
 **Related ADRs:** 0040 (Lambda post-sync snapshots), 0087 (quarter snapshots); addresses the
 duplication behind the ADR 0068-era DORA divergence incident

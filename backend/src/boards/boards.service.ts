@@ -44,10 +44,15 @@ export class BoardsService {
     config = this.boardConfigRepo.merge(config, dto);
     const saved = await this.boardConfigRepo.save(config);
 
-    // Invalidate snapshot — config change affects all metric results.
-    // Fire-and-forget: config update must not fail because Lambda invocation fails.
-    this.lambdaInvoker.invokeSnapshotWorker(boardId).catch(() => {
-      // Already logged inside invokeSnapshotWorker.
+    // Invalidate snapshots — a config change affects all metric results for this
+    // board AND the org rollup that aggregates it. Fire-and-forget: config update
+    // must not fail because snapshot recompute fails. Refresh per-board first so
+    // its rows are written before the org rollup reads them.
+    void (async () => {
+      await this.lambdaInvoker.invokeSnapshotWorker(boardId);
+      await this.lambdaInvoker.invokeOrgSnapshot();
+    })().catch(() => {
+      // Already logged inside the invoker.
     });
 
     return saved;

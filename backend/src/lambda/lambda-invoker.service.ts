@@ -7,7 +7,9 @@
  * written to the database.
  *
  * When USE_LAMBDA=false or DORA_SNAPSHOT_LAMBDA_NAME is not set, falls back
- * to InProcessSnapshotService (local development mode).
+ * to SnapshotComputeService in-process (local development mode). The prod Lambda
+ * runs the SAME SnapshotComputeService (it boots SnapshotComputeModule), so both
+ * paths produce identical snapshot rows (proposal 0084).
  *
  * Errors are logged but never rethrown — sync must not fail because Lambda
  * invocation fails.
@@ -19,7 +21,7 @@ import {
   InvokeCommand,
   InvocationType,
 } from '@aws-sdk/client-lambda';
-import { InProcessSnapshotService } from './in-process-snapshot.service.js';
+import { SnapshotComputeService } from '../snapshot/snapshot-compute.service.js';
 import type { SnapshotHandlerEvent } from './snapshot.handler.js';
 
 @Injectable()
@@ -31,7 +33,7 @@ export class LambdaInvokerService {
 
   constructor(
     private readonly config: ConfigService,
-    private readonly inProcessSnapshot: InProcessSnapshotService,
+    private readonly snapshotCompute: SnapshotComputeService,
   ) {
     this.useLambda = config.get<string>('USE_LAMBDA') === 'true';
     this.functionName = config.get<string>('DORA_SNAPSHOT_LAMBDA_NAME') ?? null;
@@ -79,9 +81,9 @@ export class LambdaInvokerService {
     if (!this.client || !this.functionName) {
       try {
         if (payload.orgSnapshot) {
-          await this.inProcessSnapshot.computeOrg();
+          await this.snapshotCompute.computeOrg();
         } else {
-          await this.inProcessSnapshot.computeBoard(payload.boardId);
+          await this.snapshotCompute.computeBoard(payload.boardId);
         }
       } catch (err) {
         this.logger.warn(

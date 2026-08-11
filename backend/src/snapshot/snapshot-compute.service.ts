@@ -1,28 +1,25 @@
 /**
- * InProcessSnapshotService
+ * SnapshotComputeService
  *
- * In-process fallback for DORA snapshot computation, used when
- * USE_LAMBDA=false (local development). Delegates to MetricsService which
- * produces the correct OrgDoraResult / TrendResponse wire shapes.
+ * The single implementation of DORA / Cycle Time / Support snapshot computation
+ * (proposal 0084). Runs in-process locally, and in prod inside the snapshot
+ * Lambda which boots SnapshotComputeModule and resolves this service — so the
+ * same code produces the same snapshot rows in both environments (no drift).
+ *
+ * Delegates to MetricsService / SupportService (the same code the live API
+ * uses), so a metric or snapshot-type change is made in exactly one place.
  *
  * After each board sync, computes three snapshots:
  *   1. Per-board  — keyed to the board's own ID (e.g. 'ACC')
  *      a. aggregate — OrgDoraResult for the current quarter
- *      b. trend     — raw TrendResponse (oldest→newest) kept for symmetry with
- *                     the Lambda path; used as the per-board raw trend store
- *      c. trend-display — OrgDoraResult[] per quarter (oldest→newest), the
- *                         display-ready shape the frontend trend endpoint reads
+ *      b. trend     — raw TrendResponse (oldest→newest)
+ *      c. trend-display — OrgDoraResult[] per quarter (oldest→newest)
  *   2. Org-level  — keyed to ORG_SNAPSHOT_KEY ('__org__'), covering all boards
  *      a. aggregate — OrgDoraResult for the current quarter across all boards
- *      b. trend     — OrgDoraResult[] per quarter (oldest→newest) for multi-board
- *                     trend view
+ *      b. trend     — OrgDoraResult[] per quarter (oldest→newest)
  *
- * The org snapshot powers the "All boards" view in the DORA page. Per-board
- * snapshots power the individual board drill-down view.
- *
- * In production, the Lambda handler performs this computation in a separate
- * AWS Lambda function after each sync, keeping the App Runner heap free of
- * the combined sync + computation working set.
+ * The org snapshot powers the "All boards" view; per-board snapshots power the
+ * individual board drill-down view.
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -60,8 +57,8 @@ function windowSnapshotTypes(window: number): {
 }
 
 @Injectable()
-export class InProcessSnapshotService {
-  private readonly logger = new Logger(InProcessSnapshotService.name);
+export class SnapshotComputeService {
+  private readonly logger = new Logger(SnapshotComputeService.name);
 
   constructor(
     private readonly metricsService: MetricsService,

@@ -1,12 +1,12 @@
 /**
- * in-process-snapshot.service.spec.ts
+ * snapshot-compute.service.spec.ts
  *
- * Unit tests for InProcessSnapshotService.
+ * Unit tests for SnapshotComputeService.
  * MetricsService is mocked — the service now delegates to it entirely.
  */
 
 import { Repository } from 'typeorm';
-import { InProcessSnapshotService, ORG_SNAPSHOT_KEY } from './in-process-snapshot.service.js';
+import { SnapshotComputeService, ORG_SNAPSHOT_KEY } from './snapshot-compute.service.js';
 import { MetricsService } from '../metrics/metrics.service.js';
 import { SupportService } from '../support/support.service.js';
 import {
@@ -96,8 +96,8 @@ function makeMockSupportService(): MockedSupport {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('InProcessSnapshotService', () => {
-  let service: InProcessSnapshotService;
+describe('SnapshotComputeService', () => {
+  let service: SnapshotComputeService;
   let snapshotRepo: jest.Mocked<Repository<DoraSnapshot>>;
   let cycleTimeSnapshotRepo: jest.Mocked<Repository<CycleTimeSnapshot>>;
   let supportSnapshotRepo: jest.Mocked<Repository<SupportSnapshot>>;
@@ -113,7 +113,7 @@ describe('InProcessSnapshotService', () => {
     metricsService        = makeMockMetricsService();
     supportService        = makeMockSupportService();
 
-    service = new InProcessSnapshotService(
+    service = new SnapshotComputeService(
       metricsService as unknown as MetricsService,
       supportService as unknown as SupportService,
       snapshotRepo,
@@ -170,6 +170,17 @@ describe('InProcessSnapshotService', () => {
     // No historical quarters here (sprint repo mock returns none).
     expect(types).toContain('trend-quarters');
     expect(types.filter((t) => /^aggregate-\d{4}-Q[1-4]$/.test(t))).toHaveLength(1);
+
+    // Regression: the quarter aggregate payload is a CycleTimeResult[] (array),
+    // matching the live endpoint and the window snapshots. The pre-0084 Lambda
+    // stored a bare object here, breaking the frontend's results.flatMap(...);
+    // there is now one code path (getCycleTime → array) so drift is impossible.
+    const quarterAgg = (
+      cycleTimeSnapshotRepo.upsert.mock.calls as [Array<{ snapshotType: string; payload: unknown }>, string[]][]
+    )
+      .flatMap(([rows]) => rows)
+      .find((r) => /^aggregate-\d{4}-Q[1-4]$/.test(r.snapshotType));
+    expect(Array.isArray(quarterAgg?.payload)).toBe(true);
   });
 
   it('writes org-level cycle-time snapshots under __org__ (windows + current quarter + trend-quarters)', async () => {
