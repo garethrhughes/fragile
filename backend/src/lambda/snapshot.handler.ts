@@ -55,8 +55,10 @@ import {
   listRecentQuarters,
   listRollingBuckets,
   windowToDates,
+  quarterToDates,
   TIME_PERIOD_WINDOWS,
 } from '../metrics/period-utils.js';
+import { dateParts } from '../metrics/tz-utils.js';
 import { percentile, round2 } from '../metrics/statistics.js';
 import {
   classifyDeploymentFrequency,
@@ -372,6 +374,46 @@ async function buildCycleTimeWindowRows(
   return rows;
 }
 
+// ── Quarter snapshot helpers (proposal 0082 — prod parity with the in-process
+//    writer). The Lambda keeps its own implementation (per proposal 0083 we are
+//    NOT unifying yet), so this duplicates the in-process quarter logic:
+//    recompute the current quarter every run; compute each historical quarter
+//    once (skip if a row already exists — closed-quarter data is immutable).
+
+/**
+ * Enumerates the quarter labels (YYYY-QN) the UI can request — derived from
+ * closed sprints, matching PlanningService.getQuarters and the in-process
+ * writer. The current quarter is always included and returned separately.
+ */
+async function enumerateQuarters(
+  sprintRepo: import('typeorm').Repository<JiraSprint>,
+  tz: string,
+): Promise<{ current: string; historical: string[] }> {
+  const current = listRecentQuarters(1, tz)[0].label;
+  const sprints = await sprintRepo.find({
+    where: { state: 'closed' },
+    select: { startDate: true },
+  });
+  const labels = new Set<string>();
+  for (const s of sprints) {
+    if (!s.startDate) continue;
+    const { year, month } = dateParts(s.startDate, tz);
+    labels.add(`${year}-Q${Math.floor(month / 3) + 1}`);
+  }
+  labels.delete(current);
+  return { current, historical: [...labels] };
+}
+
+/** Which quarters to compute this run: current always + historical not yet stored. */
+function quartersToCompute(
+  current: string,
+  historical: string[],
+  existingTypes: Set<string>,
+  prefix: string, // e.g. 'aggregate-' or 'summary-'
+): string[] {
+  return [current, ...historical.filter((q) => !existingTypes.has(`${prefix}${q}`))];
+}
+
 // ── DB password cache ─────────────────────────────────────────────────────────
 
 let resolvedDbPassword: string | null = null;
@@ -666,6 +708,21 @@ export const handler = async (event: SnapshotHandlerEvent): Promise<void> => {
 
     console.log(`[snapshot-handler] Org-level snapshot written from ${boardTrendSnapshots.length} board snapshots.`);
 
+    // ── Org-level quarter aggregates (proposal 0082 — prod parity) ──────────
+    // mergedEntries already holds one merged (all-board) OrgDoraResult per
+    // quarter — the same data used for orgTrendPayload. Emit one
+    // aggregate-<quarter> row per merged quarter (no raw reload, no timeout risk).
+    const orgDoraQuarterRows = mergedEntries.map((entry) => ({
+      boardId: ORG_SNAPSHOT_KEY,
+      snapshotType: `aggregate-${entry.period}` as DoraSnapshotType,
+      payload: buildAggregatePayload(entry.boardMetrics, entry.startDate, entry.endDate, entry.period),
+      triggeredBy: ORG_SNAPSHOT_KEY,
+      stale: false,
+    }));
+    if (orgDoraQuarterRows.length > 0) {
+      await snapshotRepo.upsert(orgDoraQuarterRows, ['boardId', 'snapshotType']);
+    }
+
     // ── Org-level time-period (rolling window) snapshots ────────────────────
     // Load raw slices only for the widest window (90 days) across all boards,
     // then derive all three windows in-memory. Bounded to ≤90 days of data.
@@ -698,6 +755,79 @@ export const handler = async (event: SnapshotHandlerEvent): Promise<void> => {
       ORG_SNAPSHOT_KEY,
     );
     await supportSnapshotRepo.upsert(orgSupportWindowRows, ['boardId', 'snapshotType']);
+
+    // ── Org-level cycle-time & support quarter snapshots (proposal 0082) ────
+    // Bounded per-quarter compute over all boards (current + historical-once).
+    const { current: orgCurQ, historical: orgHistQ } = await enumerateQuarters(sprintRepo, tz);
+    const allBoardsQuery = allBoardIds.join(',');
+
+    const orgCtExisting = new Set(
+      (await cycleTimeSnapshotRepo.find({ where: { boardId: ORG_SNAPSHOT_KEY }, select: { snapshotType: true } })).map(
+        (r) => r.snapshotType,
+      ),
+    );
+    const orgCtQuarterRows: Array<{ boardId: string; snapshotType: CycleTimeSnapshotType; payload: object; triggeredBy: string; stale: boolean }> = [];
+    for (const q of quartersToCompute(orgCurQ, orgHistQ, orgCtExisting, 'aggregate-')) {
+      const { startDate, endDate } = quarterToDates(q, tz);
+      const perBoard = await Promise.all(
+        allBoardIds.map((id) => cycleTimeService.calculate(id, startDate, endDate, q)),
+      );
+      orgCtQuarterRows.push({
+        boardId: ORG_SNAPSHOT_KEY,
+        snapshotType: `aggregate-${q}` as CycleTimeSnapshotType,
+        payload: perBoard,
+        triggeredBy: ORG_SNAPSHOT_KEY,
+        stale: false,
+      });
+    }
+    // trend-quarters (pooled percentiles across all boards, oldest → newest).
+    const orgQuarterTrend = await Promise.all(
+      listRecentQuarters(8, tz)
+        .slice()
+        .reverse()
+        .map(async (q) => {
+          const results = await Promise.all(
+            allBoardIds.map((id) =>
+              cycleTimeService.getCycleTimeObservations(id, q.startDate, q.endDate, q.label),
+            ),
+          );
+          const sorted = results
+            .flatMap((r) => r.observations)
+            .map((o) => o.cycleTimeDays)
+            .sort((a, z) => a - z);
+          if (sorted.length === 0) {
+            return { label: q.label, start: q.startDate.toISOString(), end: q.endDate.toISOString(), medianCycleTimeDays: null, p85CycleTimeDays: null, sampleSize: 0, band: null };
+          }
+          const p50 = percentile(sorted, 50);
+          return { label: q.label, start: q.startDate.toISOString(), end: q.endDate.toISOString(), medianCycleTimeDays: round2(p50), p85CycleTimeDays: round2(percentile(sorted, 85)), sampleSize: sorted.length, band: classifyCycleTime(p50) };
+        }),
+    );
+    orgCtQuarterRows.push({
+      boardId: ORG_SNAPSHOT_KEY,
+      snapshotType: 'trend-quarters',
+      payload: orgQuarterTrend,
+      triggeredBy: ORG_SNAPSHOT_KEY,
+      stale: false,
+    });
+    await cycleTimeSnapshotRepo.upsert(orgCtQuarterRows, ['boardId', 'snapshotType']);
+
+    const orgSupExisting = new Set(
+      (await supportSnapshotRepo.find({ where: { boardId: ORG_SNAPSHOT_KEY }, select: { snapshotType: true } })).map(
+        (r) => r.snapshotType,
+      ),
+    );
+    const orgSupQuarterRows: Array<{ boardId: string; snapshotType: SupportSnapshotType; payload: object; triggeredBy: string; stale: boolean }> = [];
+    for (const q of quartersToCompute(orgCurQ, orgHistQ, orgSupExisting, 'summary-')) {
+      const summary = await supportService.getSupportSummary({ boardId: allBoardsQuery, quarter: q });
+      orgSupQuarterRows.push({
+        boardId: ORG_SNAPSHOT_KEY,
+        snapshotType: `summary-${q}` as SupportSnapshotType,
+        payload: summary,
+        triggeredBy: ORG_SNAPSHOT_KEY,
+        stale: false,
+      });
+    }
+    await supportSnapshotRepo.upsert(orgSupQuarterRows, ['boardId', 'snapshotType']);
 
     console.log(`[snapshot-handler] Org-level time-period snapshots written.`);
     return;
@@ -803,6 +933,125 @@ export const handler = async (event: SnapshotHandlerEvent): Promise<void> => {
     boardId,
   );
   await supportSnapshotRepo.upsert(boardSupportWindowRows, ['boardId', 'snapshotType']);
+
+  // ── Per-board quarter snapshots (proposal 0082 — prod parity) ─────────────
+  // DORA historical quarters as aggregate-<quarter>; the current quarter is
+  // already stored above as `aggregate`. Cycle-time aggregate-<quarter> + a
+  // single trend-quarters. Support summary-<quarter>. Current quarter every run;
+  // each historical quarter once (skip if a row exists).
+  const { current: curQ, historical: histQ } = await enumerateQuarters(sprintRepo, tz);
+
+  // DORA: reuse the raw slice + buildAggregatePayload (no MetricsService here).
+  const doraExisting = new Set(
+    (await snapshotRepo.find({ where: { boardId }, select: { snapshotType: true } })).map(
+      (r) => r.snapshotType,
+    ),
+  );
+  const doraQuarterRows: Array<{ boardId: string; snapshotType: DoraSnapshotType; payload: object; triggeredBy: string; stale: boolean }> = [];
+  // Historical quarters only (current quarter is the existing `aggregate` row).
+  for (const q of histQ.filter((h) => !doraExisting.has(`aggregate-${h}` as DoraSnapshotType))) {
+    const { startDate, endDate } = quarterToDates(q, tz);
+    const raw: RawPeriodMetrics = {
+      df:   dfService.calculateFromData(slice, startDate, endDate),
+      lt:   ltService.getLeadTimeObservationsFromData(slice, startDate, endDate),
+      cfr:  cfrService.calculateFromData(slice, startDate, endDate),
+      mttr: mttrService.getMttrObservationsFromData(slice, startDate, endDate),
+      boardType,
+    };
+    doraQuarterRows.push({
+      boardId,
+      snapshotType: `aggregate-${q}` as DoraSnapshotType,
+      payload: buildAggregatePayload([raw], startDate, endDate, q),
+      triggeredBy: boardId,
+      stale: false,
+    });
+  }
+  if (doraQuarterRows.length > 0) {
+    await snapshotRepo.upsert(doraQuarterRows, ['boardId', 'snapshotType']);
+  }
+
+  // Cycle-time quarter aggregates + a single quarter trend.
+  const ctExisting = new Set(
+    (await cycleTimeSnapshotRepo.find({ where: { boardId }, select: { snapshotType: true } })).map(
+      (r) => r.snapshotType,
+    ),
+  );
+  const ctQuarterRows: Array<{ boardId: string; snapshotType: CycleTimeSnapshotType; payload: object; triggeredBy: string; stale: boolean }> = [];
+  for (const q of quartersToCompute(curQ, histQ, ctExisting, 'aggregate-')) {
+    const { startDate, endDate } = quarterToDates(q, tz);
+    const aggregate = await cycleTimeService.calculate(boardId, startDate, endDate, q);
+    ctQuarterRows.push({
+      boardId,
+      snapshotType: `aggregate-${q}` as CycleTimeSnapshotType,
+      payload: aggregate,
+      triggeredBy: boardId,
+      stale: false,
+    });
+  }
+  // trend-quarters: one point per quarter (pooled percentiles), recomputed every
+  // run (its latest point — the current quarter — changes each sync).
+  const quarterTrendPoints = await Promise.all(
+    listRecentQuarters(8, tz)
+      .slice()
+      .reverse() // oldest → newest
+      .map(async (q) => {
+        const { observations } = await cycleTimeService.getCycleTimeObservations(
+          boardId,
+          q.startDate,
+          q.endDate,
+          q.label,
+        );
+        const sorted = observations.map((o) => o.cycleTimeDays).sort((a, z) => a - z);
+        if (sorted.length === 0) {
+          return {
+            label: q.label,
+            start: q.startDate.toISOString(),
+            end: q.endDate.toISOString(),
+            medianCycleTimeDays: null,
+            p85CycleTimeDays: null,
+            sampleSize: 0,
+            band: null,
+          };
+        }
+        const p50 = percentile(sorted, 50);
+        return {
+          label: q.label,
+          start: q.startDate.toISOString(),
+          end: q.endDate.toISOString(),
+          medianCycleTimeDays: round2(p50),
+          p85CycleTimeDays: round2(percentile(sorted, 85)),
+          sampleSize: sorted.length,
+          band: classifyCycleTime(p50),
+        };
+      }),
+  );
+  ctQuarterRows.push({
+    boardId,
+    snapshotType: 'trend-quarters',
+    payload: quarterTrendPoints,
+    triggeredBy: boardId,
+    stale: false,
+  });
+  await cycleTimeSnapshotRepo.upsert(ctQuarterRows, ['boardId', 'snapshotType']);
+
+  // Support quarter summaries.
+  const supExisting = new Set(
+    (await supportSnapshotRepo.find({ where: { boardId }, select: { snapshotType: true } })).map(
+      (r) => r.snapshotType,
+    ),
+  );
+  const supQuarterRows: Array<{ boardId: string; snapshotType: SupportSnapshotType; payload: object; triggeredBy: string; stale: boolean }> = [];
+  for (const q of quartersToCompute(curQ, histQ, supExisting, 'summary-')) {
+    const summary = await supportService.getSupportSummary({ boardId, quarter: q });
+    supQuarterRows.push({
+      boardId,
+      snapshotType: `summary-${q}` as SupportSnapshotType,
+      payload: summary,
+      triggeredBy: boardId,
+      stale: false,
+    });
+  }
+  await supportSnapshotRepo.upsert(supQuarterRows, ['boardId', 'snapshotType']);
 
   console.log(`[snapshot-handler] Snapshot written for board: ${boardId}`);
   // DataSource remains open — reused on next warm invocation.

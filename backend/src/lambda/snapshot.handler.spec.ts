@@ -242,23 +242,23 @@ describe('snapshot Lambda handler', () => {
     expect(windowRows.every((r) => r.boardId === 'BPT')).toBe(true);
   });
 
-  it('upserts per-board cycle-time time-period snapshots', async () => {
+  it('upserts per-board cycle-time snapshots (windows + current quarter + trend-quarters)', async () => {
     await handler({ boardId: 'BPT' });
     const ctRows = (mockCtUpsert.mock.calls as [Array<{ boardId: string; snapshotType: string }>, string[]][])
       .flatMap(([rows]) => rows);
-    expect(ctRows.map((r) => r.snapshotType).sort()).toEqual([
-      'aggregate-30d',
-      'aggregate-7d',
-      'aggregate-90d',
-      'trend-30d',
-      'trend-7d',
-      'trend-90d',
-    ]);
+    const types = ctRows.map((r) => r.snapshotType);
+    for (const t of ['aggregate-7d', 'aggregate-30d', 'aggregate-90d', 'trend-7d', 'trend-30d', 'trend-90d']) {
+      expect(types).toContain(t);
+    }
+    // Quarter rows (proposal 0082): trend-quarters + exactly one current-quarter
+    // aggregate (no closed sprints in this mock → no historical quarters).
+    expect(types).toContain('trend-quarters');
+    expect(types.filter((t) => /^aggregate-\d{4}-Q[1-4]$/.test(t))).toHaveLength(1);
   });
 
   it('upserts the org-level quarter snapshot rows when orgSnapshot=true', async () => {
     await handler({ boardId: '__org__', orgSnapshot: true });
-    // First org DORA upsert holds the quarter aggregate + trend rows.
+    // First org DORA upsert holds the current-quarter aggregate + trend rows.
     const [rows] = mockUpsert.mock.calls[0] as [
       Array<{ boardId: string; snapshotType: string }>,
       string[],
@@ -269,31 +269,33 @@ describe('snapshot Lambda handler', () => {
     expect(types).toEqual(['aggregate', 'trend']);
   });
 
-  it('upserts org-level cycle-time time-period snapshots when orgSnapshot=true', async () => {
+  it('upserts org-level cycle-time snapshots when orgSnapshot=true (windows + current quarter + trend-quarters)', async () => {
     await handler({ boardId: '__org__', orgSnapshot: true });
     const ctRows = (mockCtUpsert.mock.calls as [Array<{ boardId: string; snapshotType: string }>, string[]][])
       .flatMap(([rows]) => rows);
-    expect(ctRows).toHaveLength(6);
+    // 6 window rows + 1 current-quarter aggregate + 1 trend-quarters = 8.
+    expect(ctRows).toHaveLength(8);
     expect(ctRows.every((r) => r.boardId === '__org__')).toBe(true);
   });
 
-  it('upserts per-board support summary time-period snapshots', async () => {
+  it('upserts per-board support summary snapshots (windows + current quarter)', async () => {
     await handler({ boardId: 'BPT' });
     const supRows = (mockSupUpsert.mock.calls as [Array<{ boardId: string; snapshotType: string }>, string[]][])
       .flatMap(([rows]) => rows);
-    expect(supRows.map((r) => r.snapshotType).sort()).toEqual([
-      'summary-30d',
-      'summary-7d',
-      'summary-90d',
-    ]);
+    const types = supRows.map((r) => r.snapshotType);
+    for (const t of ['summary-7d', 'summary-30d', 'summary-90d']) {
+      expect(types).toContain(t);
+    }
+    expect(types.filter((t) => /^summary-\d{4}-Q[1-4]$/.test(t))).toHaveLength(1);
     expect(supRows.every((r) => r.boardId === 'BPT')).toBe(true);
   });
 
-  it('upserts org-level support summary snapshots when orgSnapshot=true', async () => {
+  it('upserts org-level support summary snapshots when orgSnapshot=true (windows + current quarter)', async () => {
     await handler({ boardId: '__org__', orgSnapshot: true });
     const supRows = (mockSupUpsert.mock.calls as [Array<{ boardId: string; snapshotType: string }>, string[]][])
       .flatMap(([rows]) => rows);
-    expect(supRows).toHaveLength(3);
+    // 3 window rows + 1 current-quarter summary = 4.
+    expect(supRows).toHaveLength(4);
     expect(supRows.every((r) => r.boardId === '__org__')).toBe(true);
   });
 
@@ -396,7 +398,10 @@ describe('snapshot Lambda handler', () => {
               rawEntry('2025-Q2', '2025-04-01', '2025-06-30'),
             ],
           },
-        ]);
+        ])
+        // Any further find() calls (quarter enumeration from closed sprints,
+        // existing-snapshot-type lookups for skip-if-exists) default to empty.
+        .mockResolvedValue([]);
 
       mockGetRepository.mockReturnValue({
         upsert: mockUpsert,
