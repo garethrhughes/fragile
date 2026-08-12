@@ -11,8 +11,15 @@ interface QuarterSelectProps {
 export function QuarterSelect({ value, onChange }: QuarterSelectProps) {
   const [quarters, setQuarters] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  // Guard against SSR/client hydration mismatch: the server renders with no
+  // quarters loaded (disabled), but the effect below runs only on the client.
+  // Deriving `disabled` from client-only fetch state before mount produced a
+  // server(false)/client(true) `disabled` mismatch. Render a deterministic
+  // "not yet mounted" state first, then enable after mount.
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
     let cancelled = false;
     setLoading(true);
     getQuarters()
@@ -38,16 +45,20 @@ export function QuarterSelect({ value, onChange }: QuarterSelectProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Until mounted, match the server render deterministically: disabled, with the
+  // "Loading" placeholder. After mount, reflect real fetch state.
+  const isDisabled = !mounted || loading || quarters.length === 0;
+
   return (
     <div className="relative">
       <select
         value={value ?? ''}
         onChange={(e) => onChange(e.target.value || null)}
-        disabled={loading || quarters.length === 0}
+        disabled={isDisabled}
         className="w-full appearance-none rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground disabled:opacity-50"
       >
         <option value="">
-          {loading ? 'Loading quarters…' : 'Select quarter'}
+          {!mounted || loading ? 'Loading quarters…' : 'Select quarter'}
         </option>
         {quarters.map((q) => (
           <option key={q} value={q}>

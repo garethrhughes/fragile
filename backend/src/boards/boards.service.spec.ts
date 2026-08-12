@@ -23,6 +23,7 @@ function mockRepo(): jest.Mocked<Repository<BoardConfig>> {
 function mockLambdaInvoker(): jest.Mocked<LambdaInvokerService> {
   return {
     invokeSnapshotWorker: jest.fn().mockResolvedValue(undefined),
+    invokeOrgSnapshot: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<LambdaInvokerService>;
 }
 
@@ -118,9 +119,12 @@ describe('BoardsService', () => {
 
       await service.updateConfig('ACC', dto);
 
-      // Give the fire-and-forget promise a tick to execute
-      await Promise.resolve();
+      // Flush the fire-and-forget IIFE (awaits per-board then org sequentially).
+      await new Promise((resolve) => setImmediate(resolve));
       expect(lambdaInvoker.invokeSnapshotWorker).toHaveBeenCalledWith('ACC');
+      // Org snapshot must also refresh — a config change affects the org rollup
+      // that aggregates this board (proposal 0084).
+      expect(lambdaInvoker.invokeOrgSnapshot).toHaveBeenCalledTimes(1);
     });
   });
 

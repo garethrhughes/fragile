@@ -244,24 +244,44 @@ export class SyncService implements OnModuleInit {
         results.push(result);
       }
 
-      // Invoke per-board Lambda snapshots sequentially and await each one
-      // (RequestResponse). This guarantees that all per-board dora_snapshots rows
-      // are written to the DB before the org-level invocation reads them.
-      for (const boardId of boardIds) {
-        await this.lambdaInvoker.invokeSnapshotWorker(boardId).catch((err: unknown) =>
+      // Determine which boards actually changed and therefore need a snapshot
+      // recompute (proposal 0084). A full/daily sync marks every board dirty
+      // (deletion/backlog backstop, ADR 0078). An incremental sync marks a board
+      // dirty only if its watermarked fetch wrote something (issueCount > 0) and
+      // succeeded — so the hourly incremental no longer pays the full recompute.
+      const dirtyBoards =
+        mode === 'incremental'
+          ? results
+              .filter((r) => r.status === 'success' && r.issueCount > 0)
+              .map((r) => r.boardId)
+          : boardIds;
+
+      if (dirtyBoards.length === 0) {
+        this.logger.log('No boards changed this sync — skipping snapshot recompute.');
+      } else {
+        this.logger.log(
+          `Recomputing snapshots for ${dirtyBoards.length} board(s): ${dirtyBoards.join(', ')}`,
+        );
+
+        // Invoke per-board snapshots sequentially and await each one
+        // (RequestResponse). This guarantees per-board rows are written to the DB
+        // before the org-level invocation reads them.
+        for (const boardId of dirtyBoards) {
+          await this.lambdaInvoker.invokeSnapshotWorker(boardId).catch((err: unknown) =>
+            this.logger.warn(
+              `Snapshot invocation failed for ${boardId}: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+          );
+        }
+
+        // Invoke the org-level snapshot once — only when at least one board
+        // changed (org is a rollup of per-board data; unchanged boards → unchanged org).
+        await this.lambdaInvoker.invokeOrgSnapshot().catch((err: unknown) =>
           this.logger.warn(
-            `Snapshot invocation failed for ${boardId}: ${err instanceof Error ? err.message : String(err)}`,
+            `Org snapshot invocation failed: ${err instanceof Error ? err.message : String(err)}`,
           ),
         );
       }
-
-      // Invoke the org-level snapshot once all per-board rows are confirmed written.
-      // The org handler reads per-board trend rows and merges them — no raw DB load.
-      await this.lambdaInvoker.invokeOrgSnapshot().catch((err: unknown) =>
-        this.logger.warn(
-          `Org snapshot invocation failed: ${err instanceof Error ? err.message : String(err)}`,
-        ),
-      );
 
       try {
         await this.syncRoadmaps(fieldConfig);

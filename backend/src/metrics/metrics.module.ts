@@ -13,6 +13,7 @@ import { WorkingTimeService } from './working-time.service.js';
 import { DoraCacheService } from './dora-cache.service.js';
 import { TrendDataLoader } from './trend-data-loader.service.js';
 import { DoraSnapshotReadService } from './dora-snapshot-read.service.js';
+import { CycleTimeSnapshotReadService } from './cycle-time-snapshot-read.service.js';
 import {
   JiraIssue,
   JiraChangelog,
@@ -22,6 +23,7 @@ import {
   JiraIssueLink,
   WorkingTimeConfigEntity,
   DoraSnapshot,
+  CycleTimeSnapshot,
 } from '../database/entities/index.js';
 
 @Module({
@@ -36,6 +38,7 @@ import {
       JiraIssueLink,
       WorkingTimeConfigEntity,
       DoraSnapshot,
+      CycleTimeSnapshot,
     ]),
   ],
   controllers: [MetricsController, CycleTimeController],
@@ -50,6 +53,7 @@ import {
     DoraCacheService,
     TrendDataLoader,
     DoraSnapshotReadService,
+    CycleTimeSnapshotReadService,
   ],
   exports: [
     MetricsService,

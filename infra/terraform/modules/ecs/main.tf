@@ -45,14 +45,15 @@ resource "aws_cloudwatch_log_group" "frontend" {
 }
 
 # ── Backend task definition ───────────────────────────────────────────────────
-# NestJS API — 1024 CPU / 2048 MB, port 3001.
+# NestJS API — 1024 CPU / 4096 MB, port 3001.
+# Memory raised 2048→4096 after OOMKills (exit 137) during sync/snapshot compute.
 
 resource "aws_ecs_task_definition" "backend" {
   family                   = "fragile-backend"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = "1024"
-  memory                   = "2048"
+  memory                   = "4096"
   execution_role_arn       = var.ecs_execution_role_arn
   task_role_arn            = var.backend_task_role_arn
 
