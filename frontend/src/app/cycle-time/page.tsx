@@ -17,6 +17,7 @@ import { usePeriodFilter } from '@/hooks/use-period-filter'
 import { PeriodFilterBar } from '@/components/ui/period-filter-bar'
 import { EmptyState } from '@/components/ui/empty-state'
 import { NoBoardsConfigured } from '@/components/ui/no-boards-configured'
+import { SnapshotPending } from '@/components/ui/snapshot-pending'
 import { CycleTimePercentileCard } from '@/components/ui/cycle-time-percentile-card'
 import { ReopenBanner } from '@/components/ui/reopen-banner'
 import { CycleTimeTrendChart } from '@/components/ui/cycle-time-trend-chart'
@@ -200,7 +201,11 @@ function CycleTimePageInner() {
           }),
         ])
         if (!cancelled) {
-          setPageState({ status: 'ready', results, trend })
+          // Older quarter snapshots stored a bare CycleTimeResult object instead
+          // of CycleTimeResult[]. Normalise so results is always an array —
+          // guards against the pre-fix snapshot shape until the next recompute.
+          const normalisedResults = Array.isArray(results) ? results : [results]
+          setPageState({ status: 'ready', results: normalisedResults, trend })
         }
       } catch (err: unknown) {
         if (!cancelled) {
@@ -326,10 +331,7 @@ function CycleTimePageInner() {
 
       {/* Snapshot pending */}
       {pageState.status === 'pending' && (
-        <EmptyState
-          title="Snapshot not ready"
-          message="Time-period metrics are being computed. Trigger a sync or try again shortly."
-        />
+        <SnapshotPending label="cycle time metrics" onRetry={reload} />
       )}
 
       {/* Main content */}

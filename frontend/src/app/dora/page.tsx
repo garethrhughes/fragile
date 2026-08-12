@@ -1,7 +1,7 @@
 'use client'
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Loader2 } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
 import {
   ResponsiveContainer,
   LineChart,
@@ -29,6 +29,7 @@ import { BoardBreakdownTable } from '@/components/ui/board-breakdown-table'
 import { PeriodFilterBar } from '@/components/ui/period-filter-bar'
 import { EmptyState } from '@/components/ui/empty-state'
 import { NoBoardsConfigured } from '@/components/ui/no-boards-configured'
+import { SnapshotPending } from '@/components/ui/snapshot-pending'
 import { MetricHelp, type MetricDefinition } from '@/components/ui/metric-help'
 
 // ---------------------------------------------------------------------------
@@ -50,6 +51,13 @@ function abbreviateQuarter(label: string): string {
   // "2026-Q1" → "Q1 '26"
   const m = label.match(/^(\d{4})-Q([1-4])$/)
   if (m) return `Q${m[2]} '${m[1].slice(2)}`
+  // Time-period bucket "2026-05-13" → "May 13" (must precede the sprint-number
+  // fallback, whose \d+ would otherwise match the year and render "SP 2026").
+  const day = label.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (day) {
+    const d = new Date(Number(day[1]), Number(day[2]) - 1, Number(day[3]))
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  }
   // Sprint names — truncate
   const numMatch = label.match(/(\d+)/)
   if (numMatch) return `SP ${numMatch[1]}`
@@ -439,25 +447,7 @@ function DoraPageInner() {
 
       {/* Pending — snapshot not yet computed (first sync still running) */}
       {pageState.status === 'pending' && (
-        <div className="rounded-xl border border-blue-200 bg-blue-50 px-6 py-8 text-center">
-          <div className="flex justify-center">
-            <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-          </div>
-          <p className="mt-4 text-sm font-semibold text-blue-800">
-            Computing DORA metrics&hellip;
-          </p>
-          <p className="mt-1 text-sm text-blue-700">
-            DORA snapshots are being computed. This usually takes under a minute
-            after the first sync.
-          </p>
-          <button
-            type="button"
-            onClick={reload}
-            className="mt-4 rounded-lg border border-blue-300 bg-white px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
-          >
-            Check again
-          </button>
-        </div>
+        <SnapshotPending label="DORA metrics" onRetry={reload} />
       )}
 
       {/* Empty state */}

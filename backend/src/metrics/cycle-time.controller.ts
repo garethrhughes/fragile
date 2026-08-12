@@ -5,7 +5,8 @@ import { MetricsService } from './metrics.service.js';
 import { CycleTimeSnapshotReadService } from './cycle-time-snapshot-read.service.js';
 import { CycleTimeQueryDto } from './dto/cycle-time-query.dto.js';
 import { CycleTimeTrendQueryDto } from './dto/cycle-time-trend-query.dto.js';
-import { ORG_SNAPSHOT_KEY } from '../lambda/in-process-snapshot.service.js';
+import { ORG_SNAPSHOT_KEY } from '../snapshot/snapshot-compute.service.js';
+import type { CycleTimeSnapshotType } from '../database/entities/index.js';
 import type {
   CycleTimeResponse,
   CycleTimeTrendResponse,
@@ -40,13 +41,20 @@ export class CycleTimeController {
         snapshotKey,
         `trend-${query.window ?? 90}d`,
       );
-      if (!snapshot) {
-        res.status(202);
-        return { status: 'pending', message: 'Snapshot not yet computed. Trigger a sync.' };
-      }
-      if (snapshot.stale) res.setHeader('X-Snapshot-Stale', 'true');
-      res.setHeader('X-Snapshot-Age', String(snapshot.ageSeconds));
-      return snapshot.payload as CycleTimeTrendResponse;
+      return this.serveSnapshot(snapshot, res);
+    }
+    // Quarter trend is served from the pre-computed snapshot (proposal 0082).
+    // Sprint trend stays live.
+    if (query.mode !== 'sprints') {
+      const snapshotKey =
+        query.boardId && !query.boardId.includes(',')
+          ? query.boardId
+          : ORG_SNAPSHOT_KEY;
+      const snapshot = await this.cycleTimeSnapshotReadService.getSnapshot(
+        snapshotKey,
+        'trend-quarters',
+      );
+      return this.serveSnapshot(snapshot, res);
     }
     return this.metricsService.getCycleTimeTrend(query);
   }
@@ -61,21 +69,44 @@ export class CycleTimeController {
     @Query() query: CycleTimeQueryDto,
     @Res({ passthrough: true }) res: Response,
   ): Promise<CycleTimeResponse | { status: string; message: string }> {
+    const snapshotKey = boardId && !boardId.includes(',') ? boardId : ORG_SNAPSHOT_KEY;
+
     // Time-period mode is served from the pre-computed window snapshot.
     if (query.window) {
-      const snapshotKey = boardId && !boardId.includes(',') ? boardId : ORG_SNAPSHOT_KEY;
       const snapshot = await this.cycleTimeSnapshotReadService.getSnapshot(
         snapshotKey,
         `aggregate-${query.window}d`,
       );
-      if (!snapshot) {
-        res.status(202);
-        return { status: 'pending', message: 'Snapshot not yet computed. Trigger a sync.' };
-      }
-      if (snapshot.stale) res.setHeader('X-Snapshot-Stale', 'true');
-      res.setHeader('X-Snapshot-Age', String(snapshot.ageSeconds));
-      return snapshot.payload as CycleTimeResponse;
+      return this.serveSnapshot(snapshot, res);
+    }
+    // Quarter mode is served from the pre-computed quarter snapshot (proposal
+    // 0082). Sprint mode stays live.
+    if (query.quarter && !query.sprintId) {
+      const snapshot = await this.cycleTimeSnapshotReadService.getSnapshot(
+        snapshotKey,
+        `aggregate-${query.quarter}` as CycleTimeSnapshotType,
+      );
+      return this.serveSnapshot(snapshot, res);
     }
     return this.metricsService.getCycleTime({ ...query, boardId });
+  }
+
+  /**
+   * Shared snapshot response: 202 pending when absent, else payload with
+   * staleness/age headers.
+   */
+  private serveSnapshot<T>(
+    snapshot:
+      | { payload: object; stale: boolean; ageSeconds: number }
+      | null,
+    res: Response,
+  ): T | { status: string; message: string } {
+    if (!snapshot) {
+      res.status(202);
+      return { status: 'pending', message: 'Snapshot not yet computed. Trigger a sync.' };
+    }
+    if (snapshot.stale) res.setHeader('X-Snapshot-Stale', 'true');
+    res.setHeader('X-Snapshot-Age', String(snapshot.ageSeconds));
+    return snapshot.payload as T;
   }
 }

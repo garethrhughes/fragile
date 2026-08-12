@@ -16,7 +16,7 @@ export type PeriodMode = 'quarter' | 'sprint' | 'timeperiod'
 export const TIME_PERIOD_WINDOWS: readonly TimePeriodWindow[] = [7, 30, 90] as const
 
 /** Default state applied when no URL params are present. */
-const DEFAULT_MODE: PeriodMode = 'timeperiod'
+const DEFAULT_MODE: PeriodMode = 'quarter'
 const DEFAULT_WINDOW: TimePeriodWindow = 90
 
 export interface PeriodFilterState {

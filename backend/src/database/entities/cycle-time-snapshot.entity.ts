@@ -7,17 +7,21 @@ import {
 } from 'typeorm';
 
 /**
- * Cycle-time snapshot types. Only the rolling time-period windows are
- * snapshotted (proposal 0079); quarter and sprint cycle-time views remain
- * live-computed.
+ * Cycle-time snapshot types.
+ *   - Rolling time-period windows (proposal 0079): aggregate/trend-{7,30,90}d.
+ *   - Quarter views (proposal 0082): aggregate/trend-<YYYY-QN> for every quarter
+ *     the UI can request. Sprint views remain live-computed.
  */
+type QuarterLabel = `${number}-Q${1 | 2 | 3 | 4}`;
 export type CycleTimeSnapshotType =
   | 'aggregate-7d'
   | 'aggregate-30d'
   | 'aggregate-90d'
   | 'trend-7d'
   | 'trend-30d'
-  | 'trend-90d';
+  | 'trend-90d'
+  | `aggregate-${QuarterLabel}`
+  | 'trend-quarters';
 
 @Entity('cycle_time_snapshots')
 @Index(['boardId'])

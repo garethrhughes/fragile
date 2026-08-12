@@ -32,11 +32,18 @@ describe('Cycle-time tools', () => {
       expect(mockApiGet).toHaveBeenCalledWith('/api/cycle-time/ACC', { quarter: '2026-Q1' });
     });
 
-    it('includes issueType filter when provided', async () => {
+    it('passes the rolling time-period window', async () => {
       mockApiGet.mockResolvedValueOnce(mockSuccess({}));
       const server = makeServer();
-      await callTool(server, 'get_cycle_time', { boardId: 'BPT', issueType: 'Story' });
-      expect(mockApiGet).toHaveBeenCalledWith('/api/cycle-time/BPT', { issueType: 'Story' });
+      await callTool(server, 'get_cycle_time', { boardId: 'BPT', window: 7 });
+      expect(mockApiGet).toHaveBeenCalledWith('/api/cycle-time/BPT', { window: 7 });
+    });
+
+    it('passes sprintId when provided', async () => {
+      mockApiGet.mockResolvedValueOnce(mockSuccess({}));
+      const server = makeServer();
+      await callTool(server, 'get_cycle_time', { boardId: 'BPT', sprintId: '9' });
+      expect(mockApiGet).toHaveBeenCalledWith('/api/cycle-time/BPT', { sprintId: '9' });
     });
   });
 
@@ -53,6 +60,17 @@ describe('Cycle-time tools', () => {
         boardId: 'ACC',
         mode: 'quarters',
         limit: 4,
+      });
+    });
+
+    it('passes mode=timeperiod with a window', async () => {
+      mockApiGet.mockResolvedValueOnce(mockSuccess([]));
+      const server = makeServer();
+      await callTool(server, 'get_cycle_time_trend', { boardId: 'ACC', mode: 'timeperiod', window: 30 });
+      expect(mockApiGet).toHaveBeenCalledWith('/api/cycle-time/trend', {
+        boardId: 'ACC',
+        mode: 'timeperiod',
+        window: 30,
       });
     });
 

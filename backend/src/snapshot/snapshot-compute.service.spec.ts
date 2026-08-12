@@ -1,14 +1,21 @@
 /**
- * in-process-snapshot.service.spec.ts
+ * snapshot-compute.service.spec.ts
  *
- * Unit tests for InProcessSnapshotService.
+ * Unit tests for SnapshotComputeService.
  * MetricsService is mocked — the service now delegates to it entirely.
  */
 
 import { Repository } from 'typeorm';
-import { InProcessSnapshotService, ORG_SNAPSHOT_KEY } from './in-process-snapshot.service.js';
+import { SnapshotComputeService, ORG_SNAPSHOT_KEY } from './snapshot-compute.service.js';
 import { MetricsService } from '../metrics/metrics.service.js';
-import { BoardConfig, CycleTimeSnapshot, DoraSnapshot } from '../database/entities/index.js';
+import { SupportService } from '../support/support.service.js';
+import {
+  BoardConfig,
+  CycleTimeSnapshot,
+  DoraSnapshot,
+  JiraSprint,
+  SupportSnapshot,
+} from '../database/entities/index.js';
 import type { OrgDoraResult } from '../metrics/dto/org-dora-response.dto.js';
 
 // ---------------------------------------------------------------------------
@@ -18,13 +25,22 @@ import type { OrgDoraResult } from '../metrics/dto/org-dora-response.dto.js';
 function mockSnapshotRepo(): jest.Mocked<Repository<DoraSnapshot>> {
   return {
     upsert: jest.fn().mockResolvedValue(undefined),
+    find: jest.fn().mockResolvedValue([]),
   } as unknown as jest.Mocked<Repository<DoraSnapshot>>;
 }
 
 function mockCycleTimeSnapshotRepo(): jest.Mocked<Repository<CycleTimeSnapshot>> {
   return {
     upsert: jest.fn().mockResolvedValue(undefined),
+    find: jest.fn().mockResolvedValue([]),
   } as unknown as jest.Mocked<Repository<CycleTimeSnapshot>>;
+}
+
+function mockSupportSnapshotRepo(): jest.Mocked<Repository<SupportSnapshot>> {
+  return {
+    upsert: jest.fn().mockResolvedValue(undefined),
+    find: jest.fn().mockResolvedValue([]),
+  } as unknown as jest.Mocked<Repository<SupportSnapshot>>;
 }
 
 function mockBoardConfigRepo(boardIds = ['ACC']): jest.Mocked<Repository<BoardConfig>> {
@@ -32,6 +48,12 @@ function mockBoardConfigRepo(boardIds = ['ACC']): jest.Mocked<Repository<BoardCo
     find: jest.fn().mockResolvedValue(boardIds.map((boardId) => ({ boardId }))),
     findOne: jest.fn().mockResolvedValue({ boardType: 'scrum' }),
   } as unknown as jest.Mocked<Repository<BoardConfig>>;
+}
+
+function mockSprintRepo(): jest.Mocked<Repository<JiraSprint>> {
+  return {
+    find: jest.fn().mockResolvedValue([]),
+  } as unknown as jest.Mocked<Repository<JiraSprint>>;
 }
 
 function mockOrgDoraResult(): OrgDoraResult {
@@ -50,6 +72,7 @@ function mockOrgDoraResult(): OrgDoraResult {
 type MockedMetrics = jest.Mocked<
   Pick<MetricsService, 'getDoraAggregate' | 'getDoraTrend' | 'getCycleTime' | 'getCycleTimeTrend'>
 >;
+type MockedSupport = jest.Mocked<Pick<SupportService, 'getSupportSummary'>>;
 
 function makeMockMetricsService(): MockedMetrics {
   return {
@@ -60,28 +83,44 @@ function makeMockMetricsService(): MockedMetrics {
   };
 }
 
+function makeMockSupportService(): MockedSupport {
+  return {
+    getSupportSummary: jest.fn().mockResolvedValue({
+      totalIssues: 0, supportIssues: 0, supportPercentage: 0,
+      p50Days: 0, p95Days: 0, reopenedIssueCount: 0, byBoard: [],
+    }),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('InProcessSnapshotService', () => {
-  let service: InProcessSnapshotService;
+describe('SnapshotComputeService', () => {
+  let service: SnapshotComputeService;
   let snapshotRepo: jest.Mocked<Repository<DoraSnapshot>>;
   let cycleTimeSnapshotRepo: jest.Mocked<Repository<CycleTimeSnapshot>>;
+  let supportSnapshotRepo: jest.Mocked<Repository<SupportSnapshot>>;
   let boardConfigRepo: jest.Mocked<Repository<BoardConfig>>;
   let metricsService: MockedMetrics;
+  let supportService: MockedSupport;
 
   beforeEach(() => {
     snapshotRepo          = mockSnapshotRepo();
     cycleTimeSnapshotRepo = mockCycleTimeSnapshotRepo();
+    supportSnapshotRepo   = mockSupportSnapshotRepo();
     boardConfigRepo       = mockBoardConfigRepo(['ACC', 'BPT']);
     metricsService        = makeMockMetricsService();
+    supportService        = makeMockSupportService();
 
-    service = new InProcessSnapshotService(
+    service = new SnapshotComputeService(
       metricsService as unknown as MetricsService,
+      supportService as unknown as SupportService,
       snapshotRepo,
       cycleTimeSnapshotRepo,
+      supportSnapshotRepo,
       boardConfigRepo,
+      mockSprintRepo(),
     );
   });
 
@@ -118,26 +157,64 @@ describe('InProcessSnapshotService', () => {
     ]);
   });
 
-  it('writes cycle-time time-period snapshots per board (6 rows: 3 windows × aggregate+trend)', async () => {
+  it('writes cycle-time snapshots per board: 3 windows (aggregate+trend), current-quarter aggregate, and trend-quarters', async () => {
     await service.computeBoard('ACC');
     const ctRows = (cycleTimeSnapshotRepo.upsert.mock.calls as [Array<{ boardId: string; snapshotType: string }>, string[]][])
       .flatMap(([rows]) => rows);
-    expect(ctRows.map((r) => r.snapshotType).sort()).toEqual([
-      'aggregate-30d',
-      'aggregate-7d',
-      'aggregate-90d',
-      'trend-30d',
-      'trend-7d',
-      'trend-90d',
-    ]);
+    const types = ctRows.map((r) => r.snapshotType);
+    // Window rows (proposal 0079).
+    for (const t of ['aggregate-7d', 'aggregate-30d', 'aggregate-90d', 'trend-7d', 'trend-30d', 'trend-90d']) {
+      expect(types).toContain(t);
+    }
+    // Quarter rows (proposal 0082): the quarter-trend + exactly one current-quarter aggregate.
+    // No historical quarters here (sprint repo mock returns none).
+    expect(types).toContain('trend-quarters');
+    expect(types.filter((t) => /^aggregate-\d{4}-Q[1-4]$/.test(t))).toHaveLength(1);
+
+    // Regression: the quarter aggregate payload is a CycleTimeResult[] (array),
+    // matching the live endpoint and the window snapshots. The pre-0084 Lambda
+    // stored a bare object here, breaking the frontend's results.flatMap(...);
+    // there is now one code path (getCycleTime → array) so drift is impossible.
+    const quarterAgg = (
+      cycleTimeSnapshotRepo.upsert.mock.calls as [Array<{ snapshotType: string; payload: unknown }>, string[]][]
+    )
+      .flatMap(([rows]) => rows)
+      .find((r) => /^aggregate-\d{4}-Q[1-4]$/.test(r.snapshotType));
+    expect(Array.isArray(quarterAgg?.payload)).toBe(true);
   });
 
-  it('writes org-level cycle-time time-period snapshots under __org__', async () => {
+  it('writes org-level cycle-time snapshots under __org__ (windows + current quarter + trend-quarters)', async () => {
     await service.computeOrg();
     const ctRows = (cycleTimeSnapshotRepo.upsert.mock.calls as [Array<{ boardId: string; snapshotType: string }>, string[]][])
       .flatMap(([rows]) => rows);
     expect(ctRows.every((r) => r.boardId === ORG_SNAPSHOT_KEY)).toBe(true);
-    expect(ctRows).toHaveLength(6);
+    // 6 window rows + 1 current-quarter aggregate + 1 trend-quarters = 8.
+    expect(ctRows).toHaveLength(8);
+  });
+
+  it('writes support summary snapshots per board: 3 windows + current quarter', async () => {
+    await service.computeBoard('ACC');
+    const supRows = (supportSnapshotRepo.upsert.mock.calls as [Array<{ boardId: string; snapshotType: string }>, string[]][])
+      .flatMap(([rows]) => rows);
+    const types = supRows.map((r) => r.snapshotType);
+    for (const t of ['summary-7d', 'summary-30d', 'summary-90d']) {
+      expect(types).toContain(t);
+    }
+    // Exactly one current-quarter summary (no historical quarters in this mock).
+    expect(types.filter((t) => /^summary-\d{4}-Q[1-4]$/.test(t))).toHaveLength(1);
+    expect(supRows.every((r) => r.boardId === 'ACC')).toBe(true);
+    expect(supportService.getSupportSummary).toHaveBeenCalledWith(
+      expect.objectContaining({ boardId: 'ACC', window: 7 }),
+    );
+  });
+
+  it('writes org-level support summary snapshots under __org__ (windows + current quarter)', async () => {
+    await service.computeOrg();
+    const supRows = (supportSnapshotRepo.upsert.mock.calls as [Array<{ boardId: string; snapshotType: string }>, string[]][])
+      .flatMap(([rows]) => rows);
+    expect(supRows.every((r) => r.boardId === ORG_SNAPSHOT_KEY)).toBe(true);
+    // 3 window rows + 1 current-quarter summary = 4.
+    expect(supRows).toHaveLength(4);
   });
 
   it('omits trend-sprint snapshot for Kanban boards', async () => {

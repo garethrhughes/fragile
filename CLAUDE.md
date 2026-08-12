@@ -166,6 +166,30 @@ fragile/
 - Components: `ui/`, `layout/` subdirectories
 - No logic in page components — delegate to hooks/services
 
+### MCP Server (`apps/mcp/`)
+
+The MCP server is a **separate published package** (`@fragile.app/mcp`) whose tools call the
+backend HTTP API. It must be kept in lockstep with the API — treat it as a first-class API
+consumer, exactly like the frontend.
+
+- **Any change to a backend endpoint that an MCP tool calls must update the tool in the same
+  change.** This includes: adding/removing/renaming a query param or field, changing accepted
+  enum values, changing an endpoint path, or changing response shape the tool documents.
+  Cross-check every touched endpoint against `apps/mcp/src/tools/` before considering the
+  work complete.
+- Tools that call DORA, cycle-time, and support endpoints must expose the same period model
+  as the dashboard: `quarter`, `sprintId`, and the rolling `window` (7/30/90) / `timeperiod`
+  mode. Do not let the MCP tool surface drift from the endpoint DTOs.
+- Remove params from a tool's input schema when the backend DTO drops them — a param the
+  backend no longer accepts is dead/misleading, not harmless.
+- All backend calls go through the shared client `apps/mcp/src/client.ts` (`apiGet`); tools
+  never call `fetch` directly and never hardcode the base URL (it comes from `API_BASE_URL`).
+- Add/update a test under `apps/mcp/test/tools/` for every tool param change, including an
+  assertion that removed params are **not** forwarded to the backend.
+- **Bump `apps/mcp/package.json` `version`** on any MCP change — `publish-mcp.yml` only
+  publishes when the version is new; without a bump the change never ships.
+- Keep the tool table in `apps/mcp/README.md` in sync with tool capabilities.
+
 ### Infrastructure (IaC)
 
 - All infrastructure declared in `infra/terraform/`; no manual console changes
@@ -375,6 +399,12 @@ Write a proposal in `docs/proposals/NNNN-short-kebab-case-title.md` before imple
 
 When a proposal is accepted, create the corresponding ADR in `docs/decisions/NNNN-title.md`
 and update the proposal status to `Accepted`.
+
+**Before completing any change that touches a backend endpoint an MCP tool consumes** (DORA,
+cycle-time, support, planning, roadmap, boards, sprint, gaps, sync, healthcheck), update the
+matching tool in `apps/mcp/src/tools/`, add/adjust its test, and bump `apps/mcp/package.json`
+`version` — see the **MCP Server** rules under Architecture Rules. This is not optional and is
+not deferred to a follow-up.
 
 See the `architect` and `decision-log` skills for the exact proposal and ADR formats.
 

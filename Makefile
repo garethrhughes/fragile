@@ -41,12 +41,15 @@ lambda-build:
 	@echo "==> Lambda zip ready at backend/snapshot-worker.zip"
 	@echo "    Unzipped size: $$(unzip -l backend/snapshot-worker.zip | tail -1 | awk '{print $$1}') bytes"
 
-deploy: lambda-build tf-apply
+deploy: tf-apply
 
-tf-plan:
+tf-plan: lambda-build
 	./scripts/tf-apply.sh --plan-only
 
-tf-apply:
+# tf-apply always rebuilds the Lambda zip first so the deployed snapshot worker
+# can never lag the API image (the two are separate artifacts — see ADR 0040).
+# Stale Lambda vs current API caused DORA aggregate/detail DF divergence.
+tf-apply: lambda-build
 	./scripts/tf-apply.sh
 
 ecr-push:

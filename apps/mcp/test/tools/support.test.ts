@@ -45,6 +45,25 @@ describe('Support tools', () => {
       await callTool(server, 'get_support_tickets', {});
       expect(mockApiGet).toHaveBeenCalledWith('/api/support', {});
     });
+
+    it('passes the rolling time-period window', async () => {
+      mockApiGet.mockResolvedValueOnce(mockSuccess([]));
+      const server = makeServer();
+      await callTool(server, 'get_support_tickets', { boardId: 'ACC', window: 30 });
+      expect(mockApiGet).toHaveBeenCalledWith('/api/support', { boardId: 'ACC', window: 30 });
+    });
+
+    it('does not forward the removed matchReason param', async () => {
+      mockApiGet.mockResolvedValueOnce(mockSuccess([]));
+      const server = makeServer();
+      await callTool(server, 'get_support_tickets', {
+        boardId: 'ACC',
+        quarter: '2026-Q1',
+        matchReason: 'link',
+      });
+      // matchReason is no longer part of the schema — it must not reach the backend.
+      expect(mockApiGet).toHaveBeenCalledWith('/api/support', { boardId: 'ACC', quarter: '2026-Q1' });
+    });
   });
 
   describe('get_support_summary', () => {
@@ -74,6 +93,20 @@ describe('Support tools', () => {
         boardId: 'ACC',
         quarter: '2026-Q2',
       });
+    });
+
+    it('passes the rolling time-period window', async () => {
+      mockApiGet.mockResolvedValueOnce(mockSuccess({}));
+      const server = makeServer();
+      await callTool(server, 'get_support_summary', { boardId: 'ACC', window: 90 });
+      expect(mockApiGet).toHaveBeenCalledWith('/api/support/summary', { boardId: 'ACC', window: 90 });
+    });
+
+    it('does not forward the removed matchReason param', async () => {
+      mockApiGet.mockResolvedValueOnce(mockSuccess({}));
+      const server = makeServer();
+      await callTool(server, 'get_support_summary', { quarter: '2026-Q1', matchReason: 'link' });
+      expect(mockApiGet).toHaveBeenCalledWith('/api/support/summary', { quarter: '2026-Q1' });
     });
   });
 });

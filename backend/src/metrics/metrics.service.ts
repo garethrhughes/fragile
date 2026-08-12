@@ -263,21 +263,26 @@ export class MetricsService {
     }
 
     // ---------------------------------------------------------------------------
-    // Cache look-up — avoid re-running expensive multi-table DB queries on every
-    // HTTP request.  TTL is 60 s; this is fine because DORA metrics are computed
-    // from historical Jira data that only changes during a background sync.
+    // Resolve the period: rolling time-period window when `window` is given,
+    // otherwise the calendar quarter (current quarter when omitted).
+    //
+    // Cache look-up avoids re-running expensive multi-table DB queries on every
+    // HTTP request.  TTL is 60 s; DORA metrics only change during a sync.
     // ---------------------------------------------------------------------------
-    // Default to the current calendar quarter when no quarter is specified.
-    // This mirrors the behaviour of the Lambda snapshot handler and the trend
-    // endpoint, and ensures the aggregate period is always a named quarter
-    // rather than a sliding 90-day window.
     const effectiveQuarter =
       query.quarter ?? listRecentQuarters(1, this.timezone)[0].label;
+
+    // Window mode uses the rolling last-N-full-days range and a date label;
+    // quarter mode uses the named-quarter range and label.
+    const { startDate, endDate } = query.window
+      ? windowToDates(query.window, this.timezone)
+      : this.resolvePeriod({ quarter: effectiveQuarter });
+    const periodLabel = query.window ? `${query.window}d` : effectiveQuarter;
 
     const cacheKey = DoraCacheService.buildKey(
       {
         boardId: query.boardId,
-        quarter: effectiveQuarter,
+        quarter: periodLabel,
       },
       'aggregate',
     );
@@ -286,7 +291,6 @@ export class MetricsService {
       return cached;
     }
 
-    const { startDate, endDate } = this.resolvePeriod({ quarter: effectiveQuarter });
     const boardIds = await this.resolveBoardIds(query.boardId);
 
     // RC-6: parallelize all per-board calls using Promise.all over boardIds.
@@ -335,7 +339,7 @@ export class MetricsService {
       }),
     );
 
-    const result = this.buildOrgDoraResult(boardResults, startDate, endDate, effectiveQuarter);
+    const result = this.buildOrgDoraResult(boardResults, startDate, endDate, periodLabel);
 
     // Store in cache before returning
     this.doraCache.set(cacheKey, result);
