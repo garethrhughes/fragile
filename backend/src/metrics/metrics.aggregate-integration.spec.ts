@@ -63,9 +63,11 @@ const stubTrendLoader = {
   load: jest.fn().mockResolvedValue({ boardId: 'ACC', boardConfig: null, wtEntity: null, issues: [], changelogs: [], versions: [], issueLinks: [] }),
 };
 
-// Snapshot service — returns null so the controller responds 202/pending for
-// current-quarter requests (snapshot absent). Historical-quarter requests bypass
-// the snapshot path entirely and compute live via MetricsService.
+// Snapshot service — returns null so the controller responds 202/pending when a
+// snapshot is absent. Since proposal 0082, BOTH current and historical quarters
+// are snapshot-served by the controller; the correct period-metadata guarantee
+// for a historical quarter now lives in MetricsService.getDoraAggregate (the
+// method the snapshot writer calls), so these tests exercise it directly.
 const stubSnapshotSvc = {
   getSnapshot: jest.fn().mockResolvedValue(null),
   getSnapshotStatus: jest.fn().mockResolvedValue([]),
@@ -84,6 +86,7 @@ function mockRepo<T extends object>(): jest.Mocked<Repository<T>> {
 
 describe('MetricsController + MetricsService integration — quarter routing', () => {
   let controller: MetricsController;
+  let metricsService: MetricsService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -108,46 +111,31 @@ describe('MetricsController + MetricsService integration — quarter routing', (
     }).compile();
 
     controller = module.get(MetricsController);
+    metricsService = module.get(MetricsService);
   });
 
   afterEach(() => jest.clearAllMocks());
 
-  it('historical quarter returns period matching that quarter — not the current quarter', async () => {
-    const res = { status: jest.fn(), setHeader: jest.fn() } as unknown as import('express').Response;
+  it('historical quarter aggregate returns period matching that quarter — not the current quarter', async () => {
+    // Proposal 0082: the writer computes historical-quarter snapshots via
+    // MetricsService.getDoraAggregate({ quarter }); verify that produces the
+    // correct 2020-Q1 window (the guarantee the controller used to compute live).
+    const result = await metricsService.getDoraAggregate({ boardId: 'ACC', quarter: '2020-Q1' });
 
-    const result = await controller.getDoraAggregate(
-      { boardId: 'ACC', quarter: '2020-Q1' } as DoraAggregateQueryDto,
-      res,
-    ) as OrgDoraResult;
-
-    // Snapshot service must NOT have been called for a historical quarter.
-    expect(stubSnapshotSvc.getSnapshot).not.toHaveBeenCalled();
-
-    // The period must correspond exactly to 2020-Q1.
     expect(result.period.label).toBe('2020-Q1');
     expect(result.period.start).toBe('2020-01-01T00:00:00.000Z');
     expect(result.period.end).toBe('2020-03-31T23:59:59.999Z');
   });
 
-  it('historical quarter period.partial is false and elapsedDays equals totalDays', async () => {
-    const res = { status: jest.fn(), setHeader: jest.fn() } as unknown as import('express').Response;
-
-    const result = await controller.getDoraAggregate(
-      { boardId: 'ACC', quarter: '2020-Q1' } as DoraAggregateQueryDto,
-      res,
-    ) as OrgDoraResult;
+  it('historical quarter aggregate period.partial is false and elapsedDays equals totalDays', async () => {
+    const result = await metricsService.getDoraAggregate({ boardId: 'ACC', quarter: '2020-Q1' });
 
     expect(result.period.partial).toBe(false);
     expect(result.period.elapsedDays).toBe(result.period.totalDays);
   });
 
   it('board breakdowns contain matching period metadata for a historical quarter', async () => {
-    const res = { status: jest.fn(), setHeader: jest.fn() } as unknown as import('express').Response;
-
-    const result = await controller.getDoraAggregate(
-      { boardId: 'ACC', quarter: '2020-Q1' } as DoraAggregateQueryDto,
-      res,
-    ) as OrgDoraResult;
+    const result = await metricsService.getDoraAggregate({ boardId: 'ACC', quarter: '2020-Q1' });
 
     const bp = result.boardBreakdowns[0]?.period;
     expect(bp?.start).toBe('2020-01-01T00:00:00.000Z');

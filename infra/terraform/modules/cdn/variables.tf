@@ -24,6 +24,7 @@ variable "alb_arn" {
 }
 
 variable "web_acl_arn" {
-  description = "ARN of the CloudFront-scoped WAFv2 WebACL to attach to both distributions."
+  description = "ARN of the CloudFront-scoped WAFv2 WebACL to attach to both distributions. Null attaches no WebACL (SSO is the sole access control per ADR 0086)."
   type        = string
+  default     = null
 }

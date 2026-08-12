@@ -11,7 +11,7 @@ import {
   JiraIssueLink,
 } from '../database/entities/index.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
-import { quarterToDates } from '../metrics/period-utils.js';
+import { quarterToDates, windowToDates } from '../metrics/period-utils.js';
 import { percentile, round2 } from '../metrics/statistics.js';
 import { classifyCycleTime } from '../metrics/cycle-time-bands.js';
 import { WorkingTimeService } from '../metrics/working-time.service.js';
@@ -30,6 +30,7 @@ import type { SupportQueryDto } from './dto/support-query.dto.js';
 export class SupportService {
   private readonly logger = new Logger(SupportService.name);
   private readonly jiraBaseUrl: string;
+  private readonly timezone: string;
 
   constructor(
     @InjectRepository(JiraIssue)
@@ -55,6 +56,7 @@ export class SupportService {
       );
     }
     this.jiraBaseUrl = baseUrl;
+    this.timezone = this.configService.get<string>('TIMEZONE', 'UTC');
   }
 
   // ---------------------------------------------------------------------------
@@ -67,7 +69,7 @@ export class SupportService {
 
     return Promise.all(
       boardIds.map((boardId) =>
-        this.getSupportResultForBoard(boardId, startDate, endDate, isSprint, sprintName, isCurrentPeriod, query.matchReason),
+        this.getSupportResultForBoard(boardId, startDate, endDate, isSprint, sprintName, isCurrentPeriod),
       ),
     );
   }
@@ -112,7 +114,6 @@ export class SupportService {
     isSprint: boolean = false,
     sprintName?: string,
     isCurrentPeriod: boolean = false,
-    matchReasonFilter?: 'link' | 'label' | 'epic',
   ): Promise<SupportResult> {
     const config = await this.boardConfigRepo.findOne({ where: { boardId } });
     const supportLabels: string[] = config?.supportLabels ?? [];
@@ -491,27 +492,21 @@ export class SupportService {
       });
     }
 
-    // Step 7: Percentiles across support tickets with cycle time
-    // Apply matchReason filter if requested — totalIssues (denominator) is
-    // intentionally kept as the full period count regardless of the filter.
-    const filteredTickets = matchReasonFilter
-      ? tickets.filter((t) => t.matchReason.split('+').includes(matchReasonFilter))
-      : tickets;
-
-    const cycleTimes = filteredTickets
+    // Step 7: Percentiles across all classified support tickets with cycle time.
+    const cycleTimes = tickets
       .map((t) => t.cycleTimeDays)
       .filter((d): d is number => d !== null)
       .sort((a, b) => a - b);
 
-    const supportIssues = filteredTickets.length;
-    const reopenedIssueCount = filteredTickets.filter((t) => t.isReopen).length;
+    const supportIssues = tickets.length;
+    const reopenedIssueCount = tickets.filter((t) => t.isReopen).length;
     const supportPercentage =
       totalIssues > 0 ? round2((supportIssues / totalIssues) * 100) : 0;
     const p50Days = round2(percentile(cycleTimes, 50));
     const p95Days = round2(percentile(cycleTimes, 95));
 
     // Sort tickets: completed first (most recent first), then unresolved
-    filteredTickets.sort((a, b) => {
+    tickets.sort((a, b) => {
       if (a.completedAt && b.completedAt) {
         return new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime();
       }
@@ -520,7 +515,7 @@ export class SupportService {
       return a.issueKey.localeCompare(b.issueKey);
     });
 
-    return { boardId, totalIssues, supportIssues, supportPercentage, p50Days, p95Days, reopenedIssueCount, tickets: filteredTickets };
+    return { boardId, totalIssues, supportIssues, supportPercentage, p50Days, p95Days, reopenedIssueCount, tickets };
   }
 
   // ---------------------------------------------------------------------------
@@ -539,7 +534,7 @@ export class SupportService {
     query: SupportQueryDto,
   ): Promise<{ startDate: Date; endDate: Date; isSprint: boolean; sprintName?: string; isCurrentPeriod: boolean }> {
     if (query.quarter) {
-      const { startDate, endDate } = quarterToDates(query.quarter);
+      const { startDate, endDate } = quarterToDates(query.quarter, this.timezone);
       const isCurrentPeriod = endDate > new Date();
       return { startDate, endDate, isSprint: false, isCurrentPeriod };
     }
@@ -557,6 +552,13 @@ export class SupportService {
       }
     }
 
+    // Rolling time-period window: last N full days ending 23:59:59 yesterday (tz-correct).
+    // Treated as a current period (it ends at "now" for board-entry / active-sprint purposes).
+    if (query.window) {
+      const { startDate, endDate } = windowToDates(query.window, this.timezone);
+      return { startDate, endDate, isSprint: false, isCurrentPeriod: true };
+    }
+
     if (query.period && query.period.includes(':')) {
       const [start, end] = query.period.split(':');
       const startDate = new Date(start);
@@ -566,10 +568,9 @@ export class SupportService {
       }
     }
 
-    // Default: last 90 days — treat as current period since it ends now
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 90);
+    // Default: last 90 full days (ending yesterday, tz-correct). Treated as a
+    // current period since it ends at "now".
+    const { startDate, endDate } = windowToDates(90, this.timezone);
     return { startDate, endDate, isSprint: false, isCurrentPeriod: true };
   }
 }

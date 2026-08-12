@@ -1,10 +1,7 @@
 'use client'
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
-import { AlertTriangle, Loader2 } from 'lucide-react'
-import { useReplaceParams } from '@/hooks/use-page-params'
-import { useDebounce } from '@/hooks/use-debounce'
+import { AlertTriangle } from 'lucide-react'
 import {
   ResponsiveContainer,
   LineChart,
@@ -26,11 +23,13 @@ import {
   type TrendPoint,
 } from '@/lib/api'
 import { useBoardsStore } from '@/store/boards-store'
+import { usePeriodFilter } from '@/hooks/use-period-filter'
 import { OrgMetricCard } from '@/components/ui/org-metric-card'
 import { BoardBreakdownTable } from '@/components/ui/board-breakdown-table'
-import { BoardChip } from '@/components/ui/board-chip'
+import { PeriodFilterBar } from '@/components/ui/period-filter-bar'
 import { EmptyState } from '@/components/ui/empty-state'
 import { NoBoardsConfigured } from '@/components/ui/no-boards-configured'
+import { SnapshotPending } from '@/components/ui/snapshot-pending'
 import { MetricHelp, type MetricDefinition } from '@/components/ui/metric-help'
 
 // ---------------------------------------------------------------------------
@@ -52,6 +51,13 @@ function abbreviateQuarter(label: string): string {
   // "2026-Q1" → "Q1 '26"
   const m = label.match(/^(\d{4})-Q([1-4])$/)
   if (m) return `Q${m[2]} '${m[1].slice(2)}`
+  // Time-period bucket "2026-05-13" → "May 13" (must precede the sprint-number
+  // fallback, whose \d+ would otherwise match the year and render "SP 2026").
+  const day = label.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (day) {
+    const d = new Date(Number(day[1]), Number(day[2]) - 1, Number(day[3]))
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  }
   // Sprint names — truncate
   const numMatch = label.match(/(\d+)/)
   if (numMatch) return `SP ${numMatch[1]}`
@@ -202,94 +208,86 @@ export default function DoraPage() {
 }
 
 function DoraPageInner() {
-  const searchParams = useSearchParams()
-  const replaceParams = useReplaceParams()
-
   // Board catalogue from store (fetched once by AppInitialiser)
   const allBoards = useBoardsStore((s) => s.allBoards)
   const kanbanBoardIds = useBoardsStore((s) => s.kanbanBoardIds)
   const boardsStatus = useBoardsStore((s) => s.status)
 
-  // Filter state lives in the URL — defaults applied when params are absent.
-  // useMemo stabilises the array reference so it doesn't change on every render
-  // and trigger the data-fetch useEffect in an infinite loop.
-  const boardsParam = searchParams.get('boards')
-  const selectedBoards = useMemo<string[]>(
-    () => (boardsParam ? boardsParam.split(',').filter(Boolean) : allBoards),
-    [boardsParam, allBoards],
-  )
-  const periodType = (searchParams.get('mode') ?? 'quarter') as 'sprint' | 'quarter'
+  // Unified reporting-period filter (shared with Cycle Time) — URL-backed.
+  const filter = usePeriodFilter()
+  const {
+    board,
+    isAllBoards,
+    boardIdForApi,
+    mode,
+    quarter,
+    sprintId,
+    window: periodWindow,
+    sprintAvailable,
+  } = filter
 
   const [pageState, setPageState] = useState<PageState>({ status: 'idle' })
   const [retryKey, setRetryKey] = useState(0)
-
-  // Debounce board selection so rapid multi-board toggles don't fire a fetch
-  // for every intermediate state. Chips update immediately; fetch waits 400 ms.
-  const debouncedBoards = useDebounce(selectedBoards, 400)
-
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => { setMounted(true) }, [])
 
   const reload = useCallback(() => {
     setRetryKey((k) => k + 1)
   }, [])
 
-  // Sprint mode is only valid when exactly 1 non-Kanban board is selected.
-  // Depends on boardsStatus so it re-evaluates once the store is ready.
-  const sprintModeAvailable = useMemo(
-    () =>
-      boardsStatus === 'ready' &&
-      selectedBoards.length === 1 &&
-      !kanbanBoardIds.has(selectedBoards[0] ?? ''),
-    [selectedBoards, kanbanBoardIds, boardsStatus],
-  )
+  // Number of boards in scope — used to derive "no data" board counts on cards.
+  const selectedBoardCount = isAllBoards ? allBoards.length : 1
 
-  // Auto-reset to quarter when sprint mode becomes unavailable.
-  // Only fires once the boards store is ready — avoids resetting on first render
-  // before the store has hydrated, which would cause a hydration mismatch and
-  // clear a valid ?mode=sprint param before the fetch runs.
+  // Auto-reset to Time period when sprint mode becomes unavailable (e.g. the
+  // user switched to All boards or a Kanban board while in sprint mode).
   useEffect(() => {
     if (boardsStatus !== 'ready') return
-    if (!sprintModeAvailable && periodType === 'sprint') {
-      replaceParams({ mode: 'quarter' })
+    if (mode === 'sprint' && !sprintAvailable) {
+      filter.setMode('timeperiod')
     }
-  }, [boardsStatus, sprintModeAvailable, periodType, replaceParams])
+  }, [boardsStatus, sprintAvailable, mode, filter])
 
   // Main data fetch — fires on filter change or retry
   useEffect(() => {
     let cancelled = false
     const run = async (): Promise<void> => {
-      if (debouncedBoards.length === 0) {
+      // Wait for the boards store so boardIdForApi/gating is settled.
+      if (boardsStatus !== 'ready') return
+      // Sprint mode needs a resolved sprint; skip until one is selected.
+      if (mode === 'sprint' && !sprintId) {
+        setPageState({ status: 'idle' })
+        return
+      }
+      // Quarter mode needs a resolved quarter.
+      if (mode === 'quarter' && !quarter) {
         setPageState({ status: 'idle' })
         return
       }
       setPageState({ status: 'loading' })
-      const boardId = debouncedBoards.join(',')
-      const isSprintMode = periodType === 'sprint'
       try {
         const trend = await getDoraTrend({
-          boardId,
-          limit: 8,
-          ...(isSprintMode ? { mode: 'sprint' as const } : {}),
+          boardId: boardIdForApi,
+          ...(mode === 'sprint'
+            ? { mode: 'sprint' as const, limit: 8 }
+            : mode === 'timeperiod'
+              ? { mode: 'timeperiod' as const, window: periodWindow }
+              : { mode: 'quarter' as const, limit: 8 }),
         })
         if (cancelled) return
 
-        // In sprint mode the aggregate cards reflect the most recent sprint.
-        // TrendPoint is the same shape as OrgDoraResult so we reuse the last
-        // trend point directly — avoids a second call that would return quarter data.
+        // In sprint mode the aggregate cards reflect the most recent sprint;
+        // reuse the last trend point (same shape as OrgDoraResult).
         let aggregate: OrgDoraResult
-        if (isSprintMode && trend.length > 0) {
-          aggregate = trend[trend.length - 1]!
+        if (mode === 'sprint') {
+          aggregate = sprintId
+            ? await getDoraAggregate({ boardId: boardIdForApi, sprintId })
+            : trend[trend.length - 1]!
+        } else if (mode === 'timeperiod') {
+          aggregate = await getDoraAggregate({ boardId: boardIdForApi, window: periodWindow })
         } else {
-          aggregate = await getDoraAggregate({ boardId })
-          if (cancelled) return
+          aggregate = await getDoraAggregate({ boardId: boardIdForApi, ...(quarter ? { quarter } : {}) })
         }
-        if (!cancelled) {
-          // Backend guarantees oldest→newest order (ADR-0042 §5).
-          // Do not reverse here — the array is already in the correct
-          // chronological direction for left-to-right chart rendering.
-          setPageState({ status: 'ready', aggregate, trend })
-        }
+        if (cancelled) return
+        // Backend guarantees oldest→newest order (ADR-0042 §5).
+        setPageState({ status: 'ready', aggregate, trend })
       } catch (err: unknown) {
         if (!cancelled) {
           if (err instanceof SnapshotPendingError) {
@@ -307,7 +305,7 @@ function DoraPageInner() {
     return () => {
       cancelled = true
     }
-  }, [debouncedBoards, retryKey, periodType])
+  }, [boardIdForApi, mode, quarter, sprintId, periodWindow, boardsStatus, retryKey])
 
   // RC-5: extract sparklines from TrendPoint[] per metric
   const dfSparkline = useMemo(
@@ -358,84 +356,22 @@ function DoraPageInner() {
       )}
 
       {/* Filters */}
-      <div className="space-y-4 rounded-xl border border-border bg-card p-4">
-        {/* Board selector — single select with All option */}
-        <div>
-          <label className="mb-2 block text-sm font-medium text-muted">Board</label>
-          <div className="flex flex-wrap gap-2">
-            {/* All option */}
-            <BoardChip
-              boardId="All"
-              selected={selectedBoards.length === allBoards.length || selectedBoards.length === 0}
-              onClick={() => replaceParams({ boards: '' })}
-            />
-            {/* Individual boards */}
-            {allBoards.map((boardId) => {
-              const isKanban = kanbanBoardIds.has(boardId)
-              const disabledForSprint = periodType === 'sprint' && isKanban
-              return (
-                <BoardChip
-                  key={boardId}
-                  boardId={boardId}
-                  selected={selectedBoards.length < allBoards.length && selectedBoards.includes(boardId)}
-                  disabled={disabledForSprint}
-                  onClick={() => {
-                    if (!disabledForSprint) {
-                      // Single select: clicking a board selects only that board
-                      replaceParams({ boards: boardId })
-                    }
-                  }}
-                />
-              )
-            })}
-          </div>
-        </div>
-
-        {/* Period type toggle */}
-        <div>
-          <label className="mb-2 block text-sm font-medium text-muted">
-            Period
-          </label>
-          <div className="inline-flex rounded-lg border border-border">
-            <button
-              type="button"
-              onClick={() => replaceParams({ mode: 'quarter' })}
-              className={`rounded-l-lg px-4 py-2 text-sm font-medium transition-colors ${
-                periodType === 'quarter'
-                  ? 'bg-interactive-selected-bg text-interactive-selected-fg'
-                  : 'text-muted hover:bg-interactive-hover-bg'
-              }`}
-            >
-              Quarter
-            </button>
-            <button
-              type="button"
-              disabled={mounted && !sprintModeAvailable}
-              onClick={() => {
-                if (sprintModeAvailable) replaceParams({ mode: 'sprint' })
-              }}
-              className={`rounded-r-lg px-4 py-2 text-sm font-medium transition-colors ${
-                periodType === 'sprint'
-                  ? 'bg-interactive-selected-bg text-interactive-selected-fg'
-                  : mounted && !sprintModeAvailable
-                    ? 'cursor-not-allowed text-muted opacity-40'
-                    : 'text-muted hover:bg-interactive-hover-bg'
-              }`}
-            >
-              Sprint
-            </button>
-          </div>
-          {mounted && !sprintModeAvailable && (
-            <p className="mt-2 text-xs text-muted">Sprint mode requires a single Scrum board</p>
-          )}
-          {periodType === 'sprint' && selectedBoards.length === 1 && (
-            <p className="mt-1 text-xs text-muted">
-              Showing last 8 sprints for {selectedBoards[0]}
-            </p>
-          )}
-        </div>
-
-      </div>
+      <PeriodFilterBar
+        allBoards={allBoards}
+        kanbanBoardIds={kanbanBoardIds}
+        board={board}
+        isAllBoards={isAllBoards}
+        mode={mode}
+        quarter={quarter}
+        sprintId={sprintId}
+        window={periodWindow}
+        sprintAvailable={sprintAvailable}
+        onBoardChange={filter.setBoard}
+        onModeChange={filter.setMode}
+        onQuarterChange={filter.setQuarter}
+        onSprintChange={filter.setSprintId}
+        onWindowChange={filter.setWindow}
+      />
 
       {/* Amber banner for default CFR config */}
       {pageState.status === 'ready' &&
@@ -511,25 +447,7 @@ function DoraPageInner() {
 
       {/* Pending — snapshot not yet computed (first sync still running) */}
       {pageState.status === 'pending' && (
-        <div className="rounded-xl border border-blue-200 bg-blue-50 px-6 py-8 text-center">
-          <div className="flex justify-center">
-            <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-          </div>
-          <p className="mt-4 text-sm font-semibold text-blue-800">
-            Computing DORA metrics&hellip;
-          </p>
-          <p className="mt-1 text-sm text-blue-700">
-            DORA snapshots are being computed. This usually takes under a minute
-            after the first sync.
-          </p>
-          <button
-            type="button"
-            onClick={reload}
-            className="mt-4 rounded-lg border border-blue-300 bg-white px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
-          >
-            Check again
-          </button>
-        </div>
+        <SnapshotPending label="DORA metrics" onRetry={reload} />
       )}
 
       {/* Empty state */}
@@ -555,7 +473,7 @@ function DoraPageInner() {
                 pageState.aggregate.orgDeploymentFrequency.contributingBoards
               }
               noDataBoards={
-                selectedBoards.length -
+                selectedBoardCount -
                 pageState.aggregate.orgDeploymentFrequency.contributingBoards
               }
             />
@@ -569,7 +487,7 @@ function DoraPageInner() {
                 pageState.aggregate.orgLeadTime?.contributingBoards ?? 0
               }
               noDataBoards={
-                selectedBoards.length -
+                selectedBoardCount -
                 (pageState.aggregate.orgLeadTime?.contributingBoards ?? 0)
               }
               footnote="Measures cycle time (first active-work status → done), not the DORA definition of lead time (commit → deploy). A proxy metric for teams without commit-level Jira integration."
@@ -584,7 +502,7 @@ function DoraPageInner() {
                 pageState.aggregate.orgChangeFailureRate.contributingBoards
               }
               noDataBoards={
-                selectedBoards.length -
+                selectedBoardCount -
                 pageState.aggregate.orgChangeFailureRate.contributingBoards
               }
             />
@@ -598,7 +516,7 @@ function DoraPageInner() {
                 pageState.aggregate.orgMttr.contributingBoards
               }
               noDataBoards={
-                selectedBoards.length -
+                selectedBoardCount -
                 pageState.aggregate.orgMttr.contributingBoards
               }
             />

@@ -33,7 +33,7 @@ import {
   classifyMTTR,
 } from './dora-bands.js';
 import { percentile, round2 } from './statistics.js';
-import { listRecentQuarters, quarterToDates } from './period-utils.js';
+import { listRecentQuarters, quarterToDates, windowToDates, listRollingBuckets } from './period-utils.js';
 import { DoraCacheService } from './dora-cache.service.js';
 import { TrendDataLoader, type TrendDataSlice } from './trend-data-loader.service.js';
 import { effectiveSprintEnd } from '../lib/sprint-window.js';
@@ -263,21 +263,26 @@ export class MetricsService {
     }
 
     // ---------------------------------------------------------------------------
-    // Cache look-up — avoid re-running expensive multi-table DB queries on every
-    // HTTP request.  TTL is 60 s; this is fine because DORA metrics are computed
-    // from historical Jira data that only changes during a background sync.
+    // Resolve the period: rolling time-period window when `window` is given,
+    // otherwise the calendar quarter (current quarter when omitted).
+    //
+    // Cache look-up avoids re-running expensive multi-table DB queries on every
+    // HTTP request.  TTL is 60 s; DORA metrics only change during a sync.
     // ---------------------------------------------------------------------------
-    // Default to the current calendar quarter when no quarter is specified.
-    // This mirrors the behaviour of the Lambda snapshot handler and the trend
-    // endpoint, and ensures the aggregate period is always a named quarter
-    // rather than a sliding 90-day window.
     const effectiveQuarter =
       query.quarter ?? listRecentQuarters(1, this.timezone)[0].label;
+
+    // Window mode uses the rolling last-N-full-days range and a date label;
+    // quarter mode uses the named-quarter range and label.
+    const { startDate, endDate } = query.window
+      ? windowToDates(query.window, this.timezone)
+      : this.resolvePeriod({ quarter: effectiveQuarter });
+    const periodLabel = query.window ? `${query.window}d` : effectiveQuarter;
 
     const cacheKey = DoraCacheService.buildKey(
       {
         boardId: query.boardId,
-        quarter: effectiveQuarter,
+        quarter: periodLabel,
       },
       'aggregate',
     );
@@ -286,7 +291,6 @@ export class MetricsService {
       return cached;
     }
 
-    const { startDate, endDate } = this.resolvePeriod({ quarter: effectiveQuarter });
     const boardIds = await this.resolveBoardIds(query.boardId);
 
     // RC-6: parallelize all per-board calls using Promise.all over boardIds.
@@ -335,7 +339,7 @@ export class MetricsService {
       }),
     );
 
-    const result = this.buildOrgDoraResult(boardResults, startDate, endDate, effectiveQuarter);
+    const result = this.buildOrgDoraResult(boardResults, startDate, endDate, periodLabel);
 
     // Store in cache before returning
     this.doraCache.set(cacheKey, result);
@@ -403,6 +407,29 @@ export class MetricsService {
 
       // Return oldest → newest (sprints were fetched newest-first)
       return points.reverse();
+    }
+
+    // -----------------------------------------------------------------------
+    // Time-period mode — rolling daily/weekly buckets over the last N full days.
+    // Loads all board data once for the full window, then fans out per bucket.
+    // -----------------------------------------------------------------------
+    if (query.mode === 'timeperiod') {
+      const window = query.window ?? 90;
+      const buckets = listRollingBuckets(window, this.timezone); // oldest → newest
+      if (buckets.length === 0) return [];
+
+      const boardIdList = await this.resolveBoardIds(query.boardId);
+      const rangeStart = buckets[0].startDate;
+      const rangeEnd = buckets[buckets.length - 1].endDate;
+
+      const slices = await Promise.all(
+        boardIdList.map((bid) => this.trendDataLoader.load(bid, rangeStart, rangeEnd)),
+      );
+
+      // Already oldest → newest.
+      return buckets.map((b): OrgDoraResult =>
+        this.buildOrgDoraResultFromData(slices, b.startDate, b.endDate, b.label),
+      );
     }
 
     // Cache look-up — serve repeated page loads instantly (quarter mode only)
@@ -477,7 +504,6 @@ export class MetricsService {
           startDate,
           endDate,
           periodKey,
-          query.issueType,
         ),
       ),
     );
@@ -528,7 +554,6 @@ export class MetricsService {
             start,
             end,
             sprint.name,
-            query.issueType,
           );
           return {
             label: sprint.name,
@@ -545,51 +570,77 @@ export class MetricsService {
       return points.reverse(); // oldest → newest
     }
 
+    // Time-period mode: rolling daily/weekly buckets over the last N full days.
+    if (mode === 'timeperiod') {
+      const window = query.window ?? 90;
+      const buckets = listRollingBuckets(window, this.timezone); // oldest → newest
+      return Promise.all(
+        buckets.map((b) =>
+          this.computeCycleTimeBucket(
+            boardIds,
+            b.startDate,
+            b.endDate,
+            b.label,
+          ),
+        ),
+      );
+    }
+
     // Quarter mode (default)
     const quarters = listRecentQuarters(limit, this.timezone); // newest first
     const points = await Promise.all(
-      quarters.map(async (q): Promise<CycleTimeTrendPoint> => {
-        // Pool observations across all selected boards for a true cross-board median
-        const results = await Promise.all(
-          boardIds.map((boardId) =>
-            this.cycleTimeService.getCycleTimeObservations(
-              boardId,
-              q.startDate,
-              q.endDate,
-              q.label,
-              query.issueType,
-            ),
-          ),
-        );
-        const allObs = results.flatMap((r) => r.observations);
-        const sorted = allObs.map((o) => o.cycleTimeDays).sort((a, b) => a - b);
-        // Empty period → null percentiles + null band (proposal 0054 AC5).
-        // Avoid classifyCycleTime(0) which would mis-band as 'excellent'.
-        if (sorted.length === 0) {
-          return {
-            label: q.label,
-            start: q.startDate.toISOString(),
-            end: q.endDate.toISOString(),
-            medianCycleTimeDays: null,
-            p85CycleTimeDays: null,
-            sampleSize: 0,
-            band: null,
-          };
-        }
-        const p50 = percentile(sorted, 50);
-        return {
-          label: q.label,
-          start: q.startDate.toISOString(),
-          end: q.endDate.toISOString(),
-          medianCycleTimeDays: round2(p50),
-          p85CycleTimeDays: round2(percentile(sorted, 85)),
-          sampleSize: sorted.length,
-          band: classifyCycleTime(p50),
-        };
-      }),
+      quarters.map((q): Promise<CycleTimeTrendPoint> =>
+        this.computeCycleTimeBucket(boardIds, q.startDate, q.endDate, q.label),
+      ),
     );
 
     return points.reverse(); // oldest → newest
+  }
+
+  /**
+   * Computes a single cycle-time trend point by pooling observations across all
+   * given boards for [start, end] and taking cross-board percentiles.
+   * Empty periods yield null percentiles + null band (proposal 0054 AC5).
+   */
+  private async computeCycleTimeBucket(
+    boardIds: string[],
+    start: Date,
+    end: Date,
+    label: string,
+  ): Promise<CycleTimeTrendPoint> {
+    const results = await Promise.all(
+      boardIds.map((boardId) =>
+        this.cycleTimeService.getCycleTimeObservations(
+          boardId,
+          start,
+          end,
+          label,
+        ),
+      ),
+    );
+    const allObs = results.flatMap((r) => r.observations);
+    const sorted = allObs.map((o) => o.cycleTimeDays).sort((a, b) => a - b);
+    if (sorted.length === 0) {
+      return {
+        label,
+        start: start.toISOString(),
+        end: end.toISOString(),
+        medianCycleTimeDays: null,
+        p85CycleTimeDays: null,
+        sampleSize: 0,
+        band: null,
+      };
+    }
+    const p50 = percentile(sorted, 50);
+    return {
+      label,
+      start: start.toISOString(),
+      end: end.toISOString(),
+      medianCycleTimeDays: round2(p50),
+      p85CycleTimeDays: round2(percentile(sorted, 85)),
+      sampleSize: sorted.length,
+      band: classifyCycleTime(p50),
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -624,6 +675,7 @@ export class MetricsService {
     quarter?: string;
     sprintId?: string;
     period?: string;
+    window?: number;
   }): {
     startDate: Date;
     endDate: Date;
@@ -632,6 +684,11 @@ export class MetricsService {
     if (query.quarter) {
       const { startDate, endDate } = quarterToDates(query.quarter, this.timezone);
       return { startDate, endDate };
+    }
+
+    // Rolling time-period window: last N full days ending 23:59:59 yesterday (tz-correct)
+    if (query.window) {
+      return windowToDates(query.window, this.timezone);
     }
 
     // Explicit date range: YYYY-MM-DD:YYYY-MM-DD
@@ -644,11 +701,8 @@ export class MetricsService {
       }
     }
 
-    // Default: last 90 days
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 90);
-    return { startDate, endDate };
+    // Default: last 90 full days (ending yesterday, tz-correct)
+    return windowToDates(90, this.timezone);
   }
 
   /**

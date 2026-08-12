@@ -299,6 +299,76 @@ describe('SyncService', () => {
       expect(lambdaInvoker.invokeOrgSnapshot).toHaveBeenCalledTimes(1);
     });
 
+    it('full sync marks every board dirty and recomputes all boards + org', async () => {
+      boardConfigRepo.find.mockResolvedValue([
+        { boardId: 'ACC' } as BoardConfig,
+        { boardId: 'BPT' } as BoardConfig,
+      ]);
+      boardConfigRepo.findOne.mockResolvedValue({ boardId: 'ACC', boardType: 'scrum' } as BoardConfig);
+      jiraClient.getSprints.mockResolvedValue({ values: [] } as never);
+      jiraClient.getProjectVersions.mockResolvedValue([]);
+      jiraClient.getBoardsForProject.mockResolvedValue({ values: [{ id: 1, name: 'b', type: 'scrum' }] } as never);
+      roadmapConfigRepo.find.mockResolvedValue([]);
+      // Full sync: issueCount is irrelevant to dirtiness. Simulate zero issues.
+      syncLogRepo.save.mockImplementation((log) => Promise.resolve(log as SyncLog));
+
+      await service.syncAll('full');
+
+      expect(lambdaInvoker.invokeSnapshotWorker).toHaveBeenCalledWith('ACC');
+      expect(lambdaInvoker.invokeSnapshotWorker).toHaveBeenCalledWith('BPT');
+      expect(lambdaInvoker.invokeOrgSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it('incremental sync recomputes only boards that changed, plus org once', async () => {
+      boardConfigRepo.find.mockResolvedValue([
+        { boardId: 'ACC' } as BoardConfig,
+        { boardId: 'BPT' } as BoardConfig,
+      ]);
+      boardConfigRepo.findOne.mockResolvedValue({ boardId: 'ACC', boardType: 'scrum' } as BoardConfig);
+      jiraClient.getSprints.mockResolvedValue({ values: [] } as never);
+      jiraClient.getProjectVersions.mockResolvedValue([]);
+      jiraClient.getBoardsForProject.mockResolvedValue({ values: [{ id: 1, name: 'b', type: 'scrum' }] } as never);
+      roadmapConfigRepo.find.mockResolvedValue([]);
+      // A prior successful sync exists so incremental applies a watermark.
+      syncLogRepo.findOne.mockResolvedValue({ syncedAt: new Date('2026-01-01') } as SyncLog);
+      // ACC fetched changes (issueCount > 0); BPT fetched nothing (issueCount 0).
+      syncLogRepo.save.mockImplementation((log) => {
+        const l = log as SyncLog;
+        l.issueCount = l.boardId === 'ACC' ? 3 : 0;
+        return Promise.resolve(l);
+      });
+
+      await service.syncAll('incremental');
+
+      expect(lambdaInvoker.invokeSnapshotWorker).toHaveBeenCalledWith('ACC');
+      expect(lambdaInvoker.invokeSnapshotWorker).not.toHaveBeenCalledWith('BPT');
+      expect(lambdaInvoker.invokeOrgSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it('incremental sync with no board changes recomputes nothing (no per-board, no org)', async () => {
+      boardConfigRepo.find.mockResolvedValue([
+        { boardId: 'ACC' } as BoardConfig,
+        { boardId: 'BPT' } as BoardConfig,
+      ]);
+      boardConfigRepo.findOne.mockResolvedValue({ boardId: 'ACC', boardType: 'scrum' } as BoardConfig);
+      jiraClient.getSprints.mockResolvedValue({ values: [] } as never);
+      jiraClient.getProjectVersions.mockResolvedValue([]);
+      roadmapConfigRepo.find.mockResolvedValue([]);
+      syncLogRepo.findOne.mockResolvedValue({ syncedAt: new Date('2026-01-01') } as SyncLog);
+      jiraClient.getBoardsForProject.mockResolvedValue({ values: [{ id: 1, name: 'b', type: 'scrum' }] } as never);
+      // No board fetched anything.
+      syncLogRepo.save.mockImplementation((log) => {
+        const l = log as SyncLog;
+        l.issueCount = 0;
+        return Promise.resolve(l);
+      });
+
+      await service.syncAll('incremental');
+
+      expect(lambdaInvoker.invokeSnapshotWorker).not.toHaveBeenCalled();
+      expect(lambdaInvoker.invokeOrgSnapshot).not.toHaveBeenCalled();
+    });
+
     it('continues with other boards when one throws, and swallows syncRoadmaps error', async () => {
       boardConfigRepo.find.mockResolvedValue([
         { boardId: 'PROJ' } as BoardConfig,

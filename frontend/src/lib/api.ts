@@ -734,21 +734,30 @@ export type TrendPoint = OrgDoraResult
 
 export type TrendResponse = TrendPoint[]
 
+/** Rolling time-period window lengths in days. */
+export type TimePeriodWindow = 7 | 30 | 90
+
 export interface DoraAggregateParams {
   /** Comma-separated board IDs (same semantics as MetricsQueryDto.boardId) */
   boardId?: string
   /** Sprint ID — when provided, metrics are scoped to the sprint window. */
   sprintId?: string
+  /** Quarter in YYYY-QN format. */
+  quarter?: string
+  /** Rolling time-period window in days (7, 30, or 90). */
+  window?: TimePeriodWindow
 }
 
 export interface DoraTrendParams {
   /** Comma-separated board IDs (same semantics as MetricsQueryDto.boardId) */
   boardId?: string
   limit?: number
-  /** Period mode: 'quarter' (default) or 'sprint'. */
-  mode?: 'quarter' | 'sprint'
+  /** Period mode: 'quarter' (default), 'sprint', or 'timeperiod'. */
+  mode?: 'quarter' | 'sprint' | 'timeperiod'
   /** Sprint ID — used when mode='sprint'. */
   sprintId?: string
+  /** Rolling time-period window in days — used when mode='timeperiod'. */
+  window?: TimePeriodWindow
 }
 
 /**
@@ -777,6 +786,8 @@ export function getDoraAggregate(params: DoraAggregateParams): Promise<OrgDoraRe
     `/api/metrics/dora/aggregate${toQueryString({
       boardId: params.boardId,
       sprintId: params.sprintId,
+      quarter: params.quarter,
+      window: params.window !== undefined ? String(params.window) : undefined,
     })}`,
   )
 }
@@ -788,6 +799,7 @@ export function getDoraTrend(params: DoraTrendParams): Promise<TrendResponse> {
       limit: params.limit !== undefined ? String(params.limit) : undefined,
       mode: params.mode,
       sprintId: params.sprintId,
+      window: params.window !== undefined ? String(params.window) : undefined,
     })}`,
   )
 }
@@ -856,14 +868,16 @@ export interface CycleTimeQueryParams {
   period?: string
   sprintId?: string
   quarter?: string
-  issueType?: string
+  /** Rolling time-period window in days (7, 30, or 90). */
+  window?: TimePeriodWindow
 }
 
 export interface CycleTimeTrendParams {
   boardId?: string
-  mode?: 'quarters' | 'sprints'
+  mode?: 'quarters' | 'sprints' | 'timeperiod'
   limit?: number
-  issueType?: string
+  /** Rolling time-period window in days — used when mode='timeperiod'. */
+  window?: TimePeriodWindow
 }
 
 // ---- Cycle Time endpoint wrappers ----------------------------------------
@@ -871,27 +885,30 @@ export interface CycleTimeTrendParams {
 export function getCycleTime(
   params: CycleTimeQueryParams,
 ): Promise<CycleTimeResponse> {
-  return apiFetch(
-    `/api/cycle-time/${encodeURIComponent(params.boardId)}${toQueryString({
-      period: params.period,
-      sprintId: params.sprintId,
-      quarter: params.quarter,
-      issueType: params.issueType,
-    })}`,
-  )
+  const path = `/api/cycle-time/${encodeURIComponent(params.boardId)}${toQueryString({
+    period: params.period,
+    sprintId: params.sprintId,
+    quarter: params.quarter,
+    window: params.window !== undefined ? String(params.window) : undefined,
+  })}`
+  // Time-period responses are snapshot-backed and may return HTTP 202 pending.
+  return params.window !== undefined
+    ? fetchDoraSnapshot(path)
+    : apiFetch(path)
 }
 
 export function getCycleTimeTrend(
   params: CycleTimeTrendParams,
 ): Promise<CycleTimeTrendResponse> {
-  return apiFetch(
-    `/api/cycle-time/trend${toQueryString({
-      boardId: params.boardId,
-      mode: params.mode,
-      limit: params.limit !== undefined ? String(params.limit) : undefined,
-      issueType: params.issueType,
-    })}`,
-  )
+  const path = `/api/cycle-time/trend${toQueryString({
+    boardId: params.boardId,
+    mode: params.mode,
+    limit: params.limit !== undefined ? String(params.limit) : undefined,
+    window: params.window !== undefined ? String(params.window) : undefined,
+  })}`
+  return params.mode === 'timeperiod'
+    ? fetchDoraSnapshot(path)
+    : apiFetch(path)
 }
 
 // ---- Gaps report types and endpoint --------------------------------------
@@ -1155,19 +1172,21 @@ export interface SupportQueryParams {
   quarter?: string
   sprintId?: string
   period?: string
-  matchReason?: 'link' | 'label' | 'epic'
+  /** Rolling time-period window in days (7, 30, or 90). */
+  window?: TimePeriodWindow
 }
 
 export function getSupportTickets(
   params: SupportQueryParams,
 ): Promise<SupportResult[]> {
+  // Ticket list is always live-computed (never snapshotted), including time period.
   return apiFetch(
     `/api/support${toQueryString({
       boardId: params.boardId,
       quarter: params.quarter,
       sprintId: params.sprintId,
       period: params.period,
-      matchReason: params.matchReason,
+      window: params.window !== undefined ? String(params.window) : undefined,
     })}`,
   )
 }
@@ -1175,15 +1194,15 @@ export function getSupportTickets(
 export function getSupportSummary(
   params: SupportQueryParams,
 ): Promise<SupportSummary> {
-  return apiFetch(
-    `/api/support/summary${toQueryString({
-      boardId: params.boardId,
-      quarter: params.quarter,
-      sprintId: params.sprintId,
-      period: params.period,
-      matchReason: params.matchReason,
-    })}`,
-  )
+  const path = `/api/support/summary${toQueryString({
+    boardId: params.boardId,
+    quarter: params.quarter,
+    sprintId: params.sprintId,
+    period: params.period,
+    window: params.window !== undefined ? String(params.window) : undefined,
+  })}`
+  // Time-period summary is snapshot-backed and may return HTTP 202 pending.
+  return params.window !== undefined ? fetchDoraSnapshot(path) : apiFetch(path)
 }
 
 // ---------------------------------------------------------------------------

@@ -6,7 +6,18 @@ import {
   Index,
 } from 'typeorm';
 
-export type DoraSnapshotType = 'aggregate' | 'trend' | 'trend-display' | 'trend-sprint';
+export type DoraSnapshotType =
+  | 'aggregate'
+  | 'trend'
+  | 'trend-display'
+  | 'trend-sprint'
+  | 'aggregate-7d'
+  | 'aggregate-30d'
+  | 'aggregate-90d'
+  | 'trend-7d'
+  | 'trend-30d'
+  | 'trend-90d'
+  | `aggregate-${number}-Q${1 | 2 | 3 | 4}`;
 
 @Entity('dora_snapshots')
 @Index(['boardId'])

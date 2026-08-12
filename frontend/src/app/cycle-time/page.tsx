@@ -1,25 +1,23 @@
 'use client'
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
 import { AlertTriangle } from 'lucide-react'
-import { useReplaceParams } from '@/hooks/use-page-params'
 import {
   getCycleTime,
   getCycleTimeTrend,
-  getQuarters,
   getAppConfig,
+  SnapshotPendingError,
   type CycleTimeResult,
   type CycleTimeTrendPoint,
   type CycleTimeObservation,
-  type QuarterInfo,
 } from '@/lib/api'
 import { classifyCycleTime } from '@/lib/cycle-time-bands'
 import { useBoardsStore } from '@/store/boards-store'
-import { BoardChip } from '@/components/ui/board-chip'
-import { ToggleChip } from '@/components/ui/toggle-chip'
+import { usePeriodFilter } from '@/hooks/use-period-filter'
+import { PeriodFilterBar } from '@/components/ui/period-filter-bar'
 import { EmptyState } from '@/components/ui/empty-state'
 import { NoBoardsConfigured } from '@/components/ui/no-boards-configured'
+import { SnapshotPending } from '@/components/ui/snapshot-pending'
 import { CycleTimePercentileCard } from '@/components/ui/cycle-time-percentile-card'
 import { ReopenBanner } from '@/components/ui/reopen-banner'
 import { CycleTimeTrendChart } from '@/components/ui/cycle-time-trend-chart'
@@ -64,6 +62,7 @@ const CYCLE_TIME_HELP: MetricDefinition[] = [
 type PageState =
   | { status: 'idle' }
   | { status: 'loading' }
+  | { status: 'pending' }
   | { status: 'error'; message: string }
   | {
       status: 'ready'
@@ -127,19 +126,23 @@ export default function CycleTimePage() {
 }
 
 function CycleTimePageInner() {
-  const searchParams = useSearchParams()
-  const replaceParams = useReplaceParams()
-
   // Board catalogue from store
   const allBoards = useBoardsStore((s) => s.allBoards)
+  const kanbanBoardIds = useBoardsStore((s) => s.kanbanBoardIds)
   const boardsStatus = useBoardsStore((s) => s.status)
 
-  // Filter state lives in the URL — defaults applied when params are absent
-  const selectedBoard = searchParams.get('board') ?? (allBoards[0] ?? '')
-  const selectedQuarter = searchParams.get('quarter') ?? ''
-  const issueTypeFilter = searchParams.get('type') ?? ''
+  // Unified reporting-period filter (shared with DORA) — URL-backed.
+  const filter = usePeriodFilter()
+  const {
+    board,
+    isAllBoards,
+    mode,
+    quarter,
+    sprintId,
+    window: periodWindow,
+    sprintAvailable,
+  } = filter
 
-  const [quarters, setQuarters] = useState<QuarterInfo[]>([])
   const [pageState, setPageState] = useState<PageState>({ status: 'idle' })
   const [retryKey, setRetryKey] = useState(0)
   const [excludeWeekends, setExcludeWeekends] = useState(true)
@@ -149,6 +152,10 @@ function CycleTimePageInner() {
   }, [])
   const [tablePage, setTablePage] = useState(0)
 
+  // The cycle-time endpoint requires a boardId path segment. For "All boards"
+  // send the comma-joined list (backend routes multi-board to the org snapshot).
+  const boardIdForPath = isAllBoards ? allBoards.join(',') : board
+
   // Fetch app config (timezone, excludeWeekends) once on mount
   useEffect(() => {
     getAppConfig()
@@ -156,58 +163,60 @@ function CycleTimePageInner() {
       .catch(() => { /* keep default */ })
   }, [])
 
-  // Load quarter list once on mount; auto-select first quarter if none in URL
+  // Auto-reset to Time period when sprint mode becomes unavailable.
   useEffect(() => {
-    let cancelled = false
-    getQuarters()
-      .then((res) => {
-        if (!cancelled) {
-          setQuarters(res)
-          if (res.length > 0 && !searchParams.get('quarter')) {
-            replaceParams({ quarter: res[0].quarter })
-          }
-        }
-      })
-      .catch(() => {
-        // leave quarters empty — UI will remain idle
-      })
-    return () => {
-      cancelled = true
+    if (boardsStatus !== 'ready') return
+    if (mode === 'sprint' && !sprintAvailable) {
+      filter.setMode('timeperiod')
     }
-  // replaceParams and searchParams intentionally omitted — runs once on mount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [boardsStatus, sprintAvailable, mode, filter])
 
   // Main data fetch — fires on filter change or retry
   useEffect(() => {
     let cancelled = false
-    if (boardsStatus !== 'ready' || !selectedQuarter) return
+    if (boardsStatus !== 'ready' || allBoards.length === 0) return
+    if (mode === 'quarter' && !quarter) return
+    if (mode === 'sprint' && !sprintId) {
+      setPageState({ status: 'idle' })
+      return
+    }
     setPageState({ status: 'loading' })
 
     const run = async (): Promise<void> => {
       try {
         const [results, trend] = await Promise.all([
           getCycleTime({
-            boardId: selectedBoard,
-            quarter: selectedQuarter,
-            issueType: issueTypeFilter || undefined,
+            boardId: boardIdForPath,
+            ...(mode === 'quarter' && quarter ? { quarter } : {}),
+            ...(mode === 'sprint' && sprintId ? { sprintId } : {}),
+            ...(mode === 'timeperiod' ? { window: periodWindow } : {}),
           }),
           getCycleTimeTrend({
-            boardId: selectedBoard,
-            mode: 'quarters',
-            limit: 8,
-            issueType: issueTypeFilter || undefined,
+            boardId: isAllBoards ? undefined : board,
+            ...(mode === 'sprint'
+              ? { mode: 'sprints' as const, limit: 8 }
+              : mode === 'timeperiod'
+                ? { mode: 'timeperiod' as const, window: periodWindow }
+                : { mode: 'quarters' as const, limit: 8 }),
           }),
         ])
         if (!cancelled) {
-          setPageState({ status: 'ready', results, trend })
+          // Older quarter snapshots stored a bare CycleTimeResult object instead
+          // of CycleTimeResult[]. Normalise so results is always an array —
+          // guards against the pre-fix snapshot shape until the next recompute.
+          const normalisedResults = Array.isArray(results) ? results : [results]
+          setPageState({ status: 'ready', results: normalisedResults, trend })
         }
       } catch (err: unknown) {
         if (!cancelled) {
-          setPageState({
-            status: 'error',
-            message: err instanceof Error ? err.message : 'Failed to load cycle time data',
-          })
+          if (err instanceof SnapshotPendingError) {
+            setPageState({ status: 'pending' })
+          } else {
+            setPageState({
+              status: 'error',
+              message: err instanceof Error ? err.message : 'Failed to load cycle time data',
+            })
+          }
         }
       }
     }
@@ -215,7 +224,7 @@ function CycleTimePageInner() {
     return () => {
       cancelled = true
     }
-  }, [selectedBoard, selectedQuarter, issueTypeFilter, boardsStatus, retryKey])
+  }, [board, boardIdForPath, isAllBoards, mode, quarter, sprintId, periodWindow, boardsStatus, allBoards.length, retryKey])
 
   // Compute pooled percentiles across all boards' results
   const pooled = useMemo(() => {
@@ -240,16 +249,6 @@ function CycleTimePageInner() {
     [allObservations, tablePage],
   )
 
-  // Derive available issue types from observations
-  const availableIssueTypes = useMemo((): string[] => {
-    const types = new Set(allObservations.map((o) => o.issueType))
-    return Array.from(types).sort()
-  }, [allObservations])
-
-  const handleBoardSelect = useCallback((boardId: string) => {
-    replaceParams({ board: boardId })
-  }, [replaceParams])
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -269,59 +268,22 @@ function CycleTimePageInner() {
       )}
 
       {/* Filters */}
-      <div className="space-y-4 rounded-xl border border-border bg-card p-4">
-        {/* Board selector — single select */}
-        <div>
-          <label className="mb-2 block text-sm font-medium text-muted">Board</label>
-          <div className="flex flex-wrap gap-2">
-            {allBoards.map((boardId) => (
-              <BoardChip
-                key={boardId}
-                boardId={boardId}
-                selected={selectedBoard === boardId}
-                onClick={() => handleBoardSelect(boardId)}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Quarter selector */}
-        <div>
-          <label className="mb-2 block text-sm font-medium text-muted">Quarter</label>
-          <div className="inline-flex flex-wrap gap-1">
-            {quarters.map((q) => (
-              <ToggleChip
-                key={q.quarter}
-                label={q.quarter}
-                selected={selectedQuarter === q.quarter}
-                onClick={() => replaceParams({ quarter: q.quarter })}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Issue type filter */}
-        {availableIssueTypes.length > 0 && (
-          <div>
-            <label className="mb-2 block text-sm font-medium text-muted">Issue Type</label>
-            <div className="flex flex-wrap gap-2">
-              <ToggleChip
-                label="All"
-                selected={issueTypeFilter === ''}
-                onClick={() => replaceParams({ type: null })}
-              />
-              {availableIssueTypes.map((t) => (
-                <ToggleChip
-                  key={t}
-                  label={t}
-                  selected={issueTypeFilter === t}
-                  onClick={() => replaceParams({ type: t })}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+      <PeriodFilterBar
+        allBoards={allBoards}
+        kanbanBoardIds={kanbanBoardIds}
+        board={board}
+        isAllBoards={isAllBoards}
+        mode={mode}
+        quarter={quarter}
+        sprintId={sprintId}
+        window={periodWindow}
+        sprintAvailable={sprintAvailable}
+        onBoardChange={filter.setBoard}
+        onModeChange={filter.setMode}
+        onQuarterChange={filter.setQuarter}
+        onSprintChange={filter.setSprintId}
+        onWindowChange={filter.setWindow}
+      />
 
       {/* Skeleton loading */}
       {pageState.status === 'loading' && (
@@ -363,8 +325,13 @@ function CycleTimePageInner() {
       {pageState.status === 'idle' && (
         <EmptyState
           title="No data"
-          message="Select a board and quarter to view cycle time metrics."
+          message="Select a board and period to view cycle time metrics."
         />
+      )}
+
+      {/* Snapshot pending */}
+      {pageState.status === 'pending' && (
+        <SnapshotPending label="cycle time metrics" onRetry={reload} />
       )}
 
       {/* Main content */}
@@ -391,7 +358,7 @@ function CycleTimePageInner() {
           {pooled.count === 0 && (
             <EmptyState
               title="No completed issues"
-              message={`No issues completed in ${selectedQuarter} for board ${selectedBoard}.`}
+              message={`No issues completed in the selected period for ${isAllBoards ? 'all boards' : board}.`}
             />
           )}
 

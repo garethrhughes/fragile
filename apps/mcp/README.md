@@ -72,14 +72,14 @@ Add the following to `.cursor/mcp.json` in your home directory or project root:
 
 | Tool | Description |
 |---|---|
-| `get_dora_metrics` | DORA metrics aggregate for a quarter |
-| `get_dora_trend` | DORA trend across multiple quarters |
+| `get_dora_metrics` | DORA metrics aggregate for a quarter, sprint, or rolling time period (7/30/90 days) |
+| `get_dora_trend` | DORA trend by quarter, sprint, or rolling time-period buckets |
 | `get_snapshot_status` | Whether DORA snapshots are up to date |
 | `get_planning_accuracy` | Sprint planning accuracy (Scrum boards only) |
 | `list_sprints` | Available sprints for a board |
 | `list_quarters` | All quarters with data |
-| `get_cycle_time` | Cycle time percentiles for a board |
-| `get_cycle_time_trend` | Cycle time trend |
+| `get_cycle_time` | Cycle time percentiles for a board (quarter, sprint, or rolling time period) |
+| `get_cycle_time_trend` | Cycle time trend by quarter, sprint, or rolling time-period buckets |
 | `get_sprint_detail` | Ticket-level sprint classification |
 | `get_sprint_report` | Composite sprint report with recommendations |
 | `get_roadmap_accuracy` | Roadmap coverage accuracy |

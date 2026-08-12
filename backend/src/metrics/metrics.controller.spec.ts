@@ -120,19 +120,28 @@ describe('MetricsController — snapshot-aware endpoints', () => {
       expect(res.setHeader).toHaveBeenCalledWith('X-Snapshot-Age', '7200');
     });
 
-    it('routes historical quarter to live compute — bypasses snapshot', async () => {
+    it('routes historical quarter to its per-quarter snapshot (proposal 0082)', async () => {
+      const snapshot: SnapshotResult = {
+        payload: { period: { label: '2020-Q1' } } as unknown as OrgDoraResult,
+        ageSeconds: 42,
+        stale: false,
+      };
+      snapshotSvc.getSnapshot.mockResolvedValue(snapshot);
       let metricsSvc!: jest.Mocked<MetricsService>;
       metricsSvc = mockMetricsService();
       const ctrl = new MetricsController(metricsSvc, snapshotSvc, mockBoardConfigRepo());
       const res = mockRes();
 
       // Use a quarter guaranteed to be in the past relative to any test run
-      await ctrl.getDoraAggregate({ boardId: 'ACC', quarter: '2020-Q1' } as DoraAggregateQueryDto, res as never);
-
-      expect(snapshotSvc.getSnapshot).not.toHaveBeenCalled();
-      expect(metricsSvc.getDoraAggregate).toHaveBeenCalledWith(
-        expect.objectContaining({ quarter: '2020-Q1' }),
+      const result = await ctrl.getDoraAggregate(
+        { boardId: 'ACC', quarter: '2020-Q1' } as DoraAggregateQueryDto,
+        res as never,
       );
+
+      // Historical quarter is now snapshot-served (aggregate-<quarter>), not live.
+      expect(snapshotSvc.getSnapshot).toHaveBeenCalledWith('ACC', 'aggregate-2020-Q1');
+      expect(metricsSvc.getDoraAggregate).not.toHaveBeenCalled();
+      expect(result).toBe(snapshot.payload);
     });
 
     it('routes current quarter (no quarter param) through snapshot fast-path', async () => {
@@ -184,6 +193,40 @@ describe('MetricsController — snapshot-aware endpoints', () => {
       expect(metricsSvc.getDoraAggregate).toHaveBeenCalledWith(
         expect.objectContaining({ sprintId: '123' }),
       );
+    });
+
+    it('serves time-period window from the aggregate-Nd snapshot', async () => {
+      const snapshot: SnapshotResult = {
+        payload: { period: { label: 'last-30d' } } as unknown as OrgDoraResult,
+        ageSeconds: 60,
+        stale: false,
+      };
+      snapshotSvc.getSnapshot.mockResolvedValue(snapshot);
+      const res = mockRes();
+
+      const result = await controller.getDoraAggregate(
+        { boardId: 'ACC', window: 30 } as DoraAggregateQueryDto,
+        res as never,
+      );
+
+      expect(snapshotSvc.getSnapshot).toHaveBeenCalledWith('ACC', 'aggregate-30d');
+      expect(result).toEqual(snapshot.payload);
+    });
+
+    it('uses the org snapshot key for multi-board time-period windows', async () => {
+      snapshotSvc.getSnapshot.mockResolvedValue({
+        payload: {} as OrgDoraResult,
+        ageSeconds: 10,
+        stale: false,
+      });
+      const res = mockRes();
+
+      await controller.getDoraAggregate(
+        { boardId: 'ACC,BPT', window: 90 } as DoraAggregateQueryDto,
+        res as never,
+      );
+
+      expect(snapshotSvc.getSnapshot).toHaveBeenCalledWith('__org__', 'aggregate-90d');
     });
   });
 
@@ -254,6 +297,22 @@ describe('MetricsController — snapshot-aware endpoints', () => {
 
       expect(Array.isArray(result)).toBe(true);
       expect((result as unknown[]).length).toBe(3);
+    });
+
+    it('reads the trend-Nd snapshot in time-period mode', async () => {
+      snapshotSvc.getSnapshot.mockResolvedValue({
+        payload: [] as unknown as TrendResponse,
+        ageSeconds: 10,
+        stale: false,
+      });
+      const res = mockRes();
+
+      await controller.getDoraTrend(
+        { boardId: 'ACC', mode: 'timeperiod', window: 7 } as DoraTrendQueryDto,
+        res as never,
+      );
+
+      expect(snapshotSvc.getSnapshot).toHaveBeenCalledWith('ACC', 'trend-7d');
     });
   });
 

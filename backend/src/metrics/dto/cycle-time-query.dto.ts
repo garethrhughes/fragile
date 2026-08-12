@@ -1,5 +1,7 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString, IsIn } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { TIME_PERIOD_WINDOWS, type TimePeriodWindow } from '../period-utils.js';
 
 export class CycleTimeQueryDto {
   /** Comma-separated board IDs, or omitted for all boards */
@@ -26,9 +28,16 @@ export class CycleTimeQueryDto {
   @IsString()
   quarter?: string;
 
-  /** Filter to a single Jira issue type, e.g. "Story" */
-  @ApiPropertyOptional({ description: 'Filter to a single Jira issue type, e.g. Story' })
+  /** Rolling time-period window in days (7, 30, or 90) */
+  @ApiPropertyOptional({
+    description:
+      'Rolling time-period window in days (7, 30, or 90). When provided ' +
+      '(and no quarter/sprintId), metrics cover the last N full days ending ' +
+      'at 23:59:59 yesterday in the configured timezone.',
+    enum: TIME_PERIOD_WINDOWS,
+  })
   @IsOptional()
-  @IsString()
-  issueType?: string;
+  @Type(() => Number)
+  @IsIn(TIME_PERIOD_WINDOWS)
+  window?: TimePeriodWindow;
 }
