@@ -5,7 +5,7 @@ import { MetricsService } from './metrics.service.js';
 import { CycleTimeSnapshotReadService } from './cycle-time-snapshot-read.service.js';
 import { CycleTimeQueryDto } from './dto/cycle-time-query.dto.js';
 import { CycleTimeTrendQueryDto } from './dto/cycle-time-trend-query.dto.js';
-import { ORG_SNAPSHOT_KEY } from '../lambda/in-process-snapshot.service.js';
+import { ORG_SNAPSHOT_KEY } from '../snapshot/snapshot-compute.service.js';
 import type { CycleTimeSnapshotType } from '../database/entities/index.js';
 import type {
   CycleTimeResponse,

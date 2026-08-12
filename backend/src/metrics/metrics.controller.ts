@@ -10,7 +10,7 @@ import { DoraAggregateQueryDto } from './dto/dora-aggregate-query.dto.js';
 import { DoraTrendQueryDto } from './dto/dora-trend-query.dto.js';
 import type { OrgDoraResult, TrendResponse } from './dto/org-dora-response.dto.js';
 import type { DoraSnapshotType } from '../database/entities/index.js';
-import { ORG_SNAPSHOT_KEY } from '../lambda/in-process-snapshot.service.js';
+import { ORG_SNAPSHOT_KEY } from '../snapshot/snapshot-compute.service.js';
 import { listRecentQuarters } from './period-utils.js';
 import { BoardConfig } from '../database/entities/index.js';
 

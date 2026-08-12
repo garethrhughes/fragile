@@ -64,12 +64,20 @@ describe('DoraSnapshotReadService', () => {
     expect(result!.stale).toBe(false);
   });
 
-  it('marks snapshot as stale when age exceeds default threshold (60 min)', async () => {
-    repo.findOne.mockResolvedValue(makeSnapshot(61)); // 61 minutes old
+  it('marks snapshot as stale when age exceeds the default threshold (2880 min / 48h)', async () => {
+    repo.findOne.mockResolvedValue(makeSnapshot(2881)); // just over 48h old
 
     const result = await service.getSnapshot('ACC', 'aggregate');
 
     expect(result!.stale).toBe(true);
+  });
+
+  it('is not stale under the default threshold (e.g. an hour old)', async () => {
+    repo.findOne.mockResolvedValue(makeSnapshot(61)); // 61 minutes old
+
+    const result = await service.getSnapshot('ACC', 'aggregate');
+
+    expect(result!.stale).toBe(false);
   });
 
   it('respects SNAPSHOT_STALE_THRESHOLD_MINUTES config', async () => {

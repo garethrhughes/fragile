@@ -7,7 +7,7 @@
 
 import { ConfigService } from '@nestjs/config';
 import { LambdaInvokerService } from './lambda-invoker.service.js';
-import { InProcessSnapshotService } from './in-process-snapshot.service.js';
+import { SnapshotComputeService } from '../snapshot/snapshot-compute.service.js';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -27,12 +27,12 @@ function makeConfig(overrides: Record<string, string | undefined> = {}): ConfigS
   } as unknown as ConfigService;
 }
 
-function makeInProcessService(): jest.Mocked<InProcessSnapshotService> {
+function makeInProcessService(): jest.Mocked<SnapshotComputeService> {
   return {
     computeBoard: jest.fn().mockResolvedValue(undefined),
     computeOrg: jest.fn().mockResolvedValue(undefined),
     computeAndPersist: jest.fn().mockResolvedValue(undefined),
-  } as unknown as jest.Mocked<InProcessSnapshotService>;
+  } as unknown as jest.Mocked<SnapshotComputeService>;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,7 +96,7 @@ describe('LambdaInvokerService', () => {
   });
 
   describe('when USE_LAMBDA is not set (default local dev)', () => {
-    it('delegates to InProcessSnapshotService.computeBoard for per-board invocation', async () => {
+    it('delegates to SnapshotComputeService.computeBoard for per-board invocation', async () => {
       const config = makeConfig({
         USE_LAMBDA: undefined,
         DORA_SNAPSHOT_LAMBDA_NAME: undefined,
@@ -113,7 +113,7 @@ describe('LambdaInvokerService', () => {
   });
 
   describe('when USE_LAMBDA=false', () => {
-    it('delegates to InProcessSnapshotService.computeBoard for per-board invocation', async () => {
+    it('delegates to SnapshotComputeService.computeBoard for per-board invocation', async () => {
       const config = makeConfig({
         USE_LAMBDA: 'false',
         DORA_SNAPSHOT_LAMBDA_NAME: 'fragile-dora-snapshot',
@@ -128,7 +128,7 @@ describe('LambdaInvokerService', () => {
       expect(mockSend).not.toHaveBeenCalled();
     });
 
-    it('delegates to InProcessSnapshotService.computeOrg for org invocation', async () => {
+    it('delegates to SnapshotComputeService.computeOrg for org invocation', async () => {
       const config = makeConfig({
         USE_LAMBDA: 'false',
         DORA_SNAPSHOT_LAMBDA_NAME: 'fragile-dora-snapshot',
@@ -145,7 +145,7 @@ describe('LambdaInvokerService', () => {
   });
 
   describe('when USE_LAMBDA=true but function name is not set', () => {
-    it('skips computation without calling InProcessSnapshotService', async () => {
+    it('skips computation without calling SnapshotComputeService', async () => {
       const config = makeConfig({
         USE_LAMBDA: 'true',
         DORA_SNAPSHOT_LAMBDA_NAME: undefined,
