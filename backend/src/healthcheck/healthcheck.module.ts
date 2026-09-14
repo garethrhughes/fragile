@@ -16,6 +16,7 @@ import {
   JiraIssueLink,
   JpdIdea,
   RoadmapConfig,
+  HealthcheckSnapshot,
 } from '../database/entities/index.js';
 import { SprintMembershipModule } from '../sprint-membership/sprint-membership.module.js';
 import { HealthcheckController } from './healthcheck.controller.js';
@@ -32,6 +33,7 @@ import { HealthcheckService } from './healthcheck.service.js';
       JiraIssueLink,
       JpdIdea,
       RoadmapConfig,
+      HealthcheckSnapshot,
     ]),
     SprintMembershipModule,
   ],

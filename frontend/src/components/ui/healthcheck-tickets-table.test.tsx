@@ -10,6 +10,7 @@ function ticket(overrides: Partial<HealthcheckTicket> & { key: string }): Health
     boardType: 'scrum',
     issueType: 'Story',
     status: 'In Progress',
+    firstStart: '2026-07-21T10:00:00.000Z',
     planned: false,
     onRoadmap: false,
     support: false,

@@ -66,6 +66,13 @@ export interface HealthcheckTicket {
   boardType: 'scrum' | 'kanban';
   issueType: string;
   status: string;
+  /**
+   * The derived first-ever start transition, ISO 8601 — the value that put this
+   * ticket in this week. Exposed so the derivation is auditable from the payload
+   * and diffable across runs (ADR 0092): it is a minimum over an append-only
+   * history and must be monotonically non-increasing across runs.
+   */
+  firstStart: string;
   /** Counted toward Stability (committed/carry-over at sprint start). */
   planned: boolean;
   /** Counted toward Roadmap (roadmap-linked). */
@@ -120,20 +127,29 @@ export interface BoardHealthcheckInput {
  *     convention, ADR 0063/0067). This ensures PLAT tickets created on the
  *     board still appear in the week they entered.
  */
-function firstStartDate(
+export function firstStartDate(
   issue: JiraIssue,
   logs: JiraChangelog[],
   isKanban: boolean,
   inProgressStatuses: Set<string>,
   boardEntryStatuses: Set<string>,
 ): Date | null {
-  const match = logs.find((cl) => {
-    if (cl.field !== 'status' || cl.toValue === null) return false;
-    return isKanban
+  // A true min() over the matching transitions. Deliberately NOT `logs.find()`:
+  // that silently depended on the caller supplying the changelog in ascending
+  // `changedAt` order (an ORDER BY in healthcheck.service.ts). `first_start` is
+  // defined as a minimum over an append-only history, so it must be computed as
+  // one here — otherwise a re-ordered or re-persisted changelog can move a
+  // closed week's denominator.
+  let earliest: Date | null = null;
+  for (const cl of logs) {
+    if (cl.field !== 'status' || cl.toValue === null) continue;
+    const matches = isKanban
       ? boardEntryStatuses.has(cl.toValue.toLowerCase())
       : inProgressStatuses.has(cl.toValue);
-  });
-  if (match) return match.changedAt;
+    if (!matches) continue;
+    if (earliest === null || cl.changedAt < earliest) earliest = cl.changedAt;
+  }
+  if (earliest !== null) return earliest;
   // Kanban-only fallback: created directly on the board with no board-entry
   // transition → treat creation time as board entry.
   return isKanban ? issue.createdAt : null;
@@ -203,6 +219,7 @@ export function computeBoardHealthcheck(
       boardType: input.boardType,
       issueType: issue.issueType,
       status: issue.status,
+      firstStart: startedAt.toISOString(),
       planned,
       onRoadmap,
       support: isSupport,

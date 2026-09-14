@@ -1,18 +1,44 @@
 import type { HealthcheckBand } from '../healthcheck-bands.js';
+import type { HealthcheckDrift } from '../healthcheck-drift.js';
 
 /**
- * Healthcheck report response (ADR 0070, ADR 0074).
+ * Healthcheck report response (ADR 0070, ADR 0074, ADR 0092).
  *
  * For a selected ISO week, the org-wide healthcheck reports three pooled scores
  * combining all boards — Stability, Roadmap, Support — computed against a
  * per-dimension denominator (tickets whose first-ever start transition fell in
- * the week). Live-computed; not persisted.
+ * the week).
+ *
+ * A completed week's canonical figure (`includeSupport=true`) is persisted on
+ * first read and served from storage by default, so a closed week is
+ * reproducible. `view=live` forces a recompute and reports `drift` against the
+ * stored figure rather than silently replacing it (ADR 0092).
  */
 export interface HealthcheckResponse {
   /** ISO week key, e.g. "2026-W30". */
   week: string;
   weekStart: string;
   weekEnd: string;
+  /**
+   * Whether this payload was served from the persisted canonical figure or
+   * computed live. The current (in-flight) week and any `includeSupport=false`
+   * request are always `'live'`.
+   */
+  source: 'stored' | 'live';
+  /** When this figure was computed — the stored timestamp, or now for a live view. */
+  computedAt: string;
+  /**
+   * Fingerprint of the predicate configuration this figure was derived under
+   * (per-board in-progress / board-entry / done / cancelled status names, board
+   * types, and the contributing board set). Two figures are only comparable
+   * when their hashes match.
+   */
+  configHash: string;
+  /**
+   * Echo of the request's `includeSupport`. Materially changes the Stability and
+   * Roadmap denominator AND numerator, so the payload must say which view it is.
+   */
+  includeSupport: boolean;
   /** Org-wide pooled score for the selected week. */
   stability: HealthcheckDimension;
   roadmap: HealthcheckDimension;
@@ -24,6 +50,12 @@ export interface HealthcheckResponse {
    * (first-ever start transition in the week), flagged by dimension.
    */
   tickets: HealthcheckTicketDto[];
+  /**
+   * Stored-vs-live comparison. Populated only on `view=live` for a week that
+   * also has a stored row; `null` otherwise. Drift on a closed week is a signal
+   * worth surfacing, not an error — nothing is auto-corrected.
+   */
+  drift: HealthcheckDrift | null;
 }
 
 export interface HealthcheckDimension {
@@ -56,6 +88,12 @@ export interface HealthcheckTicketDto {
   boardType: 'scrum' | 'kanban';
   issueType: string;
   status: string;
+  /**
+   * The derived first-ever start transition (ISO 8601) that placed this ticket
+   * in this week. A minimum over an append-only history — must be monotonically
+   * non-increasing across runs (ADR 0092).
+   */
+  firstStart: string;
   planned: boolean;
   onRoadmap: boolean;
   support: boolean;

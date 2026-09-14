@@ -214,11 +214,48 @@ to kanban), while **Support** is still shown. Tickets are sorted by board, then 
    three org-wide scores.
 6. **Band & assemble** — RAG bands are attached, the ticket list is flattened and sorted, and the
    8-week trend is built.
-7. **Display** — the dashboard renders three score cards, the trend chart, and the ticket table.
+7. **Store or serve** — for a **completed** week the canonical figure is saved the first time it
+   is requested, and every later request returns that saved figure. The current, in-flight week is
+   always computed fresh. See section 10.
+8. **Display** — the dashboard renders three score cards, the trend chart, and the ticket table.
 
 ---
 
-## 10. Configuration That Affects the Report
+## 10. Reproducibility: Stored vs Live
+
+A closed week's score should not quietly change. Once a week has finished, the figure is computed
+once, saved, and re-served from then on.
+
+- **Stored (default).** For a completed week you get the saved figure. Repeated requests return
+  identical numbers, and the response says when it was computed (`computedAt`).
+- **Live (`?view=live`, or the "Recompute live" checkbox).** Recomputes from the current mirror and
+  compares the result against the saved figure. Any difference is reported in a `drift` object and
+  shown as a banner — it is **not** silently substituted, and the saved figure is never
+  overwritten.
+- **The current week** is always live: it is legitimately still moving.
+- **Excluding support** (`?includeSupport=false`) is always live. It changes both the denominator
+  and the numerators for Stability and Roadmap, so it is a different question rather than a
+  different answer to the same one. The response echoes `includeSupport` so it is always clear
+  which view is on screen. **Figures taken with and without support are not comparable.**
+
+### Config hash
+
+Every response carries a `configHash` — a fingerprint of the per-board settings that can move the
+denominator (in-progress statuses, board-entry statuses, done and cancelled statuses, board type,
+and the set of contributing boards). Two figures are only comparable when their hashes match. If
+someone changes a board's in-progress status list, the hash changes and the drift banner says so.
+
+### Start-date sanity check
+
+A ticket's start date is the **earliest** transition into an in-progress status. Because change
+history only ever grows, that earliest date can move *earlier* (if more history becomes available)
+but never *later*. Each stored week records the start date it derived per ticket, and a live
+recompute checks them: a start date that has moved later is flagged as a fault, not a change,
+because it means some of the ticket's history is missing from the mirror.
+
+---
+
+## 11. Configuration That Affects the Report
 
 - **Timezone** — controls where ISO-week boundaries fall and which week is "last completed".
 - **Jira base URL** — used to build the outbound ticket links in the table.
@@ -234,7 +271,7 @@ to kanban), while **Support** is still shown. Tickets are sorted by board, then 
 
 ---
 
-## 11. Edge Cases
+## 12. Edge Cases
 
 | Situation                                        | Behaviour                                                            |
 | ------------------------------------------------ | ------------------------------------------------------------------- |
@@ -248,7 +285,7 @@ to kanban), while **Support** is still shown. Tickets are sorted by board, then 
 
 ---
 
-## 12. Quick Reference
+## 13. Quick Reference
 
 - **Denominator:** tickets whose first-ever start of work fell in the selected ISO week
   (epics and sub-tasks excluded).
@@ -257,3 +294,6 @@ to kanban), while **Support** is still shown. Tickets are sorted by board, then 
 - **Support** = % of those that were reactive support (all boards; lower better; green ≤ 20).
 - **Pooling:** sum across boards, then divide — larger boards weigh more.
 - **Trend:** same three scores over the trailing 8 weeks.
+- **Reproducibility:** a completed week is served from a saved figure; `?view=live` recomputes and
+  reports any drift instead of replacing it. Excluding support is always live and is **not**
+  comparable to the default view.

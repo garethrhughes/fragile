@@ -82,3 +82,4 @@
 | [0083](0083-unify-lambda-snapshot-writer.md) | Unify the Lambda snapshot handler with the in-process snapshot writer | Superseded by 0084 | 2026-08-11 |
 | [0084](0084-snapshot-compute-rearchitecture.md) | Snapshot compute re-architecture: one shared writer + change-scoped recompute | Accepted | 2026-08-12 |
 | [0085](0085-healthcheck-support-toggle-board-filter-tz-cutoff.md) | Healthcheck: support-inclusion toggle, tickets board filter, timezone week cutoff fix | Accepted | 2026-08-21 |
+| [0086](0086-healthcheck-reproducibility-stored-weeks.md) | Atomic changelog replacement + Healthcheck reproducibility: stored weeks, config hash, explicit live view | Accepted | 2026-09-14 |

@@ -1254,16 +1254,59 @@ export interface HealthcheckTicket {
   boardType: 'scrum' | 'kanban'
   issueType: string
   status: string
+  /**
+   * The derived first-ever start transition (ISO 8601) that placed this ticket
+   * in this week. A minimum over an append-only history — must be monotonically
+   * non-increasing across runs (ADR 0092).
+   */
+  firstStart: string
   planned: boolean
   onRoadmap: boolean
   support: boolean
   jiraUrl: string
 }
 
+/** One dimension's stored-vs-live counts. */
+export interface HealthcheckDimensionDrift {
+  stored: { numerator: number | null; denominator: number }
+  live: { numerator: number | null; denominator: number }
+  changed: boolean
+}
+
+/**
+ * Stored-vs-live comparison for a completed week (ADR 0092). Present only when
+ * `view=live` was requested for a week that also has a stored figure.
+ */
+export interface HealthcheckDrift {
+  storedComputedAt: string
+  configHashChanged: boolean
+  storedConfigHash: string
+  liveConfigHash: string
+  stability: HealthcheckDimensionDrift
+  roadmap: HealthcheckDimensionDrift
+  support: HealthcheckDimensionDrift
+  ticketsRemoved: string[]
+  ticketsAdded: string[]
+  /**
+   * Tickets whose derived first_start moved LATER than the stored value —
+   * always a defect, since first_start is a minimum over an append-only history.
+   */
+  firstStartRegressions: { key: string; stored: string; live: string }[]
+  hasDrift: boolean
+}
+
 export interface HealthcheckResponse {
   week: string
   weekStart: string
   weekEnd: string
+  /** Whether this figure came from the persisted canonical week or a live recompute. */
+  source: 'stored' | 'live'
+  /** When this figure was computed. Stable across reads for a stored week. */
+  computedAt: string
+  /** Fingerprint of the predicate config the figure was derived under. */
+  configHash: string
+  /** Echo of the request's includeSupport — it changes both denominator and numerator. */
+  includeSupport: boolean
   /** Org-wide pooled scores for the selected week. */
   stability: HealthcheckDimension
   roadmap: HealthcheckDimension
@@ -1272,17 +1315,22 @@ export interface HealthcheckResponse {
   trend: HealthcheckTrendPoint[]
   /** All tickets in the selected week's denominator, flagged by dimension. */
   tickets: HealthcheckTicket[]
+  /** Stored-vs-live drift; null unless `view=live` found a stored figure to compare. */
+  drift: HealthcheckDrift | null
 }
 
 export function getHealthcheck(
   week?: string,
   includeSupport = true,
+  view: 'stored' | 'live' = 'stored',
 ): Promise<HealthcheckResponse> {
   return apiFetch<HealthcheckResponse>(
     `/api/healthcheck${toQueryString({
       week,
       // Only send when off — the backend defaults to including support.
       includeSupport: includeSupport ? undefined : 'false',
+      // Only send when forcing a recompute — the backend defaults to stored.
+      view: view === 'live' ? 'live' : undefined,
     })}`,
   )
 }

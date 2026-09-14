@@ -26,6 +26,10 @@ describe('Healthcheck tools', () => {
         week: '2026-W30',
         weekStart: '2026-07-20T00:00:00.000Z',
         weekEnd: '2026-07-26T23:59:59.999Z',
+        source: 'stored',
+        computedAt: '2026-07-27T00:00:00.000Z',
+        configHash: 'a'.repeat(64),
+        includeSupport: true,
         stability: { score: 75, numerator: 3, denominator: 4, band: 'amber' },
         roadmap: { score: 50, numerator: 2, denominator: 4, band: 'red' },
         support: { score: 25, numerator: 1, denominator: 4, band: 'amber' },
@@ -38,12 +42,14 @@ describe('Healthcheck tools', () => {
             boardType: 'scrum',
             issueType: 'Story',
             status: 'In Progress',
+            firstStart: '2026-07-21T10:00:00.000Z',
             planned: true,
             onRoadmap: false,
             support: false,
             jiraUrl: '',
           },
         ],
+        drift: null,
       };
       mockApiGet.mockResolvedValueOnce(mockSuccess(data));
 
@@ -82,6 +88,65 @@ describe('Healthcheck tools', () => {
 
       await callTool(server, 'get_healthcheck_report', { week: '2026-W30' });
       expect(mockApiGet).toHaveBeenLastCalledWith('/api/healthcheck', { week: '2026-W30' });
+    });
+
+    it('forwards view=live when the caller asks for a recompute', async () => {
+      mockApiGet.mockResolvedValueOnce(mockSuccess({ week: '2026-W30', stability: {}, roadmap: {}, support: {}, trend: [] }));
+
+      const server = makeServer();
+      await callTool(server, 'get_healthcheck_report', { week: '2026-W30', view: 'live' });
+
+      expect(mockApiGet).toHaveBeenCalledWith('/api/healthcheck', { week: '2026-W30', view: 'live' });
+    });
+
+    it('does NOT forward view when stored or unset (backend defaults to stored)', async () => {
+      mockApiGet.mockResolvedValue(mockSuccess({ week: '2026-W30', stability: {}, roadmap: {}, support: {}, trend: [] }));
+
+      const server = makeServer();
+      await callTool(server, 'get_healthcheck_report', { week: '2026-W30', view: 'stored' });
+      expect(mockApiGet).toHaveBeenLastCalledWith('/api/healthcheck', { week: '2026-W30' });
+
+      await callTool(server, 'get_healthcheck_report', { week: '2026-W30' });
+      expect(mockApiGet).toHaveBeenLastCalledWith('/api/healthcheck', { week: '2026-W30' });
+    });
+
+    it('rejects a view value the backend does not accept', async () => {
+      const server = makeServer();
+      const result = await callTool(server, 'get_healthcheck_report', {
+        week: '2026-W30',
+        view: 'refresh',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toContain("Expected 'stored' | 'live'");
+      expect(mockApiGet).not.toHaveBeenCalled();
+    });
+
+    it('forwards both includeSupport=false and view=live together', async () => {
+      mockApiGet.mockResolvedValueOnce(mockSuccess({ week: '2026-W30', stability: {}, roadmap: {}, support: {}, trend: [] }));
+
+      const server = makeServer();
+      await callTool(server, 'get_healthcheck_report', {
+        week: '2026-W30',
+        includeSupport: false,
+        view: 'live',
+      });
+
+      expect(mockApiGet).toHaveBeenCalledWith('/api/healthcheck', {
+        week: '2026-W30',
+        includeSupport: 'false',
+        view: 'live',
+      });
+    });
+
+    it('does not forward a refresh param — the backend has no such param', async () => {
+      mockApiGet.mockResolvedValueOnce(mockSuccess({ week: '2026-W30', stability: {}, roadmap: {}, support: {}, trend: [] }));
+
+      const server = makeServer();
+      await callTool(server, 'get_healthcheck_report', { week: '2026-W30' });
+
+      const params = mockApiGet.mock.calls[0]?.[1] as Record<string, unknown>;
+      expect(params).not.toHaveProperty('refresh');
     });
   });
 });
