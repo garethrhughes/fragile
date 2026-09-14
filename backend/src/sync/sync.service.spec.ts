@@ -78,9 +78,32 @@ function mockDataSource(): jest.Mocked<DataSource> {
     release: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<QueryRunner>;
 
+  // Changelog replacement runs inside a transaction so no reader can observe an
+  // issue with a partially-rebuilt history. The mock records what the callback
+  // did on the transactional manager.
+  const transactionManager = {
+    delete: jest.fn().mockResolvedValue(undefined),
+    save: jest.fn().mockImplementation((entities: unknown) => Promise.resolve(entities)),
+  };
+
   return {
     createQueryRunner: jest.fn().mockReturnValue(mockQueryRunner),
+    transaction: jest
+      .fn()
+      .mockImplementation(
+        (cb: (m: typeof transactionManager) => Promise<unknown>) => cb(transactionManager),
+      ),
+    transactionManager,
   } as unknown as jest.Mocked<DataSource>;
+}
+
+/** The transactional EntityManager stub inside a `mockDataSource()`. */
+function txManager(ds: jest.Mocked<DataSource>): {
+  delete: jest.Mock;
+  save: jest.Mock;
+} {
+  return (ds as unknown as { transactionManager: { delete: jest.Mock; save: jest.Mock } })
+    .transactionManager;
 }
 
 /** Minimal raw Jira issue value for mapJiraIssue tests */
@@ -1315,8 +1338,112 @@ describe('SyncService', () => {
 
       await service.syncBoard('PROJ');
 
-      expect(changelogRepo.delete).toHaveBeenCalledWith({ issueKey: 'PROJ-1' });
-      expect(changelogRepo.save).toHaveBeenCalled();
+      const tx = txManager(dataSource);
+      expect(tx.delete).toHaveBeenCalledWith(JiraChangelog, { issueKey: 'PROJ-1' });
+      expect(tx.save).toHaveBeenCalled();
+    });
+
+    it('replaces the changelog inside a single transaction (delete + insert atomically)', async () => {
+      // A non-transactional delete-then-insert leaves a window in which the
+      // issue has ZERO changelog rows. Any metric deriving a first/earliest
+      // transition then treats the issue as never started and silently drops it
+      // from its week.
+      jiraClient.searchIssues.mockResolvedValue({
+        issues: [makeRawIssue('PROJ-1')],
+        nextPageToken: undefined,
+      } as never);
+      jiraClient.getIssueChangelog.mockResolvedValue({
+        total: 1,
+        maxResults: 100,
+        values: [
+          {
+            id: 'c1',
+            created: '2026-01-06T10:00:00Z',
+            items: [{ field: 'status', fieldtype: 'jira', from: '1', fromString: 'To Do', to: '2', toString: 'In Progress' }],
+          },
+        ],
+      } as never);
+
+      await service.syncBoard('PROJ');
+
+      expect(dataSource.transaction).toHaveBeenCalledTimes(1);
+      // Nothing destructive happens outside the transaction.
+      expect(changelogRepo.delete).not.toHaveBeenCalled();
+    });
+
+    it('leaves the stored changelog untouched when a later page fails to fetch', async () => {
+      // The stored set is REPLACED, not merged. If page 2 throws, the old copy
+      // must survive intact rather than being left half-rebuilt (or empty) until
+      // some later sync happens to touch this issue again.
+      jiraClient.searchIssues.mockResolvedValue({
+        issues: [makeRawIssue('PROJ-1')],
+        nextPageToken: undefined,
+      } as never);
+
+      let call = 0;
+      jiraClient.getIssueChangelog.mockImplementation(() => {
+        call += 1;
+        if (call === 1) {
+          return Promise.resolve({
+            total: 2,
+            maxResults: 1,
+            values: [
+              {
+                id: 'c1',
+                created: '2026-01-06T10:00:00Z',
+                items: [{ field: 'status', fieldtype: 'jira', from: '1', fromString: 'To Do', to: '2', toString: 'In Progress' }],
+              },
+            ],
+          } as never);
+        }
+        return Promise.reject(new Error('Jira 429 after retry budget'));
+      });
+
+      await service.syncBoard('PROJ');
+
+      // No transaction opened → no delete, no partial write.
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+      expect(txManager(dataSource).delete).not.toHaveBeenCalled();
+      expect(changelogRepo.delete).not.toHaveBeenCalled();
+    });
+
+    it('does not wipe a good stored changelog when Jira returns no history', async () => {
+      jiraClient.searchIssues.mockResolvedValue({
+        issues: [makeRawIssue('PROJ-1')],
+        nextPageToken: undefined,
+      } as never);
+      jiraClient.getIssueChangelog.mockResolvedValue({
+        total: 0,
+        maxResults: 100,
+        values: [],
+      } as never);
+
+      await service.syncBoard('PROJ');
+
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('terminates instead of looping forever when the page cursor cannot advance', async () => {
+      jiraClient.searchIssues.mockResolvedValue({
+        issues: [makeRawIssue('PROJ-1')],
+        nextPageToken: undefined,
+      } as never);
+      // maxResults 0 with total > 0 would leave startAt permanently at 0.
+      jiraClient.getIssueChangelog.mockResolvedValue({
+        total: 5,
+        maxResults: 0,
+        values: [
+          {
+            id: 'c1',
+            created: '2026-01-06T10:00:00Z',
+            items: [{ field: 'status', fieldtype: 'jira', from: '1', fromString: 'To Do', to: '2', toString: 'In Progress' }],
+          },
+        ],
+      } as never);
+
+      await service.syncBoard('PROJ');
+
+      expect(jiraClient.getIssueChangelog).toHaveBeenCalledTimes(1);
     });
 
     it('paginates changelog when total > maxResults', async () => {
@@ -1359,7 +1486,7 @@ describe('SyncService', () => {
       expect(jiraClient.getIssueChangelog).toHaveBeenCalledTimes(2);
     });
 
-    it('does not delete changelogs on pages after the first', async () => {
+    it('deletes once and writes every page together, after all pages are fetched', async () => {
       jiraClient.searchIssues.mockResolvedValue({
         issues: [makeRawIssue('PROJ-1')],
         nextPageToken: undefined,
@@ -1383,8 +1510,12 @@ describe('SyncService', () => {
 
       await service.syncBoard('PROJ');
 
-      // delete should only be called once (startAt === 0)
-      expect(changelogRepo.delete).toHaveBeenCalledTimes(1);
+      const tx = txManager(dataSource);
+      expect(tx.delete).toHaveBeenCalledTimes(1);
+      // Both pages are written in one save, not page-by-page.
+      expect(tx.save).toHaveBeenCalledTimes(1);
+      const saved = tx.save.mock.calls[0]?.[0] as unknown[];
+      expect(saved).toHaveLength(2);
     });
   });
 

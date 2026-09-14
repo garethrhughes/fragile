@@ -922,28 +922,50 @@ export class SyncService implements OnModuleInit {
     }
   }
 
+  /**
+   * Replace the stored changelog for one issue with Jira's current copy.
+   *
+   * The stored set is REPLACED, not merged, so the replace must be atomic. Two
+   * failure modes are being defended against, both of which leave an issue with
+   * a truncated or empty history:
+   *
+   *   1. A reader observing the gap. A non-transactional delete-then-insert
+   *      leaves a window in which the issue has zero changelog rows. Every
+   *      metric that derives a first/earliest transition (healthcheck
+   *      `first_start`, cycle time, lead time) then silently treats the issue as
+   *      never having started — it drops out of its week with no error.
+   *   2. A fetch failing part-way. If page 2 of a paginated changelog throws
+   *      (e.g. Jira 429 after the retry budget, or a network blip), the old copy
+   *      must survive intact rather than being left half-rebuilt until some
+   *      later sync happens to touch this issue again.
+   *
+   * So: fetch every page first, then delete and insert inside a single
+   * transaction. Nothing is written unless the whole changelog was retrieved.
+   */
   private async syncIssueChangelog(issueKey: string): Promise<void> {
+    const entries: JiraChangelog[] = [];
     let startAt = 0;
     let total = 0;
 
     do {
-      const response = await this.jiraClient.getIssueChangelog(
-        issueKey,
-        startAt,
-      );
+      const response = await this.jiraClient.getIssueChangelog(issueKey, startAt);
       total = response.total;
+      entries.push(...this.mapChangelogEntries(issueKey, response.values));
 
-      const entries = this.mapChangelogEntries(issueKey, response.values);
-      if (entries.length > 0) {
-        // Delete existing changelogs for this issue to avoid duplicates
-        if (startAt === 0) {
-          await this.changelogRepo.delete({ issueKey });
-        }
-        await this.changelogRepo.save(entries);
-      }
-
+      // Guard against a non-advancing cursor (maxResults 0 / empty page) rather
+      // than looping forever.
+      if (response.values.length === 0 || response.maxResults <= 0) break;
       startAt += response.maxResults;
     } while (startAt < total);
+
+    // Jira returned no history at all — leave the existing rows alone rather
+    // than wiping a good copy on the strength of an empty response.
+    if (entries.length === 0) return;
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.delete(JiraChangelog, { issueKey });
+      await manager.save(entries, { chunk: 500 });
+    });
   }
 
   private mapChangelogEntries(
