@@ -8,7 +8,7 @@ overlay in
 [`.opencode/skills/rules/[profile].md`](.opencode/skills/rules/[profile].md)
 (replace `[profile]` with the active skillset above — e.g. `typescript.md` or
 `dotnet.md`).
-Skills (`developer`, `reviewer`, `architect`, `infosec`) read both when applying
+Skills (`architect`, `design`, `developer`, `reviewer`, `infosec`) read both when applying
 conventions to this project.
 
 ---
@@ -85,8 +85,10 @@ conventions to this project.
 │   ├── envs/            # Per-environment root configs (dev, staging, prod)
 │   └── README.md        # Runbook: how to plan/apply, where state lives
 ├── docs/
+│   ├── features/
 │   ├── proposals/
-│   └── decisions/
+│   ├── decisions/
+│   └── design/          # UI design plans (frontend projects)
 └── .env.example
 ```
 
@@ -139,7 +141,12 @@ Write a proposal in `docs/proposals/NNNN-short-kebab-case-title.md` before imple
 When a proposal is accepted, create the corresponding ADR in `docs/decisions/NNNN-title.md`
 and update the proposal status to `Accepted`.
 
-See the `architect` and `decision-log` skills for the exact proposal and ADR formats.
+Write a design plan in `docs/design/NNNN-short-kebab-case-title.md` before implementing any
+new or reshaped user-facing surface, or when porting a design handover from Claude. Routine
+UI work that only consumes existing tokens and components does not need one.
+
+See the `architect`, `design`, and `decision-log` skills for the exact proposal, design
+plan, and ADR formats.
 
 ---
 

@@ -58,7 +58,7 @@ the user selects the **dotnet** profile. The user can accept the default or over
 | 4.3 | Solution layout | `src/<Project>.Api/` (host), `src/<Project>.Application/` (services + DTOs), `src/<Project>.Domain/` (entities + domain rules), `src/<Project>.Infrastructure/` (EF Core, external clients) |
 | 4.4 | Test layout | `tests/<Project>.Api.Tests/`, `tests/<Project>.Application.Tests/`, `tests/<Project>.IntegrationTests/` |
 | 4.5 | Infra internals | `modules/{network,compute,data,observability}/`, `envs/{dev,staging,prod}/` |
-| 4.6 | Docs | `docs/proposals/` and `docs/decisions/` |
+| 4.6 | Docs | `docs/features/`, `docs/proposals/`, `docs/decisions/`, and `docs/design/` (frontend projects) |
 
 ---
 

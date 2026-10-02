@@ -23,8 +23,11 @@
 
 set -euo pipefail
 
+# ── Resolve project root (cwd) ──────────────────────────────────────────────
+PROJECT_ROOT="$(pwd)"
+
 # ── Resolve skills directory ────────────────────────────────────────────────
-SKILLS_DIR="${1:-${HOME}/.config/opencode/skills}"
+SKILLS_DIR="${1:-${PROJECT_ROOT}/.opencode/skills}"
 
 if [[ ! -d "$SKILLS_DIR" ]]; then
   echo "Error: skills directory not found: $SKILLS_DIR" >&2
@@ -33,7 +36,6 @@ if [[ ! -d "$SKILLS_DIR" ]]; then
 fi
 
 # ── Resolve project root (cwd) ──────────────────────────────────────────────
-PROJECT_ROOT="$(pwd)"
 AGENTS_DIR="${PROJECT_ROOT}/.claude/agents"
 
 mkdir -p "$AGENTS_DIR"
@@ -61,6 +63,10 @@ skill_tools() {
     create-skill)      echo "Read, Grep, Glob, Write, Edit" ;;
     update-skills)     echo "Read, Grep, Glob, Bash" ;;
     project-onboard)   echo "Read, Grep, Glob, Write, Edit, Bash, WebFetch" ;;
+    # design writes design plans and UI code, runs a dev server, and drives a
+    # browser via the Playwright MCP server — deliberately unrestricted, since an
+    # explicit tools list would exclude MCP tools.
+    design)            echo "" ;;
     # developer, create-feature, project-bootstrap: all tools (no restriction).
     *)                 echo "" ;;
   esac
@@ -75,6 +81,9 @@ skill_description() {
       ;;
     developer)
       echo "Use when implementing features or bug fixes. Follows TDD (red-green-refactor), the active stack overlay's language conventions, IaC conventions, and project observability/supply-chain rules."
+      ;;
+    design)
+      echo "Use for design-heavy frontend work: porting a Claude design handover (artifact HTML/React) into the project's stack, or making the visual decisions for a new or reshaped UI. Extracts a token system, writes a design plan to docs/design/, gets sign-off, implements it, then critiques it against an accessibility floor."
       ;;
     reviewer)
       echo "Use to review staged changes or a pull request. Checks security, IaC safety, correctness, observability, performance, and convention adherence. Returns a PASS / PASS WITH COMMENTS / BLOCK verdict with Acceptance Criteria traceability."

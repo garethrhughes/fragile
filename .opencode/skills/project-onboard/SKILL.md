@@ -103,9 +103,9 @@ If **nothing** is found, skip this step silently and proceed.
 
 Tell the user:
 
-> "I'll onboard this existing codebase by reading it first. There are **9 phases**
-> covering project identity, application stack, infrastructure-as-code, repository
-> structure, conventions, observability, security/compliance, domain, and Jira
+> "I'll onboard this existing codebase by reading it first. There are **10 phases**
+> covering project identity, skillset profile, application stack, infrastructure-as-code,
+> repository structure, conventions, observability, security/compliance, domain, and Jira
 > integration (optional).
 >
 > For each phase I'll investigate the repo, then show you a summary table of what
@@ -292,8 +292,8 @@ Ask: "Any corrections? Anything I marked `[TBD]` you want to fill in now?"
 
 - Local dev: `docker-compose.yml`, `compose.yaml`, `Makefile`, `Procfile`,
   `bin/dev`, `scripts/dev*`.
-- IaC tool: `*.tf` (Terraform/OpenTofu — distinguish via `.terraform.lock.hcl`
-  vs `.terraform.lock.hcl` provider sources or `tofu` references in CI),
+- IaC tool: `*.tf` (Terraform/OpenTofu — distinguish via the provider source
+  registry in `.terraform.lock.hcl`, or `tofu` references in CI),
   `Pulumi.yaml`, `cdk.json`, `serverless.yml`, `sam template.yaml`,
   `bicep` files, `kustomization.yaml`.
 - Cloud provider: from IaC providers (`aws`, `google`, `azurerm`),
@@ -340,7 +340,8 @@ accounts?").
   names / feature folders, and identify common subfolders (`controllers/`,
   `services/`, `dto/`, `entities/`, `migrations/`, `components/`, `app/`,
   `store/`, `lib/`, `hooks/`).
-- Locate docs: `docs/`, `architecture/`, `adr/`, `decisions/`, `proposals/`.
+- Locate docs: `docs/`, `architecture/`, `adr/`, `decisions/`, `proposals/`,
+  `features/`, `design/`.
 
 ### Present
 
@@ -348,8 +349,9 @@ Build a **real** file tree from the actual disk contents, not a template. Show
 it to the user and ask: "Does this match how you think about the project?
 Anything to add or any directories I should ignore (e.g. generated output)?"
 
-If `docs/proposals/` and `docs/decisions/` are missing, note this as an
-onboarding gap (see Phase 8 / Onboarding Notes).
+If `docs/proposals/`, `docs/decisions/`, `docs/features/`, or (for frontend projects)
+`docs/design/` are missing, note this as an onboarding gap (see Phase 8 / Onboarding
+Notes).
 
 ---
 
@@ -369,6 +371,15 @@ onboarding gap (see Phase 8 / Onboarding Notes).
 - **Frontend rules:** grep for `useEffect` containing `fetch`/data calls; check
   whether all API calls go through `lib/api.ts`; check for direct store
   mutation outside defined actions.
+- **Design system & accessibility** (skip if backend-only): locate the token
+  source (`@theme` block in a CSS file, `tailwind.config.*`, CSS custom
+  properties, `_variables.scss`) and note whether one exists at all. Grep for
+  arbitrary Tailwind values (`-\[#`, `-\[\d`), inline `style=` attributes, raw
+  hex outside the token file, remote font `<link>`/`@import url(`, and CDN
+  `<script src="http`. Grep for `outline-none` / `outline: none` without a
+  focus-visible replacement, `prefers-reduced-motion` (present or absent),
+  `aria-`/`alt=` usage, and click handlers on non-interactive elements
+  (`<div onClick`, `<span onClick`). Note any existing `docs/design/` plans.
 - **TypeScript strictness:** read `tsconfig.json` — `strict`, `noImplicitAny`,
   `noImplicitReturns`, `noUncheckedIndexedAccess`. Grep for `: any` and `as any`.
   Check for barrel `index.ts` files.
@@ -562,7 +573,7 @@ This project follows the language-agnostic core rules in
 [`RULES.md`](https://github.com/garethrhughes/skills/blob/main/RULES.md) plus the
 **`{profile}`** stack overlay in
 [`rules/{profile}.md`](https://github.com/garethrhughes/skills/blob/main/rules/{profile}.md).
-Skills (`developer`, `reviewer`, `architect`, `infosec`) read both when applying
+Skills (`architect`, `design`, `developer`, `reviewer`, `infosec`) read both when applying
 conventions to this project.
 
 ---
@@ -690,7 +701,8 @@ etc.).
 
 ## Testing Requirements
 
-See [`RULES.md#testing`](../RULES.md#testing) for the canonical testing rules.
+See [`RULES.md#testing`](https://github.com/garethrhughes/skills/blob/main/RULES.md#testing)
+for the canonical testing rules.
 
 **Project-specific additions** (observed or supplied):
 {additions, or "_(none)_"}
@@ -711,7 +723,12 @@ Write a proposal in `docs/proposals/NNNN-short-kebab-case-title.md` before imple
 When a proposal is accepted, create the corresponding ADR in `docs/decisions/NNNN-title.md`
 and update the proposal status to `Accepted`.
 
-See the `architect` and `decision-log` skills for the exact proposal and ADR formats.
+Write a design plan in `docs/design/NNNN-short-kebab-case-title.md` before implementing any
+new or reshaped user-facing surface, or when porting a design handover from Claude. Routine
+UI work that only consumes existing tokens and components does not need one.
+
+See the `architect`, `design`, and `decision-log` skills for the exact proposal, design
+plan, and ADR formats.
 
 ---
 
@@ -746,6 +763,11 @@ to delete it once the gaps are addressed or explicitly accepted.*
 - IaC: Security group at {path} allows `0.0.0.0/0` ingress on a non-443 port
 - No vulnerability scanning configured (no Dependabot / `npm audit` in CI / Trivy)
 - `docs/proposals/` and `docs/decisions/` directories do not exist
+- Frontend: no token source found — colours and spacing are raw values spread across
+  {N} components; the `design` skill needs a token layer before it can plan against one
+- Frontend: {N} components remove focus outlines with no visible replacement
+- Frontend: animations present with no `prefers-reduced-motion` fallback
+- Frontend: remote font link / CDN `<script>` at {path} — unpinned remote dependency
 - Public endpoints not behind an auth guard: {list}
 - Logger does not appear to redact `Authorization` headers or known PII fields
 ```

@@ -179,7 +179,22 @@ List each Acceptance Criterion from the proposal verbatim, then for each:
 - Cite the test(s) that demonstrate it is satisfied (file path + test name)
 - If a criterion is not covered by a test, mark it **Unverified** → **Major** finding
 - If the implementation satisfies the intent of a criterion but the criterion itself was
-  vague (flagged above in 1a), note both issues together
+  vague (flagged above in 2a), note both issues together
+
+### 2c — Design Plan Review (only if the PR changes UI)
+
+If the PR touches user-facing UI, look for an accepted design plan in `docs/design/`
+linked from the PR description or matching the feature/branch name.
+
+- **No design plan for a new or restyled surface** → **Major**. Routine UI work that only
+  consumes existing tokens and components does not need one; a new surface does.
+- Plan `Status` must be `Accepted` or `Implemented`. Still `Draft` → **Minor**.
+- Compare the plan's *Component Map* against the diff: components built somewhere other
+  than their mapped path, or built but absent from the map, are **Minor**.
+- Any visual decision in the diff that contradicts the plan must appear in the plan's
+  *Divergences* section with a reason. Undocumented drift → **Minor**.
+- For a handover port, confirm the *Divergences from the handover* section is filled in
+  rather than left as a template stub.
 
 ---
 
@@ -234,6 +249,45 @@ a `switch` on a domain enum that already breaks LSP, a bypass of DI that breaks 
 - **But:** flag aggressive de-duplication that introduces an abstraction for two callers
   with subtly different needs — premature abstraction is also a finding (**Minor**)
 
+### Design & Accessibility Checks (UI changes only)
+
+Skip this section entirely for changes with no user-facing UI.
+
+**Accessibility floor.** These are not suggestions — an interface that fails them is
+unusable for some users. Default severity **Major**; escalate to **Blocker** when the
+failure makes a primary flow impossible to complete (e.g. a keyboard user cannot submit
+the only form on the page).
+
+- Interactive elements built from non-interactive markup (`<div onClick>`, `<span>` acting
+  as a button) instead of `<button>` / `<a>` / the framework's semantic equivalent
+- Focus styles removed (`outline: none`, `focus:outline-none`) without a visible
+  replacement
+- Text or non-text contrast below WCAG AA (4.5:1 body; 3:1 for ≥24px or ≥19px bold; 3:1
+  for UI indicators such as borders on form fields)
+- Animation or transition introduced with no `prefers-reduced-motion: reduce` fallback
+- Heading levels skipped, more than one `h1`, or a layout with no landmark structure
+- Controls without an accessible name — icon-only buttons, inputs with a placeholder but
+  no label, links reading "click here"
+- Images without `alt`, or decorative images with meaningful `alt` instead of `alt=""`
+- Information conveyed by colour, hover, or motion alone (e.g. a status shown only as a
+  coloured dot)
+- Form errors not associated with their field, or announced only visually
+- Fixed-pixel layouts that break content or function at 200% zoom / 320px width
+
+**Design system integrity.** Default severity **Minor**, escalating to **Major** when the
+change would force future work to duplicate the same decision.
+
+- Raw hex values, arbitrary bracket values (`text-[13.5px]`, `bg-[#e8dfd0]`), or magic
+  pixel offsets where a token exists — or a new token silently invented outside the scale
+- Inline `style="..."` attributes or a new inline `<style>` block
+- A CDN `<script>`, remote font `<link>`, or `@import url(...)` — **Blocker**: unpinned
+  remote dependency, and a supply-chain issue as well as a design one
+- A second border-radius / shadow / spacing vocabulary introduced alongside the existing one
+- New UI with no responsive handling at the project's breakpoints
+- Colliding CSS specificity — e.g. a type-based selector (`.section`) and an
+  element-based one (`.cta`) both owning the same padding or margin
+- Snapshot tests added for UI components (project rule: semantic queries instead)
+
 ### Reviewer-Specific Security Checks (beyond the rule files)
 
 - Credentials, API tokens, or secrets committed in any file (including test fixtures,
@@ -270,7 +324,8 @@ a `switch` on a domain enum that already breaks LSP, a bypass of DI that breaks 
 
 ## Correctness Checks
 
-- Every Acceptance Criterion from the linked proposal has a citing test (see top of file)
+- Every Acceptance Criterion from the linked proposal has a citing test (see *Phase 2b —
+  Acceptance Criteria Traceability*)
 - Business logic matches the specification (check `docs/proposals/` and `docs/decisions/`
   for the agreed behaviour)
 - Edge cases identified in proposals are handled (e.g. empty result sets, missing optional
@@ -371,13 +426,15 @@ Use the Semgrep MCP server as part of the Security Checks phase:
 - Include Medium findings as **Major** items; Low as **Minor**
 - Note the Semgrep rule ID alongside each finding so the developer can reproduce it
 
-### filesystem — Feature Doc, Proposal & Decision Cross-Reference
+### filesystem — Feature Doc, Proposal, Design & Decision Cross-Reference
 Use the Filesystem MCP server to:
 
 - Read `docs/features/` to locate the feature document linked from the PR (if one exists)
   — read it completely before reading the proposal
 - Read `docs/proposals/` to locate the full linked proposal — read it completely, not
   just the Acceptance Criteria section
+- Read `docs/design/` to locate the design plan for any UI-bearing change, and check the
+  built UI against its Component Map and Divergences sections
 - Verify the proposal status is `Accepted` before proceeding
 - Read `docs/decisions/` to check whether the implementation contradicts any existing ADR
 - Cross-reference any other proposals or decisions mentioned in the linked proposal
@@ -441,6 +498,13 @@ Status: Accepted | Draft | Missing — <action if not Accepted>
 - [✓] Criterion 1 — covered by `apps/api/src/foo/foo.service.spec.ts > returns X when Y`
 - [✓] Criterion 2 — covered by `...`
 - [✗] Criterion 3 — Unverified (no test found) → flagged as Major below
+
+### Design Plan
+Omit this block if the PR changes no UI.
+
+Status: Accepted | Implemented | Draft | Missing — <action if problematic>
+- [✓] Component Map matches the paths in the diff
+- [✗] Card radius differs from the plan and is not listed in Divergences → Minor below
 ```
 
 If the proposal has **Blocker** findings, state the verdict here and do not proceed to

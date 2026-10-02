@@ -320,7 +320,7 @@ This project follows the language-agnostic core rules in
 [`RULES.md`](https://github.com/garethrhughes/skills/blob/main/RULES.md) plus the
 **`{profile}`** stack overlay in
 [`rules/{profile}.md`](https://github.com/garethrhughes/skills/blob/main/rules/{profile}.md).
-Skills (`developer`, `reviewer`, `architect`, `infosec`) read both when applying
+Skills (`architect`, `design`, `developer`, `reviewer`, `infosec`) read both when applying
 conventions to this project.
 
 ---
@@ -446,9 +446,9 @@ etc.).
 
 ## Testing Requirements
 
-See [`RULES.md#testing`](../RULES.md#testing) for the canonical testing rules
-(behaviour-focused names, no real network, services tested not controllers, IaC
-modules tested, plan summary in PR description).
+See [`RULES.md#testing`](https://github.com/garethrhughes/skills/blob/main/RULES.md#testing)
+for the canonical testing rules (behaviour-focused names, no real network, services tested
+not controllers, IaC modules tested, plan summary in PR description).
 
 **Project-specific additions:**
 {additions captured in Phase 5/8, or "_(none)_"}
@@ -469,7 +469,12 @@ Write a proposal in `docs/proposals/NNNN-short-kebab-case-title.md` before imple
 When a proposal is accepted, create the corresponding ADR in `docs/decisions/NNNN-title.md`
 and update the proposal status to `Accepted`.
 
-See the `architect` and `decision-log` skills for the exact proposal and ADR formats.
+Write a design plan in `docs/design/NNNN-short-kebab-case-title.md` before implementing any
+new or reshaped user-facing surface, or when porting a design handover from Claude. Routine
+UI work that only consumes existing tokens and components does not need one.
+
+See the `architect`, `design`, and `decision-log` skills for the exact proposal, design
+plan, and ADR formats.
 
 ---
 
@@ -726,6 +731,10 @@ Create `docs/proposals/` and `docs/decisions/` regardless of stack — these are
 by the proposal/ADR workflow that all generated `CLAUDE.md` files reference. Add a
 single `.gitkeep` in each so git tracks them while empty.
 
+Also create `docs/features/` (written by `create-feature` / `jira-feature`) and, if the
+project has a frontend, `docs/design/` (written by the `design` skill) — same `.gitkeep`
+treatment.
+
 #### 3.9 Install / restore dependencies
 
 Run the install command appropriate to the active profile:
@@ -794,8 +803,10 @@ its one-line description.}
 ## Documentation
 
 - [`CLAUDE.md`](./CLAUDE.md) — authoritative project context, conventions, and rules
-- [`docs/proposals/`](./docs/proposals/) — design proposals
+- [`docs/features/`](./docs/features/) — feature briefs
+- [`docs/proposals/`](./docs/proposals/) — technical design proposals
 - [`docs/decisions/`](./docs/decisions/) — architecture decision records (ADRs)
+- [`docs/design/`](./docs/design/) — UI design plans *(frontend projects)*
 
 ## Contributing
 

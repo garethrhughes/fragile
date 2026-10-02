@@ -108,6 +108,35 @@ write the implementation, the test is wrong.
 - **Snapshot tests** only for stable, intentional output (e.g. generated SQL, generated
   Terraform plan). Never for UI components — use semantic queries instead
 
+## Design-Heavy Work — Delegate to the `design` Skill
+
+Stop and invoke the **design** skill before writing UI code when any of the following
+applies:
+
+- A **design handover from Claude** exists — an artifact of HTML/CSS or React/JSX that is
+  meant to become UI in this project
+- A **new user-facing surface** is being introduced (page, dashboard, onboarding flow,
+  marketing section) where the visual decisions have not been made yet
+- An existing surface is being **restyled**, or the project's tokens / design system are
+  being changed
+- The work requires choices about palette, typography, layout, or motion that no existing
+  token or component already answers
+
+The `design` skill writes an accepted design plan to `docs/design/NNNN-short-title.md`.
+You then implement **against that accepted plan** — it is the artefact the reviewer traces
+the UI against, the same way tests are traced to Acceptance Criteria.
+
+Two hard rules that apply to you even when `design` is not involved:
+
+- **Never paste handover/artifact code into the repo.** It typically carries CDN scripts,
+  remote font links, inline styles, arbitrary one-off values, mock data, and `useEffect`
+  fetching — all rule violations. Rebuild it under project conventions.
+- **Do not lower the accessibility floor** (visible keyboard focus, contrast, reduced
+  motion respected, semantic markup, labelled controls) to reach a visual goal.
+
+Routine UI work that consumes existing tokens and components — adding a field to a form,
+wiring a new endpoint into an existing table — does **not** need the `design` skill.
+
 ## Language, Backend, Frontend, IaC, and Observability Conventions
 
 Defined in [`RULES.md`](../RULES.md) (core) plus the active stack overlay under

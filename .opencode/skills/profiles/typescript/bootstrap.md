@@ -61,7 +61,7 @@ override.
 | 4.3 | Backend internals | One NestJS module per feature domain, each with `*.controller.ts`, `*.service.ts`, `*.module.ts`, `dto/`. Shared: `database/entities/`, `database/migrations/`, `config/`, `common/` |
 | 4.4 | Frontend internals | `app/` (App Router pages), `components/ui/`, `components/layout/`, `store/`, `lib/`, `hooks/` |
 | 4.5 | Infra internals | `modules/{network,compute,data,observability}/`, `envs/{dev,staging,prod}/` |
-| 4.6 | Docs | `docs/proposals/` and `docs/decisions/` |
+| 4.6 | Docs | `docs/features/`, `docs/proposals/`, `docs/decisions/`, and `docs/design/` (frontend projects) |
 
 ---
 

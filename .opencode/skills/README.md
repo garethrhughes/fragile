@@ -38,18 +38,18 @@ async-all-the-way, no `dynamic` for `dotnet`).
 | Name | Description |
 |---|---|
 | [architect](architect/SKILL.md) | Drives technical design decisions, writes proposals before significant changes, and maintains the proposal index |
-| [developer](developer/SKILL.md) | Writes production-quality TypeScript following TDD (red-green-refactor) and project conventions |
+| [design](design/SKILL.md) | Design-heavy frontend work — ports a Claude design handover (artifact HTML/React) into the project's stack, or makes the visual decisions for new/reshaped UI. Extracts a token system, writes a design plan in `docs/design/`, gets sign-off, implements it, then critiques it against an accessibility floor |
+| [developer](developer/SKILL.md) | Writes production-quality application code and Infrastructure-as-Code following TDD (red-green-refactor) and the active stack overlay's conventions |
 | [reviewer](reviewer/SKILL.md) | Reviews staged changes for security, correctness, performance, IaC safety, observability, and convention adherence; returns a PASS / PASS WITH COMMENTS / BLOCK verdict with Acceptance Criteria traceability |
 | [infosec](infosec/SKILL.md) | Read-only security and compliance audit (ISO27001-aligned by default). Audits encryption, access control, audit logging, secrets, IAM, network exposure, and supply chain. Returns APPROVED / REQUIRES CHANGES / APPROVED WITH EXCEPTION |
 | [decision-log](decision-log/SKILL.md) | Sole owner of ADR creation. Captures and maintains architectural decisions in `docs/decisions/` with a running index; invoked by `architect` after a proposal is accepted |
-| [create-feature](create-feature/SKILL.md) | Full feature development cycle: proposal → implementation → review → infosec sign-off → decision logging → PR |
+| [create-feature](create-feature/SKILL.md) | Full feature development cycle: proposal → design plan (UI work) → implementation → review → infosec sign-off → decision logging → PR |
 | [jira-feature](jira-feature/SKILL.md) | Loads a Jira ticket by URL or issue key, extracts description and acceptance criteria, and drives the full create-feature cycle with that ticket as the requirement source |
 | [project-bootstrap](project-bootstrap/SKILL.md) | Interactive bootstrap for new projects — asks structured questions covering app stack, IaC, observability, security/compliance, domain, and Jira integration, then produces a complete `CLAUDE.md` and populates the Project Context block in all local skills |
 | [project-onboard](project-onboard/SKILL.md) | Interactive onboarding for an existing codebase — investigates the repo to fill in `CLAUDE.md` and the Project Context block, asking the user only what the code can't answer; covers the same 9 phases as project-bootstrap including optional Jira integration |
-| [mcp-setup](mcp-setup/SKILL.md) | Interactive MCP server setup — presents a menu of available MCP servers (Context7, GitHub, Filesystem, Memory, Squirrel Notes, Semgrep, Jira) and writes the chosen config into `opencode.json`; invoked automatically by `project-bootstrap` and `project-onboard` |
+| [mcp-setup](mcp-setup/SKILL.md) | Interactive MCP server setup — presents a menu of available MCP servers (Context7, GitHub, Filesystem, Memory, Squirrel Notes, Semgrep, Jira, Playwright) and writes the chosen config into `opencode.json`; invoked automatically by `project-bootstrap` and `project-onboard` |
 | [create-skill](create-skill/SKILL.md) | Interactively creates or updates OpenCode skills — asks structured questions about purpose, workflow, MCP tools, and output format, then produces a complete SKILL.md and updates the README |
 | [update-skills](update-skills/SKILL.md) | Pulls the latest skills from the upstream repository and reports what changed (added, removed, modified) with a unified diff per skill |
-| [upgrade-rules-v2](upgrade-rules-v2/SKILL.md) | One-shot, idempotent migration of an existing project from rules v1 (monolithic `RULES.md`) to v2 (language-agnostic core + per-stack overlay). Detects the active stack, patches `CLAUDE.md` (Active Skillset line, rule links), flags pasted-in v1 rule sections, and re-runs the relevant installer scripts |
 
 ## Setup
 
@@ -106,6 +106,10 @@ Use the architect skill to design a caching strategy for the sync module.
 ```
 
 ```
+Use the design skill to port this Claude design handover into the app.
+```
+
+```
 Use the developer skill to implement the feature described in proposal 0042.
 ```
 
@@ -149,6 +153,41 @@ Use the create-skill skill to create a new skill called my-skill.
 Use the update-skills skill to update all skills to the latest version.
 ```
 
+### design
+
+Run this skill for design-heavy frontend work. It covers two cases:
+
+**Porting a handover from Claude.** Paste or point it at the artifact — standalone
+HTML/CSS, or React/JSX — and it treats that artifact as a *specification of intent*, not
+as source code. It extracts the token system (palette, type scale, spacing, radii, shadows,
+motion, component inventory, copy), separates deliberate choices from generated defaults,
+and produces a **port report** listing everything that cannot cross into the codebase
+as-is — CDN scripts, remote font links, inline styles, arbitrary one-off values, mock data,
+`useEffect` fetching — with its project-conformant replacement.
+
+**Net-new or reshaped UI.** Where the visual decisions haven't been made, it makes them:
+grounded in the actual subject matter and audience, audited against the traits that make
+generated design recognisable, and deliberately restrained to one bold element.
+
+Either way it writes a design plan to `docs/design/NNNN-short-title.md`, gets your explicit
+sign-off before writing any UI code, implements against the accepted plan, then critiques
+the result with screenshots at three breakpoints and a required accessibility floor.
+The `reviewer` skill traces the built UI back to the accepted plan.
+
+Artifact code is never pasted into the repo, and the project's existing design system wins
+over a conflicting handover unless you decide otherwise.
+
+```
+Use the design skill to port this Claude design handover into the app.
+```
+
+```
+Use the design skill to design the new reporting dashboard.
+```
+
+Screenshot and accessibility verification needs the Playwright MCP server — add it via
+`mcp-setup`. Without it the skill will say so rather than imply it checked.
+
 ### jira-feature
 
 Run this skill when you want to start a feature cycle directly from a Jira ticket. Provide
@@ -166,8 +205,8 @@ Use the jira-feature skill with PROJ-123.
 ### mcp-setup
 
 Run this skill to configure MCP servers for a project. It presents a menu of available
-servers (Context7, GitHub, Filesystem, Memory, Squirrel Notes, Semgrep, Jira) and writes
-the selected config into `opencode.json`, merging with any existing config. It is invoked
+servers (Context7, GitHub, Filesystem, Memory, Squirrel Notes, Semgrep, Jira, Playwright)
+and writes the selected config into `opencode.json`, merging with any existing config. It is invoked
 automatically as part of `project-bootstrap` and `project-onboard`, but can also be run
 standalone at any time to add or reconfigure servers.
 

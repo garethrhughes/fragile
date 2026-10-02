@@ -52,16 +52,27 @@ way it is.
 
 ## Authoritative Rules
 
-The project-wide engineering conventions live in [`RULES.md`](../RULES.md). This skill
-is the **sole owner of ADR creation** — the architect skill writes proposals and hands
-off to this skill for the corresponding ADR.
+The project-wide engineering conventions live in two layers:
 
-### ADRs that override `RULES.md`
+1. The language-agnostic core in [`RULES.md`](../RULES.md).
+2. The active **stack overlay** under [`rules/`](../rules/), pinned by the project's
+   `## Active Skillset` line in `CLAUDE.md` — e.g.
+   [`rules/typescript.md`](../rules/typescript.md) or
+   [`rules/dotnet.md`](../rules/dotnet.md).
 
-If a decision overrides a rule in `RULES.md`, the ADR **must**:
+This skill is the **sole owner of ADR creation** — the architect skill writes proposals and
+hands off to this skill for the corresponding ADR.
 
-1. Cite the exact `RULES.md` section and rule being overridden (e.g.
-   `RULES.md#external-http-clients` — "5s default timeout").
+If `CLAUDE.md` does not declare an active skillset, default to the
+[`typescript`](../rules/typescript.md) overlay for backwards compatibility.
+
+### ADRs that override a rule
+
+If a decision overrides a rule in `RULES.md` **or in the active overlay**, the ADR **must**:
+
+1. Cite the exact file, section, and rule being overridden (e.g.
+   `RULES.md#external-http-clients` — "5s default timeout", or
+   `rules/typescript.md` *TypeScript Conventions* — "never `enum`").
 2. State the override explicitly in the **Decision** section.
 3. Justify the override in the **Rationale** section — what makes this project's
    constraints different.
@@ -69,7 +80,8 @@ If a decision overrides a rule in `RULES.md`, the ADR **must**:
 5. Be referenced from the project's `CLAUDE.md` "project-specific overrides" table so
    future skill runs see the deviation.
 
-Never weaken a rule in `RULES.md` itself — overrides are per-project and live in ADRs.
+Never weaken a rule in `RULES.md` or an overlay itself — overrides are per-project and live
+in ADRs.
 
 ---
 
@@ -177,10 +189,8 @@ Use the Filesystem MCP server to:
 
 ---
 
-## When Reviewing Code
+## Out of Scope
 
-Flag any implementation that contradicts an existing ADR. Reference the ADR number in your
-comment. Example:
-
-> "This hardcodes the database host as `localhost` — ADR-0002 specifies all external
-> connection details must come from `ConfigService`. Please load from config."
+This skill does not review code. Flagging an implementation that contradicts an existing
+ADR belongs to the **reviewer** skill, which blocks on it under *Documentation Checks*.
+Your job ends at writing and indexing the ADR itself.
