@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsBoolean, IsIn, Matches } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, Matches } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -8,7 +8,6 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
  * week: optional ISO week (YYYY-Www). Defaults to the last completed ISO week.
  * includeSupport: optional boolean (default true). When false, support tickets
  *   are excluded from the Stability & Roadmap scores.
- * view: optional 'stored' (default) or 'live'. See ADR 0092.
  */
 export class HealthcheckQueryDto {
   @ApiPropertyOptional({
@@ -38,18 +37,4 @@ export class HealthcheckQueryDto {
     return value;
   })
   includeSupport?: boolean;
-
-  @ApiPropertyOptional({
-    description:
-      "'stored' (default) serves the persisted canonical figure for a completed " +
-      "week, so a closed week is reproducible. 'live' forces a recompute from the " +
-      'Jira mirror and returns a `drift` object comparing it against the stored ' +
-      'figure. The current week and any includeSupport=false request are always ' +
-      'computed live.',
-    enum: ['stored', 'live'],
-    default: 'stored',
-  })
-  @IsOptional()
-  @IsIn(['stored', 'live'])
-  view?: 'stored' | 'live';
 }

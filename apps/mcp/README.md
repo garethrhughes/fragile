@@ -117,7 +117,7 @@ The Fragile tools are then available in any `claude` CLI session. Remove with
 | `get_sprint_report` | Composite sprint report with recommendations |
 | `get_support_tickets` | Support ticket observations (cycle time, match reason) for a period |
 | `get_support_summary` | Aggregated support load (% support, p50/p95 cycle time, per-board breakdown) |
-| `get_healthcheck_report` | Weekly org-wide engineering scorecard (Stability, Roadmap, Support) with 8-week trend. A completed week is served from a stored, reproducible figure by default; the response carries `source`, `computedAt` and `configHash`. Optional `includeSupport` (default true) excludes support tickets from the Stability and Roadmap scores when false — it changes both denominator and numerators, and the response echoes it. Optional `view` (`stored` default, or `live`) forces a recompute and returns a `drift` comparison against the stored figure. |
+| `get_healthcheck_report` | Weekly org-wide engineering scorecard (Stability, Roadmap, Support) with 8-week trend. Optional `includeSupport` (default true) excludes support tickets from the Stability and Roadmap scores when false. |
 | `get_roadmap_accuracy` | Roadmap coverage accuracy |
 | `list_boards` | All configured boards |
 | `get_board_config` | Full board configuration |

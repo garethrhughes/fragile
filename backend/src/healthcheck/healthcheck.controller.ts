@@ -22,15 +22,9 @@ export class HealthcheckController {
       'Returns three per-board scores (Stability, Roadmap, Support) for the given ' +
       'ISO week, computed against a shared denominator (tickets whose first-ever ' +
       'start transition fell in the week), plus a trailing 8-week trend. ' +
-      'Defaults to the last completed week when `week` is omitted. A completed ' +
-      "week's canonical figure is served from storage by default (`view=stored`); " +
-      '`view=live` recomputes and returns a `drift` comparison (ADR 0092).',
+      'Defaults to the last completed week when `week` is omitted.',
   })
   async getHealthcheck(@Query() query: HealthcheckQueryDto): Promise<HealthcheckResponse> {
-    return this.healthcheckService.getHealthcheck(
-      query.week,
-      query.includeSupport,
-      query.view,
-    );
+    return this.healthcheckService.getHealthcheck(query.week, query.includeSupport);
   }
 }

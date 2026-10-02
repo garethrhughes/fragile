@@ -17,6 +17,5 @@ export { CycleTimeSnapshot } from './cycle-time-snapshot.entity.js';
 export type { CycleTimeSnapshotType } from './cycle-time-snapshot.entity.js';
 export { SupportSnapshot } from './support-snapshot.entity.js';
 export type { SupportSnapshotType } from './support-snapshot.entity.js';
-export { HealthcheckSnapshot } from './healthcheck-snapshot.entity.js';
 export { User } from './user.entity.js';
 export { ApiKey } from './api-key.entity.js';

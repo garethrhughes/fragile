@@ -1,16 +1,11 @@
 /**
- * HealthcheckService — weekly org-wide engineering healthcheck (ADR 0070).
+ * HealthcheckService — weekly per-board engineering healthcheck (ADR 0070).
  *
  * Replaces the former Pulse (`all-items`) report. For a selected ISO week,
- * computes three pooled scores (Stability, Roadmap, Support) against a
- * per-dimension denominator, plus a trailing 8-week trend. All Jira data is
- * read from the Postgres mirror (ADR 0002); no live Jira calls.
- *
- * Reproducibility (ADR 0092): a completed week's canonical figure
- * (`includeSupport=true`) is persisted on first read and served from storage by
- * default, so a closed week's numerator, denominator, ticket list and predicate
- * config hash are all recoverable. `view=live` forces a recompute and reports
- * drift against the stored figure rather than replacing it.
+ * computes three per-board scores (Stability, Roadmap, Support) against a
+ * single shared denominator, plus a trailing 8-week trend. Live-computed —
+ * nothing is persisted. All Jira data is read from the Postgres mirror
+ * (ADR 0002); no live Jira calls.
  */
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -24,7 +19,6 @@ import {
   JiraIssueLink,
   JpdIdea,
   RoadmapConfig,
-  HealthcheckSnapshot,
 } from '../database/entities/index.js';
 import { isWorkItem } from '../metrics/issue-type-filters.js';
 import { isoWeekKeyToDates, dateToIsoWeekKey } from '../lib/iso-week.js';
@@ -39,8 +33,6 @@ import {
 } from '../roadmap/resolve-epic-ideas.js';
 import { computeBoardHealthcheck, type BoardHealthcheckResult } from './healthcheck-compute.js';
 import { poolDimension } from './healthcheck-scoring.js';
-import { computeConfigHash } from './healthcheck-config-hash.js';
-import { compareHealthcheck, type HealthcheckDrift } from './healthcheck-drift.js';
 import {
   classifyStabilityBand,
   classifyRoadmapBand,
@@ -83,8 +75,6 @@ export class HealthcheckService {
     private readonly jpdIdeaRepo: Repository<JpdIdea>,
     @InjectRepository(RoadmapConfig)
     private readonly roadmapConfigRepo: Repository<RoadmapConfig>,
-    @InjectRepository(HealthcheckSnapshot)
-    private readonly snapshotRepo: Repository<HealthcheckSnapshot>,
     private readonly sprintMembership: SprintMembershipService,
     private readonly configService: ConfigService,
   ) {
@@ -98,7 +88,6 @@ export class HealthcheckService {
   async getHealthcheck(
     weekParam?: string,
     includeSupport = true,
-    view: 'stored' | 'live' = 'stored',
   ): Promise<HealthcheckResponse> {
     const tz = this.configService.get<string>('TIMEZONE', 'UTC');
     const week = weekParam ?? this.lastCompletedWeek(tz);
@@ -113,169 +102,14 @@ export class HealthcheckService {
       );
     }
 
-    // Only the canonical view of a COMPLETED week is storable. The current week
-    // is legitimately still moving, and includeSupport=false is an exploratory
-    // re-slice rather than the canonical figure (ADR 0092).
-    const storable = includeSupport && this.isCompletedWeek(week, tz);
-
-    if (storable && view === 'stored') {
-      const stored = await this.snapshotRepo.findOne({ where: { week } });
-      if (stored) {
-        return {
-          ...(stored.payload as HealthcheckResponse),
-          source: 'stored',
-          computedAt: stored.computedAt.toISOString(),
-          configHash: stored.configHash,
-          includeSupport: true,
-          drift: null,
-        };
-      }
-    }
-
-    const live = await this.computeLive(
-      week,
-      weekStart,
-      weekEnd,
-      tz,
-      includeSupport,
-      // The trend must agree with the per-week figures the dashboard shows if
-      // you navigate to those weeks. For the canonical stored view, take each
-      // trend point from its own stored row where one exists. The live view is
-      // deliberately fully recomputed so the drift comparison is
-      // apples-to-apples, and includeSupport=false has no stored counterpart.
-      storable && view === 'stored',
-    );
-
-    // Per-ticket derived first_start, logged every run so this class of question
-    // ("did the denominator move, and which tickets moved it?") is answerable by
-    // diffing two log lines instead of reconstructing from the Jira API.
-    this.logger.debug(
-      `healthcheck ${week} includeSupport=${includeSupport} ` +
-        `D(stability)=${live.response.stability.denominator} ` +
-        `N(stability)=${String(live.response.stability.numerator)} ` +
-        `first_start=${JSON.stringify(live.firstStarts)}`,
-    );
-
-    if (!storable) {
-      return { ...live.response, source: 'live', drift: null };
-    }
-
-    const stored = await this.snapshotRepo.findOne({ where: { week } });
-
-    if (!stored) {
-      // Write-through, but only on the default `stored` path. A `live` request
-      // is a drift probe: letting it establish the canonical baseline would
-      // enshrine the very value being investigated.
-      if (view === 'live') {
-        return { ...live.response, source: 'live', drift: null };
-      }
-      await this.snapshotRepo.save(
-        this.snapshotRepo.create({
-          week,
-          weekStart,
-          weekEnd,
-          payload: live.response,
-          configHash: live.response.configHash,
-          firstStarts: live.firstStarts,
-          computedAt: new Date(live.response.computedAt),
-        }),
-      );
-      return { ...live.response, source: 'stored', drift: null };
-    }
-
-    // A stored row exists and the caller explicitly asked for the live view:
-    // report the difference, do not overwrite. Overwriting would destroy the
-    // evidence that a discrepancy existed.
-    const drift = this.buildDrift(stored, live);
-    return { ...live.response, source: 'live', drift };
-  }
-
-  /**
-   * Compare a live recompute against the stored figure and log accordingly.
-   *
-   * A ticket's `first_start` moving LATER is not a legitimate data update — it
-   * is a minimum over an append-only history — so it is logged at `error`.
-   * Other drift on a closed week is logged at `warn` and left for a human.
-   */
-  private buildDrift(
-    stored: HealthcheckSnapshot,
-    live: { response: HealthcheckResponse; firstStarts: Record<string, string> },
-  ): HealthcheckDrift {
-    const storedPayload = stored.payload as HealthcheckResponse;
-    const drift = compareHealthcheck({
-      storedComputedAt: stored.computedAt,
-      storedConfigHash: stored.configHash,
-      liveConfigHash: live.response.configHash,
-      stored: {
-        stability: storedPayload.stability,
-        roadmap: storedPayload.roadmap,
-        support: storedPayload.support,
-        ticketKeys: storedPayload.tickets.map((t) => t.key),
-        firstStarts: stored.firstStarts ?? {},
-      },
-      live: {
-        stability: live.response.stability,
-        roadmap: live.response.roadmap,
-        support: live.response.support,
-        ticketKeys: live.response.tickets.map((t) => t.key),
-        firstStarts: live.firstStarts,
-      },
-    });
-
-    if (drift.firstStartRegressions.length > 0) {
-      this.logger.error(
-        `Healthcheck ${stored.week}: ${drift.firstStartRegressions.length} ticket(s) ` +
-          `have a first_start LATER than the stored value. first_start is a minimum ` +
-          `over an append-only history, so this indicates an incomplete stored ` +
-          `changelog: ${JSON.stringify(drift.firstStartRegressions)}`,
-      );
-    }
-    if (drift.hasDrift) {
-      this.logger.warn(
-        `Healthcheck ${stored.week} drift vs stored figure computed at ` +
-          `${drift.storedComputedAt} (configHashChanged=${drift.configHashChanged}): ` +
-          `stability ${String(drift.stability.stored.numerator)}/${drift.stability.stored.denominator}` +
-          ` -> ${String(drift.stability.live.numerator)}/${drift.stability.live.denominator}; ` +
-          `added=[${drift.ticketsAdded.join(',')}] removed=[${drift.ticketsRemoved.join(',')}]`,
-      );
-    }
-
-    return drift;
-  }
-
-  /** True when `week` is strictly before the current ISO week in `tz`. */
-  private isCompletedWeek(week: string, tz: string): boolean {
-    const current = dateToIsoWeekKey(new Date(), tz);
-    const { weekStart } = isoWeekKeyToDates(week, tz);
-    const { weekStart: currentStart } = isoWeekKeyToDates(current, tz);
-    return weekStart < currentStart;
-  }
-
-  /**
-   * Compute the week from the Jira mirror. Returns the response (with
-   * `source`/`drift` left for the caller to set) plus the derived `first_start`
-   * per ticket key, which is what the monotonicity assertion compares.
-   */
-  private async computeLive(
-    week: string,
-    weekStart: Date,
-    weekEnd: Date,
-    tz: string,
-    includeSupport: boolean,
-    useStoredTrendPoints = false,
-  ): Promise<{ response: HealthcheckResponse; firstStarts: Record<string, string> }> {
     // The 8 week keys shown in the trend, oldest→newest (selected week last).
     const trendWeeks = this.trendWeekKeys(week, tz, TREND_WEEKS);
 
     const configs = await this.boardConfigRepo.find();
     if (configs.length === 0) {
-      return {
-        response: this.emptyResponse(week, weekStart, weekEnd, trendWeeks, includeSupport),
-        firstStarts: {},
-      };
+      return this.emptyResponse(week, weekStart, weekEnd, trendWeeks);
     }
 
-    const configHash = computeConfigHash(configs);
     const ideas = await this.loadAllIdeas();
 
     // One resolver per board — loads that board's data once, then computes a
@@ -295,16 +129,7 @@ export class HealthcheckService {
       support: poolDimension(results.map((r) => r.support)),
     });
 
-    // Prefer each trend week's own stored figure so the chart and the score
-    // cards can never disagree about the same week. Weeks with no stored row
-    // (not yet read, or still in flight) fall back to a live computation.
-    const storedTrend = useStoredTrendPoints
-      ? await this.loadStoredTrend(trendWeeks)
-      : new Map<string, HealthcheckTrendPoint>();
-
     const trend: HealthcheckTrendPoint[] = trendWeeks.map((w) => {
-      const stored = storedTrend.get(w);
-      if (stored) return stored;
       const s = scoresFrom(resultsForWeek(w));
       return {
         week: w,
@@ -325,35 +150,24 @@ export class HealthcheckService {
       }))
       .sort((a, b) => a.boardId.localeCompare(b.boardId) || a.key.localeCompare(b.key));
 
-    const firstStarts: Record<string, string> = {};
-    for (const t of tickets) firstStarts[t.key] = t.firstStart;
-
     return {
-      response: {
-        week,
-        weekStart: weekStart.toISOString(),
-        weekEnd: weekEnd.toISOString(),
-        source: 'live',
-        computedAt: new Date().toISOString(),
-        configHash,
-        includeSupport,
-        stability: {
-          ...selected.stability,
-          band: classifyStabilityBand(selected.stability.score),
-        },
-        roadmap: {
-          ...selected.roadmap,
-          band: classifyRoadmapBand(selected.roadmap.score, ORG_ROADMAP_TARGET),
-        },
-        support: {
-          ...selected.support,
-          band: classifySupportBand(selected.support.score),
-        },
-        trend,
-        tickets,
-        drift: null,
+      week,
+      weekStart: weekStart.toISOString(),
+      weekEnd: weekEnd.toISOString(),
+      stability: {
+        ...selected.stability,
+        band: classifyStabilityBand(selected.stability.score),
       },
-      firstStarts,
+      roadmap: {
+        ...selected.roadmap,
+        band: classifyRoadmapBand(selected.roadmap.score, ORG_ROADMAP_TARGET),
+      },
+      support: {
+        ...selected.support,
+        band: classifySupportBand(selected.support.score),
+      },
+      trend,
+      tickets,
     };
   }
 
@@ -397,8 +211,6 @@ export class HealthcheckService {
       list.push(cl);
       statusChangelogsByIssue.set(cl.issueKey, list);
     }
-
-    this.warnOnMissingHistory(config, issues, statusChangelogsByIssue);
 
     // Support links (board-wide, once).
     const supportConfig: SupportClassifierConfig = {
@@ -450,84 +262,6 @@ export class HealthcheckService {
         includeSupport,
       });
     };
-  }
-
-  /**
-   * Load the already-stored score for each of the given trend weeks.
-   *
-   * Without this the stored payload would embed a trend computed live at freeze
-   * time, so week W's trend point for W-3 could disagree with W-3's own stored
-   * figure — the chart and the score cards would show different numbers for the
-   * same week. Reading each point from its own row makes them equal by
-   * construction.
-   */
-  private async loadStoredTrend(
-    weeks: string[],
-  ): Promise<Map<string, HealthcheckTrendPoint>> {
-    const rows = await this.snapshotRepo.find({ where: { week: In(weeks) } });
-    const byWeek = new Map<string, HealthcheckTrendPoint>();
-    for (const row of rows) {
-      const payload = row.payload as HealthcheckResponse;
-      byWeek.set(row.week, {
-        week: row.week,
-        stability: payload.stability.score,
-        roadmap: payload.roadmap.score,
-        support: payload.support.score,
-      });
-    }
-    return byWeek;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Mirror integrity
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Warn about issues whose stored status history is missing.
-   *
-   * A scrum issue with no matching in-progress transition yields
-   * `first_start = null` and is simply absent from every week's denominator —
-   * no error, no warning, no "excluded" count. That makes an incomplete mirror
-   * indistinguishable from work that genuinely never started, which is exactly
-   * how a denominator can quietly shrink.
-   *
-   * Detector: the issue's CURRENT status is one it can only have reached by
-   * transitioning (in-progress or done), yet it has zero stored status
-   * changelog rows. That combination is not reachable through normal Jira use,
-   * so it indicates the stored changelog was lost or never written.
-   *
-   * Heuristic, not proof: an issue created directly into an in-progress status
-   * fires no status changelog event in Jira and would be reported here too.
-   * Hence `warn` with the keys, rather than an exception.
-   */
-  private warnOnMissingHistory(
-    config: BoardConfig,
-    issues: JiraIssue[],
-    statusChangelogsByIssue: Map<string, JiraChangelog[]>,
-  ): void {
-    const transitioned = new Set(
-      [
-        ...(config.inProgressStatusNames ?? ['In Progress']),
-        ...(config.doneStatusNames ?? ['Done', 'Closed', 'Released']),
-      ].map((s) => s.toLowerCase()),
-    );
-
-    const suspect = issues
-      .filter(
-        (i) =>
-          transitioned.has(i.status.toLowerCase()) &&
-          (statusChangelogsByIssue.get(i.key)?.length ?? 0) === 0,
-      )
-      .map((i) => i.key);
-
-    if (suspect.length > 0) {
-      this.logger.warn(
-        `Board ${config.boardId}: ${suspect.length} issue(s) sit in a transitioned ` +
-          `status but have NO stored status changelog, so they cannot appear in any ` +
-          `week's denominator. Suspected incomplete mirror — re-run a full sync and ` +
-          `check sync_logs: ${suspect.join(', ')}`,
-      );
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -737,18 +471,12 @@ export class HealthcheckService {
     weekStart: Date,
     weekEnd: Date,
     trendWeeks: string[],
-    includeSupport: boolean,
   ): HealthcheckResponse {
     const naDimension = { score: null, numerator: null, denominator: 0, band: null };
     return {
       week,
       weekStart: weekStart.toISOString(),
       weekEnd: weekEnd.toISOString(),
-      source: 'live',
-      computedAt: new Date().toISOString(),
-      // No boards configured — nothing contributes to the predicate.
-      configHash: computeConfigHash([]),
-      includeSupport,
       stability: { ...naDimension },
       roadmap: { ...naDimension },
       support: { ...naDimension },
@@ -759,7 +487,6 @@ export class HealthcheckService {
         support: null,
       })),
       tickets: [],
-      drift: null,
     };
   }
 }

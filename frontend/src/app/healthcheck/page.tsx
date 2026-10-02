@@ -107,11 +107,6 @@ function HealthcheckPageInner() {
   // so the choice is shareable and reload-safe.
   const includeSupport = searchParams.get('includeSupport') !== 'false'
 
-  // Stored (default) vs live recompute (ADR 0092). Carried as ?view=live so the
-  // choice is shareable, and so drift is looked at deliberately rather than
-  // being the silent default.
-  const view = searchParams.get('view') === 'live' ? 'live' : 'stored'
-
   const [pageState, setPageState] = useState<PageState>({ status: 'idle' })
   const [retryKey, setRetryKey] = useState(0)
   const reload = useCallback(() => setRetryKey((k) => k + 1), [])
@@ -129,7 +124,7 @@ function HealthcheckPageInner() {
     let cancelled = false
     setPageState({ status: 'loading' })
 
-    getHealthcheck(weekParam, includeSupport, view)
+    getHealthcheck(weekParam, includeSupport)
       .then((data) => {
         if (!cancelled) setPageState({ status: 'ready', data })
       })
@@ -145,7 +140,7 @@ function HealthcheckPageInner() {
     return () => {
       cancelled = true
     }
-  }, [weekParam, includeSupport, view, retryKey])
+  }, [weekParam, includeSupport, retryKey])
 
   const isLatestWeek = weekParam === defaultWeek
 
@@ -208,19 +203,6 @@ function HealthcheckPageInner() {
           />
           <span>Include support tickets in Stability &amp; Roadmap</span>
         </label>
-
-        {/* Stored vs live recompute. Stored is the published figure for a closed
-            week; live shows what the current data would produce, and surfaces
-            drift between the two rather than hiding it. */}
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={view === 'live'}
-            onChange={(e) => replaceParams({ view: e.target.checked ? 'live' : null })}
-            className="h-4 w-4"
-          />
-          <span>Recompute live</span>
-        </label>
       </div>
 
       {/* Body */}
@@ -243,57 +225,6 @@ function HealthcheckPageInner() {
 
       {pageState.status === 'ready' && (
         <div className="space-y-6">
-          {/* Provenance: which figure is on screen, and when it was computed. */}
-          <p className="text-xs text-muted">
-            {pageState.data.source === 'stored'
-              ? `Stored figure, computed ${new Date(pageState.data.computedAt).toLocaleString()}.`
-              : `Live recompute at ${new Date(pageState.data.computedAt).toLocaleString()}.`}
-            {' '}
-            Config <span className="font-mono">{pageState.data.configHash.slice(0, 12)}</span>
-            {!pageState.data.includeSupport && ' · support tickets excluded from Stability & Roadmap'}
-          </p>
-
-          {pageState.data.drift?.hasDrift && (
-            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm">
-              <p className="font-semibold text-amber-800 dark:text-amber-200">
-                This week&apos;s live figure differs from the stored one
-              </p>
-              <p className="mt-1 text-muted">
-                Stored at {new Date(pageState.data.drift.storedComputedAt).toLocaleString()}:
-                Stability{' '}
-                {pageState.data.drift.stability.stored.numerator ?? '—'}/
-                {pageState.data.drift.stability.stored.denominator} → live{' '}
-                {pageState.data.drift.stability.live.numerator ?? '—'}/
-                {pageState.data.drift.stability.live.denominator}.
-              </p>
-              {pageState.data.drift.configHashChanged && (
-                <p className="mt-1 text-muted">
-                  The board status configuration changed since the stored figure was
-                  computed, so the two are not directly comparable.
-                </p>
-              )}
-              {pageState.data.drift.ticketsAdded.length > 0 && (
-                <p className="mt-1 text-muted">
-                  Joined the week: {pageState.data.drift.ticketsAdded.join(', ')}
-                </p>
-              )}
-              {pageState.data.drift.ticketsRemoved.length > 0 && (
-                <p className="mt-1 text-muted">
-                  Left the week: {pageState.data.drift.ticketsRemoved.join(', ')}
-                </p>
-              )}
-              {pageState.data.drift.firstStartRegressions.length > 0 && (
-                <p className="mt-1 font-medium text-red-700 dark:text-red-300">
-                  {pageState.data.drift.firstStartRegressions.length} ticket(s) have a
-                  first-start later than the stored value (
-                  {pageState.data.drift.firstStartRegressions.map((r) => r.key).join(', ')}
-                  ). A first-start cannot move later — this indicates an incomplete
-                  stored changelog.
-                </p>
-              )}
-            </div>
-          )}
-
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <HealthcheckScoreCard label="Stability" dimension={pageState.data.stability} />
             <HealthcheckScoreCard label="Roadmap" dimension={pageState.data.roadmap} />
